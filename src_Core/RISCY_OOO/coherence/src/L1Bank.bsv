@@ -144,7 +144,7 @@ module mkL1Bank#(
     Alias#(cRqIdxT, Bit#(TLog#(cRqNum))),
     Alias#(pRqIdxT, Bit#(TLog#(pRqNum))),
     Alias#(cacheOwnerT, Maybe#(cRqIdxT)), // actually owner cannot be pRq
-    Alias#(cacheOtherT, L1PipePrefetchInfo),
+    Alias#(cacheOtherT, PrefetchInfo),
     Alias#(cacheInfoT, CacheInfo#(tagT, Msi, void, cacheOwnerT, cacheOtherT)),
     Alias#(ramDataT, RamData#(tagT, Msi, void, cacheOwnerT, cacheOtherT, Line)),
     Alias#(procRqT, ProcRq#(procRqIdT)),
@@ -783,9 +783,8 @@ endfunction
                     cs: max(ram.info.cs, req.toState),
                     dir: ?,
                     owner: succ,
-                    other: L1PipePrefetchInfo {
-                        wasPrefetch: wasMiss ? cRqIsPrefetch[n] : ram.info.other.wasPrefetch,
-                        accessed: wasMiss ? lineTouched : (ram.info.other.accessed || lineTouched)
+                    other: PrefetchInfo {
+                        wasPrefetch: wasMiss ? cRqIsPrefetch[n] : (ram.info.other.wasPrefetch && !lineTouched),
                     }
                 },
                 line: newLine // write new data into cache
@@ -859,10 +858,7 @@ endfunction
                 cs: M, // AMO always gets to M
                 dir: ?,
                 owner: succ,
-                other: L1PipePrefetchInfo {
-                    wasPrefetch: ram.info.other.wasPrefetch,
-                    accessed: True
-                }
+                other: PrefetchInfo {wasPrefetch: False}
             },
             line: newLine // write new data into cache
         }, True); // hit, so update rep info
@@ -970,13 +966,12 @@ endfunction
             end
             LineAddr repLineAddr = getLineAddr({ram.info.tag, truncate(procRq.addr)});
             if (prefetchVerbose)
-                $display("%t L1D cRq miss (no rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, accessed: %d, cRq is prefetch: %d, ramCs: ",
+                $display("%t L1D cRq miss (no rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, cRq is prefetch: %d, ramCs: ",
                     cur_cycle,
                     n,
                     procRq.addr,
                     repLineAddr,
                     ram.info.other.wasPrefetch,
-                    ram.info.other.accessed,
                     cRqIsPrefetch[n],
                     fshow(ram.info.cs),
                     ", reqCs: ",
@@ -997,7 +992,7 @@ endfunction
                     cs: I,
                     dir: ?,
                     owner: Valid (n), // owner is req itself
-                    other: PrefetchInfo {wasPrefetch: False}
+                    other: ?
                 },
                 line: ? // data is no longer used
             }, False);
@@ -1021,13 +1016,12 @@ endfunction
                 linkAddr <= Invalid;
             end
             if (prefetchVerbose)
-                $display("%t L1D cRq miss (rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, accessed: %d, cRq is prefetch: %d, ramCs: ",
+                $display("%t L1D cRq miss (rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, cRq is prefetch: %d, ramCs: ",
                     cur_cycle,
                     n,
                     procRq.addr,
                     repLineAddr,
                     ram.info.other.wasPrefetch,
-                    ram.info.other.accessed,
                     cRqIsPrefetch[n],
                     fshow(ram.info.cs),
                     ", reqCs: ",
@@ -1266,7 +1260,7 @@ endfunction
                     cs: I, // downgraded to I
                     dir: ?,
                     owner: ram.info.owner, // keep owner to cRq
-                    other: ram.info.other
+                    other: ?
                 },
                 line: ram.line
             }, False);
@@ -1279,11 +1273,10 @@ endfunction
                 waitP: True
             });
             if (prefetchVerbose)
-                $display("%t L1D pRq: line addr: 0x%h, wasPrefetch: %d, accessed: %d, overtakeCRq: 1, ramCs: ",
+                $display("%t L1D pRq: line addr: 0x%h, wasPrefetch: %d, overtakeCRq: 1, ramCs: ",
                     cur_cycle,
                     getLineAddr(cRq.addr),
                     ram.info.other.wasPrefetch,
-                    ram.info.other.accessed,
                     fshow(ram.info.cs),
                     ", reqCs: ",
                     fshow(I)
@@ -1313,11 +1306,10 @@ endfunction
             }, False);
             rsToPIndexQ.enq(PRq (n));
             if (prefetchVerbose)
-                $display("%t L1D pRq: line addr: 0x%h, wasPrefetch: %d, accessed: %d, overtakeCRq: 0, ramCs: ",
+                $display("%t L1D pRq: line addr: 0x%h, wasPrefetch: %d, overtakeCRq: 0, ramCs: ",
                     cur_cycle,
                     getLineAddr(pRq.addr),
                     ram.info.other.wasPrefetch,
-                    ram.info.other.accessed,
                     fshow(ram.info.cs),
                     ", reqCs: ",
                     fshow(pRq.toState)
@@ -1370,7 +1362,7 @@ endfunction
                 cs: I, // downgraded to I
                 dir: ?,
                 owner: Invalid, // no successor
-                other: PrefetchInfo {wasPrefetch: False}
+                other: ?
             },
             line: ?
         }, False);
@@ -1573,7 +1565,7 @@ module mkL1Cache#(
     Alias#(cRqIdxT, Bit#(TLog#(cRqNum))),
     Alias#(pRqIdxT, Bit#(TLog#(pRqNum))),
     Alias#(cacheOwnerT, Maybe#(cRqIdxT)),
-    Alias#(cacheOtherT, L1PipePrefetchInfo),
+    Alias#(cacheOtherT, PrefetchInfo),
     Alias#(procRqT, ProcRq#(procRqIdT)),
     Alias#(cRqToPT, CRqMsg#(wayT, void)),
     Alias#(cRsToPT, CRsMsg#(void)),

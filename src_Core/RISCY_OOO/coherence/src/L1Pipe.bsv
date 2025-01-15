@@ -48,7 +48,6 @@ export L1PipeFlushIn(..);
 export L1PipeIn(..);
 export L1FlushCmd(..);
 export L1Cmd(..);
-export L1PipePrefetchInfo(..);
 export L1Pipe(..);
 export mkL1Pipe;
 
@@ -114,11 +113,6 @@ typedef union tagged {
     type pRqIdxT
 ) deriving (Bits, Eq, FShow);
 
-typedef struct {
-    Bool wasPrefetch;
-    Bool accessed;
-} L1PipePrefetchInfo deriving (Bits, Eq, FShow);
-
 interface L1Pipe#(
     numeric type lgBankNum,
     numeric type wayNum,
@@ -131,12 +125,12 @@ interface L1Pipe#(
     method PipeOut#(
         Bit#(TLog#(wayNum)),
         tagT, Msi, void, // no dir
-        Maybe#(cRqIdxT), L1PipePrefetchInfo, RandRepInfo, // no other
+        Maybe#(cRqIdxT), PrefetchInfo, RandRepInfo, // no other
         Line, L1Cmd#(indexT, cRqIdxT, pRqIdxT)
     ) first;
     method Action deqWrite(
         Maybe#(cRqIdxT) swapRq,
-        RamData#(tagT, Msi, void, Maybe#(cRqIdxT), L1PipePrefetchInfo, Line) wrRam, // always write BRAM
+        RamData#(tagT, Msi, void, Maybe#(cRqIdxT), PrefetchInfo, Line) wrRam, // always write BRAM
         Bool updateRep
     );
 endinterface
@@ -167,7 +161,7 @@ module mkL1Pipe(
     Alias#(wayT, Bit#(TLog#(wayNum))),
     Alias#(dirT, void), // no directory
     Alias#(ownerT, Maybe#(cRqIdxT)),
-    Alias#(otherT, L1PipePrefetchInfo), // store information for prefetcher analysis
+    Alias#(otherT, PrefetchInfo), // store information for prefetcher analysis
     Alias#(repT, RandRepInfo), // use random replace
     Alias#(pipeInT, L1PipeIn#(wayT, indexT, cRqIdxT, pRqIdxT)),
     Alias#(pipeCmdT, L1PipeCmd#(wayT, indexT, cRqIdxT, pRqIdxT)),

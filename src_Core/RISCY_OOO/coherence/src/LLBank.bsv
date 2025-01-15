@@ -440,6 +440,19 @@ endfunction
                     fshow(r), " ; ",
                     fshow(cRq)
                 );
+            if (prefetchVerbose)
+                $display("%t LL cRq creation: mshr: %d, addr: 0x%h, boundsVirtBase: 0x%h, boundsOffset: 0x%h, boundsLength: 0x%h, mshrInUse: %d/%d, isPrefetch: %d, wasQueued: 0, reqCs: ", 
+                    cur_cycle, 
+                    n, 
+                    r.addr,
+                    r.boundsVirtBase,
+                    r.boundsOffset,
+                    r.boundsLength,
+                    crqMshrEnqs - crqMshrDeqs,
+                    valueof(cRqNum),
+                    r.isPrefetchRq,
+                    fshow(r.toState)
+                );
         end
         else begin
             $display ("%t LL crqTransfer_new_child: postponing prefetch rq, mshr entries: %d", $time, crqMshrEnqs - crqMshrDeqs);
@@ -480,6 +493,16 @@ endfunction
             fshow(n), " ; ",
             fshow(cRq)
         );
+        $display("%t LL cRq creation: mshr: %d, addr: 0x%h, boundsVirtBase: 0x%h, boundsOffset: 0x%h, boundsLength: 0x%h, mshrInUse: %d/%d, isPrefetch: 1, wasQueued: 1, reqCs: S", 
+            cur_cycle, 
+            n, 
+            cRq.addr,
+            cRq.boundsVirtBase,
+            cRq.boundsOffset,
+            cRq.boundsLength,
+            crqMshrEnqs - crqMshrDeqs,
+            valueof(cRqNum),
+        );
     endrule
 
     // create new request from data prefetcher and send to pipeline
@@ -513,10 +536,20 @@ endfunction
         cRqIsPrefetch[n] <= True;
         // change round robin
         flipPriorNewCRqSrc;
-       if (verbose)
-        $display("%t LL %m createDataPrefetchRq: ", $time,
-            fshow(n), " ; ",
-            fshow(cRq)
+        if (verbose)
+            $display("%t LL %m createDataPrefetchRq: ", $time,
+                fshow(n), " ; ",
+                fshow(cRq)
+            );
+        $display("%t LL cRq creation: mshr: %d, addr: 0x%h, boundsVirtBase: 0x%h, boundsOffset: 0x%h, boundsLength: 0x%h, mshrInUse: %d/%d, isPrefetch: 1, wasQueued: 0, reqCs: S", 
+            cur_cycle, 
+            n, 
+            cRq.addr,
+            cRq.boundsVirtBase,
+            cRq.boundsOffset,
+            cRq.boundsLength,
+            crqMshrEnqs - crqMshrDeqs,
+            valueof(cRqNum),
         );
     endrule
 
@@ -1065,7 +1098,7 @@ endfunction
                 cur_cycle,
                 cRq.addr,
                 cRqIsPrefetch[n],
-                isMRs
+                wasMiss
             );
         doAssert(n == pipeOutCRqIdx, "must match pipe out cRq idx");
         doAssert(isRqFromC(cRq.id), "should be cRq from child");
@@ -1123,7 +1156,10 @@ endfunction
                     });
                     default: return Invalid;
                 endcase),
-                other: PrefetchInfo {wasPrefetch: (wasMiss && cRqIsPrefetch[n])}
+                other: PrefetchInfo {
+                    wasPrefetch: wasMiss ? cRqIsPrefetch[n] : ram.info.other.wasPrefetch,
+                    accessed: wassMiss ? !cRqIsPrefetch[n] : (ram.info.other.wasPrefetch || !cRqIsPrefetch[n])
+                }
             },
             line: ram.line // use line in ram
         }, True); // hit, so update rep info
@@ -1241,7 +1277,7 @@ endfunction
                     mshrIdx: n, // owner is current cRq
                     replacing: False // replacement is done right now
                 }),
-                other: PrefetchInfo {wasPrefetch: False}
+                other: ?
             },
             line: ? // data is no longer used
         }, False);
@@ -1328,7 +1364,7 @@ endfunction
                     cs: ram.info.cs,
                     dir: ram.info.dir,
                     owner: Valid (CRqOwner {mshrIdx: n, replacing: False}), // owner is req itself
-                    other: PrefetchInfo {wasPrefetch: False}
+                    other: ram.info.other
                 },
                 line: ram.line
             }, False);

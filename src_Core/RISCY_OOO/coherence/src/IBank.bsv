@@ -125,8 +125,8 @@ module mkIBank#(
     Alias#(cRqIdxT, Bit#(TLog#(cRqNum))),
     Alias#(pRqIdxT, Bit#(TLog#(pRqNum))),
     Alias#(cacheOwnerT, Maybe#(cRqIdxT)), // owner cannot be pRq
-    Alias#(cacheOtherT, L1PipePrefetchInfo), // owner cannot be pRq
-    Alias#(cacheInfoT, CacheInfo#(tagT, Msi, void, cacheOwnerT, L1PipePrefetchInfo)),
+    Alias#(cacheOtherT, PrefetchInfo), // owner cannot be pRq
+    Alias#(cacheInfoT, CacheInfo#(tagT, Msi, void, cacheOwnerT, PrefetchInfo)),
     Alias#(ramDataT, RamData#(tagT, Msi, void, cacheOwnerT, cacheOtherT, Line)),
     Alias#(procRqT, ProcRqToI),
     Alias#(cRqToPT, CRqMsg#(wayT, void)),
