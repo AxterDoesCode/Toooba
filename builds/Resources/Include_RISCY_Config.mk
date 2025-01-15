@@ -120,19 +120,6 @@ BSC_COMPILATION_FLAGS += \
 	-D CheriBusBytes=64 \
 	-D CheriMasterIDWidth=1 \
 	-D CheriTransactionIDWidth=6
-	-D DATA_PREFETCHER_$(DATA_PREFETCHER_TYPE) \
-	-D CAP128 \
-	-D MEM512 \
-	-D RISCV \
-	-D TSO_MM \
-	-D RV64 \
-	-D ISA_PRIV_M  -D ISA_PRIV_S  -D ISA_PRIV_U  \
-	-D SV39 \
-	-D ISA_I  -D ISA_M  -D ISA_A  -D ISA_F  -D ISA_D  -D ISA_FD_DIV  -D ISA_C  \
-	-D NO_SPEC_TRAINING -D NO_SPEC_REDIRECT -D NO_SPEC_STRAIGHT_PATH -D SPEC_RSB_FIXUP -D MELTDOWN_CF \
-	-D CheriBusBytes=64 \
-	-D CheriMasterIDWidth=1 \
-	-D CheriTransactionIDWidth=6
 
 # TODO:
 #    -D SELF_INV_CACHE -D L1D_MAX_HITS=$(SELF_INV_CACHE)
