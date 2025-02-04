@@ -166,7 +166,7 @@ module mkL1Bank#(
     Add#(TAdd#(tagSz, indexSz), TAdd#(lgBankNum, LgLineSzBytes), AddrSz)
 );
 
-    Bool verbose = False;
+    Bool verbose = True;
     Bool prefetchVerbose = True;
 
     L1CRqMshr#(cRqNum, wayT, tagT, procRqT) cRqMshr <- mkL1CRqMshrLocal;
@@ -679,7 +679,7 @@ endfunction
             fshow(req)
         );
         CLine cline = ram.line;
-        Bit#(2) nCap = foldl(add, 0, map(zeroExtend, map(pack, cline.tag)));
+        Bit#(3) nCap = foldl(add, 0, map(zeroExtend, map(pack, cline.tag)));
         if (prefetchVerbose)
             $display("%t L1D cRq hit: mshr: %d, addr: 0x%h, cRq is prefetch: %d, wasMiss: %d, pipeCs: ",
                 cur_cycle,
@@ -695,7 +695,9 @@ endfunction
                 ", op: ",
                 fshow(req.op),
                 ", nCap: ",
-                nCap
+                nCap,
+                ", data: ",
+                fshow(cline)
             );
         // check tag & cs: even this function is called by pRs, tag should match,
         // because tag is written into cache before sending req to parent
@@ -729,6 +731,7 @@ endfunction
                         if (verbose) $display("%t L1Bank hit tags: ", $time, fshow(curLine.tag));
                         incrTagCnt(extend(countElem(True, curLine.tag)));
                         procResp.respLd(req.id, getTaggedDataAt(curLine, dataSel));
+                        if (verbose) $display("%t L1Bank hit data: ", $time, fshow(getTaggedDataAt(curLine, dataSel)));
                     end
                 end else begin
                     lineTouched = False;
@@ -784,7 +787,7 @@ endfunction
                     dir: ?,
                     owner: succ,
                     other: PrefetchInfo {
-                        wasPrefetch: wasMiss ? cRqIsPrefetch[n] : (ram.info.other.wasPrefetch && !lineTouched),
+                        wasPrefetch: wasMiss ? cRqIsPrefetch[n] : (ram.info.other.wasPrefetch && !lineTouched)
                     }
                 },
                 line: newLine // write new data into cache
