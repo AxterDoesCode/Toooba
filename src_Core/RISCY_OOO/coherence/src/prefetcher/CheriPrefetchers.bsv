@@ -952,7 +952,7 @@ typedef struct {
     Bit#(ptrTableIdxTagBits) ptrTableIdxTag;
 } TrainingTableEntry#(numeric type tagBits, numeric type ptrTableIdxTagBits) deriving (Bits, Eq, FShow);
 
-module mkCapPtrPrefetcher#(DTlbToPrefetcher toTlb, Parameter#(ptrTableSize) _, Parameter#(trainingTableSize) __, Parameter#(inverseDecayChance) ___)(CheriPCPrefetcher) provisos (
+module mkCapPtrPrefetcher#(DTlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) _, Parameter#(ptrTableSize) __, Parameter#(trainingTableSize) ___, Parameter#(inverseDecayChance) ____)(CheriPCPrefetcher) provisos (
     NumAlias#(ptrTableTagBits, 16),
     NumAlias#(trainingTableTagBits, 16),
     NumAlias#(ptrTableIdxBits, TLog#(ptrTableSize)),
@@ -985,7 +985,8 @@ module mkCapPtrPrefetcher#(DTlbToPrefetcher toTlb, Parameter#(ptrTableSize) _, P
     Add#(p__, TLog#(ptrTableSize), 60),
     Add#(1, n__, TDiv#(64, TLog#(ptrTableSize))),
     Add#(o__, 64, TMul#(TDiv#(64, TLog#(ptrTableSize)), TLog#(ptrTableSize))),
-    Add#(q__, TAdd#(TLog#(ptrTableSize), 16), 60)
+    Add#(q__, TAdd#(TLog#(ptrTableSize), 16), 60),
+    Add#(r__, TLog#(TDiv#(maxCapSizeToTrack, 64)), 58)
 );
     Array #(Reg #(EventsPrefetcher)) perf_events <- mkDRegOR (5, unpack (0));
     RWBramCoreSequential#(ptrTableIdxBits, ptrTableEntryT, 4) pt <- mkRWBramCoreSequential();
@@ -1095,7 +1096,7 @@ module mkCapPtrPrefetcher#(DTlbToPrefetcher toTlb, Parameter#(ptrTableSize) _, P
         if (pte.tag == truncateLSB(pit)) begin
             pte.state = upgrade(pte.state);
             pte.lastUsedOffset = boundsOffset;
-            if (`VERBOSE) $display("%t Prefetcher processPtReadUpgrade pit %h set lastUsedOffset to %d, upgrading to ", $time, pit, boundsOffset, fshow(pte.state));
+            if (`VERBOSE) $display("%t Prefetcher processPtReadUpgrade hit pit %h set lastUsedOffset %d to %d, changed state to ", $time, pit, pte.lastUsedOffset, boundsOffset, fshow(pte.state));
             /*
             EventsPrefetcher evt = unpack(0);
             evt.evt_1 = 1;
@@ -1106,7 +1107,7 @@ module mkCapPtrPrefetcher#(DTlbToPrefetcher toTlb, Parameter#(ptrTableSize) _, P
             pte.state = USED1;
             pte.tag = truncateLSB(pit);
             pte.lastUsedOffset = boundsOffset;
-            if (`VERBOSE) $display("%t Prefetcher processPtReadUpgrade tag mismatch set lastUsedOffset %d reset pit %h entry to ", $time, boundsOffset, pit, fshow(pte.state));
+            if (`VERBOSE) $display("%t Prefetcher processPtReadUpgrade miss pit %h set lastUsedOffset %d to %d, changed state to ", $time, pit, pte.lastUsedOffset, boundsOffset, fshow(pte.state));
         end
         pt.wrReq(truncate(pit), pte);
     endrule
@@ -1201,7 +1202,7 @@ module mkCapPtrPrefetcher#(DTlbToPrefetcher toTlb, Parameter#(ptrTableSize) _, P
     method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, 
         Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
         //Lookup addr in training table, if get a hit, update ptrTable
-        if (boundsLength <= 131072*16) begin
+        if (boundsLength <= fromInteger(valueOf(maxCapSizeToTrack))) begin
             Addr vaddr = boundsVirtBase + boundsOffset;
             trainingTableIdxTagT tit = getTrainingIdxTag(vaddr, boundsVirtBase, boundsLength);
             Bit#(24) usedOffset = truncate(boundsOffset);
@@ -1213,7 +1214,7 @@ module mkCapPtrPrefetcher#(DTlbToPrefetcher toTlb, Parameter#(ptrTableSize) _, P
 
     method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, PCHash pcHash, Bool wasMiss, Bool wasPrefetch, 
         Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
-        if (boundsLength <= 131072*16) begin
+        if (boundsLength <= fromInteger(valueOf(maxCapSizeToTrack))) begin
             $display ("%t Prefetcher reportCacheDataArrival wasMiss %d wasPrefetch %d ", $time, wasMiss, wasPrefetch, fshow(lineWithTags));
 
             //Add accessed cap to training table in case we dereference it later.
@@ -1229,8 +1230,8 @@ module mkCapPtrPrefetcher#(DTlbToPrefetcher toTlb, Parameter#(ptrTableSize) _, P
                     trainingTableTagT tTag = truncateLSB(tit);
                     trainingTableIdxT tIdx = truncate(tit);
                     trainingTableEntryT te;
-                    if (`VERBOSE) $display("%t Prefetcher reportDataArrival adding training table entry! access addr %h boundslen %d offset %h prefetch %b ptraddress %h tit %h pit %h", 
-                        $time, addr, boundsLength, boundsOffset, wasPrefetch, getAddr(cap), tit, pit);
+                    if (`VERBOSE) $display("%t Prefetcher reportDataArrival adding training table entry! access addr %h boundslen %d offset %h prefetch %b pcHash %h ptraddress %h ptrbase %h ptrlength %d tit %h pit %h", 
+                        $time, addr, boundsLength, boundsOffset, wasPrefetch, pcHash, getAddr(cap), getBase(cap), getLength(cap), tit, pit);
                     te.tag = tTag;
                     te.ptrTableIdxTag = pit;
                     installTtEntry.enq(tuple2(tIdx, te));

@@ -429,16 +429,31 @@ module mkL1DPrefetcher#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
         //let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkDoNothingPrefetcher));
         //let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkAlwaysRequestTlbPrefetcher(toTlb)));
     `elsif DATA_PREFETCHER_CAP_SPATIAL
-        Parameter#(32768) maxCapSizeToTrack <- mkParameter;
-        Parameter#(256) bitmapTableSize <- mkParameter;
-        Parameter#(32) filterTableSize <- mkParameter;
-        Parameter#(16) inverseDecayChance <- mkParameter;
+        Parameter#(1048576) maxCapSizeToTrack <- mkParameter;
+        Parameter#(2048) bitmapTableSize <- mkParameter;
+        Parameter#(4) filterTableSize <- mkParameter;
+        Parameter#(128) inverseDecayChance <- mkParameter;
         let m <- mkCapBitmapPrefetcher(maxCapSizeToTrack, bitmapTableSize, filterTableSize, inverseDecayChance);
     `elsif DATA_PREFETCHER_CAP_PTR
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
         Parameter#(4096) ptrTableSize <- mkParameter; 
         Parameter#(64) trainingTableSize <- mkParameter;
         Parameter#(4) inverseDecayChance <- mkParameter;
-        let m <- mkCapPtrPrefetcher(toTlb, ptrTableSize, trainingTableSize, inverseDecayChance);
+        let m <- mkCapPtrPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance);
+    `elsif DATA_PREFETCHER_CAP_SPATIAL_PTR
+        Parameter#(2097152) ptrMaxCapSizeToTrack <- mkParameter;
+        Parameter#(4096) ptrTableSize <- mkParameter; 
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4) inverseDecayChancePtr <- mkParameter;
+        let m1 = mkCapPtrPrefetcher(toTlb, ptrMaxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChancePtr);
+
+        Parameter#(1048576) maxCapSizeToTrack <- mkParameter;
+        Parameter#(2048) bitmapTableSize <- mkParameter;
+        Parameter#(4) filterTableSize <- mkParameter;
+        Parameter#(128) inverseDecayChanceSpatial <- mkParameter;
+        let m2 = mkCapBitmapPrefetcher(maxCapSizeToTrack, bitmapTableSize, filterTableSize, inverseDecayChanceSpatial);
+
+        let m <- mkPrefetcherDoubler(m1, m2);
     `elsif DATA_PREFETCHER_SPP
         Parameter#(64) stSets <- mkParameter;
         Parameter#(4) stWays <- mkParameter;
@@ -506,23 +521,25 @@ module mkLLDPrefetcherInL1D#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
     `elsif DATA_PREFETCHER_CAP_SPATIAL
         Parameter#(4096) maxCapSizeToTrack <- mkParameter;
         Parameter#(2048) bitmapTableSize <- mkParameter;
-        Parameter#(128) filterTableSize <- mkParameter;
+        Parameter#(4) filterTableSize <- mkParameter;
         Parameter#(128) inverseDecayChance <- mkParameter;
         let m <- mkCapBitmapPrefetcher(maxCapSizeToTrack, bitmapTableSize, filterTableSize, inverseDecayChance);
     `elsif DATA_PREFETCHER_CAP_PTR
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
         Parameter#(4096) ptrTableSize <- mkParameter; 
         Parameter#(64) trainingTableSize <- mkParameter;
         Parameter#(4) inverseDecayChance <- mkParameter;
-        let m <- mkCapPtrPrefetcher(toTlb, ptrTableSize, trainingTableSize, inverseDecayChance);
+        let m <- mkCapPtrPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance);
     `elsif DATA_PREFETCHER_CAP_SPATIAL_PTR
+        Parameter#(2097152) ptrMaxCapSizeToTrack <- mkParameter;
         Parameter#(4096) ptrTableSize <- mkParameter; 
         Parameter#(64) trainingTableSize <- mkParameter;
         Parameter#(4) inverseDecayChancePtr <- mkParameter;
-        let m1 = mkCapPtrPrefetcher(toTlb, ptrTableSize, trainingTableSize, inverseDecayChancePtr);
+        let m1 = mkCapPtrPrefetcher(toTlb, ptrMaxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChancePtr);
 
         Parameter#(1048576) maxCapSizeToTrack <- mkParameter;
         Parameter#(2048) bitmapTableSize <- mkParameter;
-        Parameter#(128) filterTableSize <- mkParameter;
+        Parameter#(4) filterTableSize <- mkParameter;
         Parameter#(128) inverseDecayChanceSpatial <- mkParameter;
         let m2 = mkCapBitmapPrefetcher(maxCapSizeToTrack, bitmapTableSize, filterTableSize, inverseDecayChanceSpatial);
 
