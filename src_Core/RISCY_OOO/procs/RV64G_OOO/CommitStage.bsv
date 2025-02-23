@@ -680,6 +680,13 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     // done in a single cycle. However, when we make killings distributed or
     // pipelined, then we need to check spec bits at commit port.
 
+    Reg#(Bit#(32)) trapDieCounter <- mkReg(0);
+    rule trapDieDecr(trapDieCounter != 0);
+        trapDieCounter <= trapDieCounter - 1;
+    endrule
+    rule trapDie(trapDieCounter == 1);
+        $finish(0);
+    endrule
     rule doCommitTrap_flush(
 `ifdef INCLUDE_GDB_CONTROL
         (rg_run_state == RUN_STATE_RUNNING) &&&
@@ -687,7 +694,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         !pauseCommit &&&
         rob.deqPort[0].deq_data.trap matches tagged Valid .trap
     );
-        $finish(0);
+        if (trapDieCounter == 0)
+            trapDieCounter <= 1000;
         rob.deqPort[0].deq;
         let x = rob.deqPort[0].deq_data;
         if(verbose) $display("[doCommitTrap] ", fshow(x));
