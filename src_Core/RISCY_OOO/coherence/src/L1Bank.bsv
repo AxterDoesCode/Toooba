@@ -444,9 +444,9 @@ endfunction
         }));
         end
         if (resp.data matches tagged Valid .data)
-            llcPrefetcher.reportCacheDataArrival(data, resp.addr, /*pcHash:*/0, 
+            llcPrefetcher.reportCacheDataArrival(data, resp.addr, /*pcHash:*/0, Ld,
                 True, resp.cameFromPrefetch, resp.boundsOffset, resp.boundsLength, resp.boundsVirtBase, /*capPerms:*/unpack(0));
-       if (verbose)
+        if (verbose)
         $display("%t L1 %m pRsTransfer: ", $time, fshow(resp));
     endrule
 
@@ -728,7 +728,6 @@ endfunction
                     if (req.loadTags) begin
                         procResp.respLd(req.id, getTagsAt(curLine));
                     end else begin
-                        if (verbose) $display("%t L1Bank hit tags: ", $time, fshow(curLine.tag));
                         incrTagCnt(extend(countElem(True, curLine.tag)));
                         procResp.respLd(req.id, getTaggedDataAt(curLine, dataSel));
                         if (verbose) $display("%t L1Bank hit data: ", $time, fshow(getTaggedDataAt(curLine, dataSel)));
@@ -792,22 +791,20 @@ endfunction
                 },
                 line: newLine // write new data into cache
             }, True); // hit, so update rep info
-            if (!cRqIsPrefetch[n] && req.op == Ld) begin
-                prefetcher.reportAccess(req.addr, req.pcHash, HIT, req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
-                llcPrefetcher.reportAccess(req.addr, req.pcHash, HIT, req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
+            if (!cRqIsPrefetch[n]) begin
+                prefetcher.reportAccess(req.addr, req.pcHash, HIT, req.op, req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
+                llcPrefetcher.reportAccess(req.addr, req.pcHash, HIT, req.op, req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
             end
-            if (req.op == Ld) begin
-                prefetcher.reportCacheDataArrival(curLine, req.addr, req.pcHash, wasMiss, cRqIsPrefetch[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
-                if (wasMiss == False) begin
-                    llcPrefetcher.reportCacheDataArrival(curLine, req.addr, req.pcHash, 
-                        False, cRqIsPrefetch[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
-                end
+            prefetcher.reportCacheDataArrival(curLine, req.addr, req.pcHash, req.op, wasMiss, cRqIsPrefetch[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
+            if (wasMiss == False) begin
+                llcPrefetcher.reportCacheDataArrival(curLine, req.addr, req.pcHash, req.op,
+                    False, cRqIsPrefetch[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
             end
-           if (verbose)
-            $display("%t L1 %m pipelineResp: Hit func: update ram: ", $time,
-                fshow(newLine), " ; ",
-                fshow(succ)
-            );
+            if (verbose)
+                $display("%t L1 %m pipelineResp: Hit func: update ram: ", $time,
+                    fshow(newLine), " ; ",
+                    fshow(succ)
+                );
             // release MSHR entry
             cRqMshr.pipelineResp.releaseEntry(n);
             crqMshrDeqs <= crqMshrDeqs + 1;
@@ -958,9 +955,9 @@ endfunction
                 },
                 line: ram.line
             }, False);
-            if (!cRqIsPrefetch[n] && procRq.op == Ld) begin
-                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
-                llcPrefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
+            if (!cRqIsPrefetch[n]) begin
+                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.op, procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
+                llcPrefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.op, procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
                 /*
                 EventsL1D events = unpack(0);
                 events.evt_TLB = 1;
@@ -1007,9 +1004,9 @@ endfunction
                 waitP: False // we send req to parent later (when resp to parent is sent)
             });
             cRqMshr.pipelineResp.setData(n, ram.info.cs == M ? Valid (ram.line) : Invalid);
-            if (!cRqIsPrefetch[n] && procRq.op == Ld) begin
-                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
-                llcPrefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
+            if (!cRqIsPrefetch[n]) begin
+                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.op, procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
+                llcPrefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.op, procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
             end
             // send replacement resp to parent
             rsToPIndexQ.enq(CRq (n));
