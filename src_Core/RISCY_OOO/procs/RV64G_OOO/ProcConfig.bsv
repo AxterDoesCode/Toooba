@@ -93,7 +93,7 @@
 `endif
 
 // non-blocking DTLB
-`define DTLB_REQ_NUM 4
+`define DTLB_REQ_NUM 8
 // non-blocking L2 TLB
 `define L2TLB_REQ_NUM 2
 
@@ -138,12 +138,12 @@
 `ifdef CACHE_STUMPY
 
     // L1
-    `define LOG_L1_LINES 6 // 4KB
+    `define LOG_L1_LINES 7 // 8KB
     `define LOG_L1_WAYS 2 // 4 ways
     `define L1D_CRQ_NUM 8
 
     // LLC
-    `define LOG_LLC_LINES 7 // 16KB
+    `define LOG_LLC_LINES 8 // 32KB
     `define LOG_LLC_WAYS 3 // 8 ways
 
 `endif
