@@ -56,6 +56,23 @@ interface RBramCore#(type addrT, type dataT);
     method Action deqRd2Resp;
 endinterface
 
+module mkDummyBramCore(RWBramCore#(addrT, dataT)) provisos(
+    Bits#(addrT, addrSz), Bits#(dataT, dataSz)
+);
+    method Action wrReq(addrT a, dataT d);
+    endmethod
+
+    method Action rdReq(addrT a);
+    endmethod
+
+    method dataT rdResp = ?;
+
+    method rdRespValid = True;
+
+    method Action deqRdResp;
+    endmethod
+endmodule
+
 module mkRWBramCore(RWBramCore#(addrT, dataT)) provisos(
     Bits#(addrT, addrSz), Bits#(dataT, dataSz)
 );

@@ -181,7 +181,7 @@ module mkLLBank#(
     Alias#(cRqT, LLRq#(cRqIdT, dmaRqIdT, childT)),
     Alias#(cRqSlotT, LLCRqSlot#(wayT, tagT, Vector#(childNum, DirPend))), // cRq MSHR slot
     Alias#(llCmdT, LLCmd#(childT, cRqIndexT)),
-    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, dirT, cacheOwnerT, PrefetchInfo, RandRepInfo, Line, llCmdT)),
+    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, dirT, cacheOwnerT, PrefetchInfo, RandRepInfo, Line, void, llCmdT)),
     // requirements
     Bits#(cRqIdT, _cRqIdSz),
     Bits#(dmaRqIdT, _dmaRqIdSz),

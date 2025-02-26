@@ -126,11 +126,12 @@ typedef struct {
     cRqIdxT n; // AMO req MSHR idx
     cRqT req; // AMO req
     Maybe#(cRqIdxT) succ; // same-addr-successor of AMO req
+    Maybe#(cRqIdxT) nextInQueue;
 } AmoHitInfo#(type cRqIdxT, type cRqT) deriving(Bits, Eq, FShow);
 
 module mkL1Bank#(
     Bit#(lgBankNum) bankId,
-    module#(L1CRqMshr#(cRqNum, wayT, tagT, procRqT)) mkL1CRqMshrLocal,
+    module#(L1CRqMshr#(cRqNum, indexT, wayT, tagT, procRqT)) mkL1CRqMshrLocal,
     module#(L1PRqMshr#(pRqNum)) mkL1PRqMshrLocal,
     module#(L1Pipe#(lgBankNum, wayNum, indexT, tagT, cRqIdxT, pRqIdxT)) mkL1Pipeline,
     L1ProcResp#(procRqIdT) procResp,
@@ -145,6 +146,7 @@ module mkL1Bank#(
     Alias#(pRqIdxT, Bit#(TLog#(pRqNum))),
     Alias#(cacheOwnerT, Maybe#(cRqIdxT)), // actually owner cannot be pRq
     Alias#(cacheOtherT, PrefetchInfo),
+    Alias#(cacheSetAuxT, Maybe#(cRqIdxT)),
     Alias#(cacheInfoT, CacheInfo#(tagT, Msi, void, cacheOwnerT, cacheOtherT)),
     Alias#(ramDataT, RamData#(tagT, Msi, void, cacheOwnerT, cacheOtherT, Line)),
     Alias#(procRqT, ProcRq#(procRqIdT)),
@@ -155,7 +157,7 @@ module mkL1Bank#(
     Alias#(pRqRsFromPT, PRqRsMsg#(wayT, void)),
     Alias#(cRqSlotT, L1CRqSlot#(wayT, tagT)), // cRq MSHR slot
     Alias#(l1CmdT, L1Cmd#(indexT, cRqIdxT, pRqIdxT)),
-    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, l1CmdT)),
+    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, cacheSetAuxT, l1CmdT)),
     // requirements
     Bits#(procRqIdT, _procRqIdT),
     FShow#(procRqIdT),
@@ -169,7 +171,7 @@ module mkL1Bank#(
     Bool verbose = True;
     Bool prefetchVerbose = True;
 
-    L1CRqMshr#(cRqNum, wayT, tagT, procRqT) cRqMshr <- mkL1CRqMshrLocal;
+    L1CRqMshr#(cRqNum, indexT, wayT, tagT, procRqT) cRqMshr <- mkL1CRqMshrLocal;
 
     L1PRqMshr#(pRqNum) pRqMshr <- mkL1PRqMshrLocal;
 
@@ -669,6 +671,8 @@ endfunction
     L1CRqState pipeOutCState = cRqMshr.pipelineResp.getState(pipeOutCRqIdx);
     cRqSlotT pipeOutCSlot = cRqMshr.pipelineResp.getSlot(pipeOutCRqIdx);
     Maybe#(cRqIdxT) pipeOutSucc = cRqMshr.pipelineResp.getSucc(pipeOutCRqIdx);
+    Maybe#(cRqIdxT) pipeOutNextInQueue = pipeOut.setAuxData;
+    Maybe#(cRqIdxT) pipeOutSecondInQueue = isValid(pipeOutNextInQueue) ? cRqMshr.pipelineResp.getSucc2(fromMaybe(?, pipeOutNextInQueue)) : Invalid;
 
     // function to process cRq hit (MSHR slot may have garbage)
     function Action cRqHit(cRqIdxT n, procRqT req, Bool wasMiss);
@@ -790,7 +794,16 @@ endfunction
                     }
                 },
                 line: newLine // write new data into cache
-            }, True); // hit, so update rep info
+            }, isValid(succ) ? pipeOutNextInQueue : pipeOutSecondInQueue, True); // hit, so update rep info
+            if (!isValid(succ) &&& pipeOutNextInQueue matches tagged Valid .nextInQueue) begin
+                $display("%t L1D dequeuing queued req: mshr: %d, queueSucc: ",
+                    cur_cycle,
+                    nextInQueue,
+                    fshow(pipeOutSecondInQueue)
+                );
+                cRqRetryIndexQ.enq(nextInQueue);
+                cRqMshr.manageQueue.resetEntry(nextInQueue);
+            end
             if (!cRqIsPrefetch[n]) begin
                 prefetcher.reportAccess(req.addr, req.pcHash, HIT, req.op, req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
                 llcPrefetcher.reportAccess(req.addr, req.pcHash, HIT, req.op, req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
@@ -813,7 +826,8 @@ endfunction
             processAmo <= Valid (AmoHitInfo {
                 n: n,
                 req: req,
-                succ: succ
+                succ: succ,
+                nextInQueue: pipeOutNextInQueue
             });
            if (verbose)
             $display("%t L1 %m pipelineResp: Hit func: AMO process in next cycle", $time);
@@ -833,7 +847,7 @@ endfunction
         MemTaggedData current = getTaggedDataAt(curLine, dataSel);
         Vector#(2, Bit#(64)) dwordData = current.data;
         Vector#(4, Bit#(32))  wordData = unpack(pack(current.data));
-        Bit#(1) dwordIdx = req.addr[3];
+        Bit#(1) dwordIdx = req.addr[3]; 
         Bit#(2)  wordIdx = req.addr[3:2];
         // resp processor
         MemTaggedData resp = case (req.amoInst.width)
@@ -861,7 +875,7 @@ endfunction
                 other: PrefetchInfo {wasPrefetch: False}
             },
             line: newLine // write new data into cache
-        }, True); // hit, so update rep info
+        }, amoHit.nextInQueue, True); // hit, so update rep info
         doAssert(req.toState == M, "AMO must req for M");
        if (verbose)
         $display("%t L1 %m processAmo: update ram: ", $time,
@@ -884,7 +898,8 @@ endfunction
         $display("%t L1 %m pipelineResp: cRq: ", $time, fshow(n), " ; ", fshow(procRq));
 
         // find end of dependency chain
-        Maybe#(cRqIdxT) cRqEOC = cRqMshr.pipelineResp.searchEndOfChain(procRq.addr);
+        Maybe#(cRqIdxT) cRqDependEOC = cRqMshr.pipelineResp.searchDependEndOfChain(procRq.addr);
+        Maybe#(cRqIdxT) cRqQueuedEOC = cRqMshr.pipelineResp.searchQueuedEndOfChain(procRq.addr);
 
         function Action cRqScEarlyFail(Bool resetOwner);
         action
@@ -904,7 +919,7 @@ endfunction
                     other: ram.info.other
                 },
                 line: ram.line
-            }, False);
+            }, pipeOutNextInQueue, False);
             // retry successor
             Maybe#(cRqIdxT) succ = pipeOutSucc;
             if(succ matches tagged Valid .s) begin
@@ -954,7 +969,7 @@ endfunction
                     other: ram.info.other
                 },
                 line: ram.line
-            }, False);
+            }, pipeOutNextInQueue, False);
             if (!cRqIsPrefetch[n]) begin
                 prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.op, procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
                 llcPrefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.op, procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
@@ -995,7 +1010,7 @@ endfunction
                     other: ?
                 },
                 line: ? // data is no longer used
-            }, False);
+            }, pipeOutNextInQueue, False);
             // update MSHR: may save replaced line data
             cRqMshr.pipelineResp.setStateSlot(n, WaitNewTag, L1CRqSlot {
                 way: pipeOut.way, // use way from pipeline
@@ -1036,7 +1051,14 @@ endfunction
         function Action cRqSetDepNoCacheChange;
         action
             cRqMshr.pipelineResp.setStateSlot(n, Depend, defaultValue);
-            pipeline.deqWrite(Invalid, pipeOut.ram, False);
+            pipeline.deqWrite(Invalid, pipeOut.ram, pipeOutNextInQueue, False);
+        endaction
+        endfunction
+
+        function Action cRqQueue;
+        action
+            cRqMshr.pipelineResp.setStateSlot(n, Queued, defaultValue);
+            pipeline.deqWrite(Invalid, pipeOut.ram, Valid(fromMaybe(n, pipeOutNextInQueue)), False);
         endaction
         endfunction
 
@@ -1044,7 +1066,7 @@ endfunction
         action
             cRqMshr.pipelineResp.releaseEntry(n);
             crqMshrDeqs <= crqMshrDeqs + 1;
-            pipeline.deqWrite(Invalid, pipeOut.ram, False);
+            pipeline.deqWrite(Invalid, pipeOut.ram, pipeOutNextInQueue, False);
         endaction
         endfunction
 
@@ -1060,34 +1082,58 @@ endfunction
         Bool cs_valid = ram.info.cs > I;
         if(ram.info.owner matches tagged Valid .cOwner) begin
             if(cOwner != n) begin
-                // owner is another cRq, so must just go through tag match
-                // tag match must be hit (because replacement algo won't give a way with owner)
                 doAssert(pipeOutCState == Init, "must first time go through tag match");
-                doAssert(cs_valid && tag_match, "cRq should hit in tag match");
-                // should be added to a cRq in dependency chain & deq from pipeline
-                doAssert(isValid(cRqEOC), ("cRq hit on another cRq, cRqEOC must be true"));
-                // If this is a prefetch, we can drop the prefetch here (prefetch was probably late)
-                if (cRqIsPrefetch[n]) begin
-                    cRqDrop;
-                end else begin
-                    cRqMshr.pipelineResp.setSucc(fromMaybe(?, cRqEOC), Valid (n));
-                    cRqSetDepNoCacheChange;
+                // If the tags match then we want to add to a dependency chain
+                if (tag_match) begin
+                    // should be added to a cRq in dependency chain & deq from pipeline
+                    doAssert(isValid(cRqDependEOC), ("cRq hit on another cRq, cRqDependEOC must be true"));
+                    // If this is a prefetch, we can drop the prefetch here (prefetch was probably late)
+                    if (cRqIsPrefetch[n]) begin
+                        cRqDrop;
+                    end else begin
+                        cRqMshr.pipelineResp.setSucc(fromMaybe(?, cRqDependEOC), Valid (n));
+                        cRqSetDepNoCacheChange;
+                    end
+                    if (verbose)
+                        $display("%t L1 %m pipelineResp: cRq: own by other cRq ", $time,
+                            fshow(cOwner), ", depend on cRq ", fshow(cRqDependEOC)
+                        );
+                    if (prefetchVerbose)
+                        $display("%t L1D cRq dependency: mshr: %d, depMshr: %d, addr: 0x%h, cRq is prefetch: %d, reqCs: ",
+                            cur_cycle,
+                            n,
+                            cOwner,
+                            procRq.addr,
+                            cRqIsPrefetch[n],
+                            fshow(procRq.toState),
+                            ", op: ",
+                            fshow(procRq.op)
+                        );
+                end 
+                // If the tags don't match then we want to queue the cRq
+                else begin
+                    // if there was an option to add a dependency, L1Pipe should have found it
+                    doAssert(!isValid(cRqDependEOC), ("end of chain is valid but the chosen way did not match tags"));
+                    if (cRqIsPrefetch[n]) begin
+                        cRqDrop;
+                    end else begin
+                        if (cRqQueuedEOC matches tagged Valid .eoc) begin
+                            cRqMshr.pipelineResp.setSucc(eoc, Valid (n));
+                        end
+                        cRqQueue;
+                        if (prefetchVerbose)
+                            $display("%t L1D cRq queued: mshr: %d, addr: 0x%h, succTo: ",
+                                cur_cycle,
+                                n,
+                                procRq.addr,
+                                cRqQueuedEOC,
+                                "reqCs: ",
+                                fshow(procRq.toState),
+                                ", op: ",
+                                fshow(procRq.op)
+                            );
+                    end
                 end
-                if (verbose)
-                    $display("%t L1 %m pipelineResp: cRq: own by other cRq ", $time,
-                        fshow(cOwner), ", depend on cRq ", fshow(cRqEOC)
-                    );
-                if (prefetchVerbose)
-                    $display("%t L1D cRq dependency: mshr: %d, depMshr: %d, addr: 0x%h, cRq is prefetch: %d, reqCs: ",
-                        cur_cycle,
-                        n,
-                        cOwner,
-                        procRq.addr,
-                        cRqIsPrefetch[n],
-                        fshow(procRq.toState),
-                        ", op: ",
-                        fshow(procRq.op)
-                    );
             end
             else begin
                 // owner is myself, so must be swapped in
@@ -1126,62 +1172,38 @@ endfunction
             // 2. cRq addr-depends on an Sc which fails early, just got waken up
             L1CRqState cState = pipeOutCState;
 
-            // check for cRqEOC to append to dependency chain
-            // Only append to dep-chain if is in Init state
-            if(cRqEOC matches tagged Valid .k &&& cState == Init) begin
-               if (verbose)
-                $display("%t L1 %m pipelineResp: cRq: no owner, depend on cRq, ", $time,
-                    fshow(cState), " ; ", fshow(cRqEOC)
+            // There should be no dependency
+            doAssert(!isValid(cRqDependEOC), "end of chain is valid but the chosen way is not owned");
+            
+            // Check hit or miss, replacment may be needed
+            if(tag_match && enough_cs_to_hit) begin
+                // Hit
+                doAssert(cs_valid, "hit, so cs must > I");
+                if (verbose)
+                $display("%t L1 %m pipelineResp: cRq: no owner, hit", $time);
+                cRqHit(n, procRq, False);
+            end
+            else if(scFail) begin
+                // Sc already fails, so we don't need to req parent.  Since
+                // there is no owner of the line, we can reset owner to
+                // Invalid.
+                if (verbose)
+                $display("%t L1 %m pipelineResp: cRq: no owner, Sc early fails, ",
+                    $time, fshow(linkAddr)
                 );
-                if (cRqIsPrefetch[n]) begin
-                    cRqDrop;
-                end else begin
-                    cRqMshr.pipelineResp.setSucc(k, Valid (n));
-                    cRqSetDepNoCacheChange;
-                end
-                if (prefetchVerbose)
-                    $display("%t L1D cRq dependency: mshr: %d, depMshr: %d, addr: 0x%h, cRq is prefetch: %d, reqCs: ",
-                        cur_cycle,
-                        n,
-                        k,
-                        procRq.addr,
-                        cRqIsPrefetch[n],
-                        fshow(procRq.toState),
-                        ", op: ",
-                        fshow(procRq.op)
-                    );
+                cRqScEarlyFail(True);
+            end
+            else if(cs_valid && !tag_match) begin
+                // Req parent, need replacement
+                if (verbose)
+                $display("%t L1 %m pipelineResp: cRq: no owner, replace", $time);
+                cRqReplacement;
             end
             else begin
-                // Check hit or miss, replacment may be needed
-                if(tag_match && enough_cs_to_hit) begin
-                    // Hit
-                    doAssert(cs_valid, "hit, so cs must > I");
-                   if (verbose)
-                    $display("%t L1 %m pipelineResp: cRq: no owner, hit", $time);
-                    cRqHit(n, procRq, False);
-                end
-                else if(scFail) begin
-                    // Sc already fails, so we don't need to req parent.  Since
-                    // there is no owner of the line, we can reset owner to
-                    // Invalid.
-                   if (verbose)
-                    $display("%t L1 %m pipelineResp: cRq: no owner, Sc early fails, ",
-                        $time, fshow(linkAddr)
-                    );
-                    cRqScEarlyFail(True);
-                end
-                else if(cs_valid && !tag_match) begin
-                    // Req parent, need replacement
-                   if (verbose)
-                    $display("%t L1 %m pipelineResp: cRq: no owner, replace", $time);
-                    cRqReplacement;
-                end
-                else begin
-                   if (verbose)
-                    $display("%t L1 %m pipelineResp: cRq: no owner, miss no replace", $time);
-                    // Req parent, no replacement needed
-                    cRqMissNoReplacement;
-                end
+                if (verbose)
+                $display("%t L1 %m pipelineResp: cRq: no owner, miss no replace", $time);
+                // Req parent, no replacement needed
+                cRqMissNoReplacement;
             end
         end
     endrule
@@ -1229,7 +1251,7 @@ endfunction
             // pRq can be directly dropped
             // must go through tag match, no successor
             pRqMshr.pipelineResp.releaseEntry(n);
-            pipeline.deqWrite(Invalid, pipeOut.ram, False);
+            pipeline.deqWrite(Invalid, pipeOut.ram, pipeOutNextInQueue, False);
             // sanity check (ram.info.tag != getTag(pRq.addr) is useless)
             if(!pipeOut.pRqMiss) begin
                 doAssert(ram.info.cs == S && pRq.toState == S && ram.info.tag == getTag(pRq.addr),
@@ -1263,7 +1285,7 @@ endfunction
                     other: ?
                 },
                 line: ram.line
-            }, False);
+            }, pipeOutNextInQueue, False);
             rsToPIndexQ.enq(PRq (n));
             // update cRq bookkeeping
             cRqMshr.pipelineResp.setStateSlot(cOwner, WaitSt, L1CRqSlot {
@@ -1303,7 +1325,16 @@ endfunction
                     other: ram.info.other
                 },
                 line: ram.line
-            }, False);
+            }, pipeOutSecondInQueue, False);
+            if (pipeOutNextInQueue matches tagged Valid .nextInQueue) begin
+                $display("%t L1D dequeuing queued req: mshr: %d, queueSucc: ",
+                    cur_cycle,
+                    nextInQueue,
+                    fshow(pipeOutSecondInQueue)
+                );
+                cRqRetryIndexQ.enq(nextInQueue);
+                cRqMshr.manageQueue.resetEntry(nextInQueue);
+            end
             rsToPIndexQ.enq(PRq (n));
             if (prefetchVerbose)
                 $display("%t L1D pRq: line addr: 0x%h, wasPrefetch: %d, overtakeCRq: 0, ramCs: ",
@@ -1334,6 +1365,7 @@ endfunction
 
         // During flush, cRq MSHR is empty, so cache line cannot have owner
         doAssert(ram.info.owner == Invalid, "flushing line cannot have owner");
+        doAssert(pipeOutNextInQueue == Invalid, "flushing line cannot have queued requests");
 
         // flush always goes through cache pipeline, and is directly handled
         // here: either dropped or Done
@@ -1365,7 +1397,7 @@ endfunction
                 other: ?
             },
             line: ?
-        }, False);
+        }, Invalid, False);
 
         // always reset link addr
         linkAddr <= Invalid;
@@ -1488,8 +1520,9 @@ endmodule
 // -- cRqMshr.releaseEntry
 // -- read cRq MSHR req/state/slot/data currently processed
 // -- write cRq MSHR state/slot/data currently processed
+// -- write cRq MSHR state/succ of some existing cRq MSHR entry (in Queued)
 // -- write succ of some existing cRq MSHR entry (in WaitNewTag or WaitSt)
-// -- read all state/req/succ in cRq MSHR entry (searchEOC)
+// -- read all state/req/succ in cRq MSHR entry (searchDependEOC and searchQueueEOC)
 //    -- not affected by write in cRqTransfer
 //    -- not affected by write in sendRsToP_cRq (state change is just WaitNewTag->WaitSt)
 
@@ -1518,13 +1551,16 @@ endmodule
 
 // sendRqToP conflict free with pipelineResp_xxx
 
+// pipelineResp_cRq conflicts with itself, potentially writing state/succ of multiple entries
+
 // ---- conclusion ----
 
-// we have 4 ports from cRq MSHR
+// we have 5 ports from cRq MSHR
 // 1. cRqTransfer
 // 2. sendRsToP_cRq
 // 3. sendRqToP
 // 4. pipelineResp
+// 5. manageQueue
 
 // we have 3 ports from pRq MSHR
 // 1. pRqTransfer
@@ -1538,7 +1574,8 @@ endmodule
 // safe version: use EHR ports
 // sendRsToP_cRq/sendRsToP_pRq: port 0
 // pipelineResp: port 1
-// cRqTransfer/sendRqToP/pRqTransfer: port 2
+// manageQueue: port 2
+// cRqTransfer/sendRqToP/pRqTransfer: port 3
 
 // We put cRqTransfer at last because it is ordered after the issue method of
 // LSQ outside cache, while pipelineResp and sendRsToP will call other methods
@@ -1548,7 +1585,7 @@ endmodule
 
 // group banks into cache
 module mkL1Cache#(
-    module#(L1CRqMshr#(cRqNum, wayT, tagT, procRqT)) mkL1CRqMshrLocal,
+    module#(L1CRqMshr#(cRqNum, indexT, wayT, tagT, procRqT)) mkL1CRqMshrLocal,
     module#(L1PRqMshr#(pRqNum)) mkL1PRqMshrLocal,
     module#(L1Pipe#(lgBankNum, wayNum, indexT, tagT, cRqIdxT, pRqIdxT)) mkL1Pipeline,
     L1ProcResp#(procRqIdT) procResp,
@@ -1566,12 +1603,13 @@ module mkL1Cache#(
     Alias#(pRqIdxT, Bit#(TLog#(pRqNum))),
     Alias#(cacheOwnerT, Maybe#(cRqIdxT)),
     Alias#(cacheOtherT, PrefetchInfo),
+    Alias#(cacheSetAuxT, Maybe#(cRqIdxT)),
     Alias#(procRqT, ProcRq#(procRqIdT)),
     Alias#(cRqToPT, CRqMsg#(wayT, void)),
     Alias#(cRsToPT, CRsMsg#(void)),
     Alias#(pRqRsFromPT, PRqRsMsg#(wayT, void)),
     Alias#(l1CmdT, L1Cmd#(indexT, cRqIdxT, pRqIdxT)),
-    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, l1CmdT)),
+    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, cacheSetAuxT, l1CmdT)),
     // requirements
     Bits#(procRqIdT, _procRqIdT),
     FShow#(procRqIdT),

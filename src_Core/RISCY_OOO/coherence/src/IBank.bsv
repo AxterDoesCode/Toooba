@@ -126,6 +126,7 @@ module mkIBank#(
     Alias#(pRqIdxT, Bit#(TLog#(pRqNum))),
     Alias#(cacheOwnerT, Maybe#(cRqIdxT)), // owner cannot be pRq
     Alias#(cacheOtherT, PrefetchInfo), // owner cannot be pRq
+    Alias#(cacheSetAuxT, Maybe#(cRqIdxT)),
     Alias#(cacheInfoT, CacheInfo#(tagT, Msi, void, cacheOwnerT, PrefetchInfo)),
     Alias#(ramDataT, RamData#(tagT, Msi, void, cacheOwnerT, cacheOtherT, Line)),
     Alias#(procRqT, ProcRqToI),
@@ -136,7 +137,7 @@ module mkIBank#(
     Alias#(pRqRsFromPT, PRqRsMsg#(wayT, void)),
     Alias#(cRqSlotT, ICRqSlot#(wayT, tagT)), // cRq MSHR slot
     Alias#(l1CmdT, L1Cmd#(indexT, cRqIdxT, pRqIdxT)),
-    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, l1CmdT)),
+    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, cacheSetAuxT, l1CmdT)),
     Mul#(2, supSz, supSzX2),
     Alias#(resultT, Vector#(supSzX2, Maybe#(Instruction16))),
     // requirements
@@ -541,7 +542,7 @@ module mkIBank#(
                 other: ?
             },
             line: ram.line
-        }, True); // hit, so update rep info
+        }, Invalid, True); // hit, so update rep info
         if (!cRqIsPrefetch[n]) begin
             prefetcher.reportAccess(req.addr, HIT);
             llcPrefetcher.reportAccess(req.addr, HIT);
@@ -604,7 +605,7 @@ module mkIBank#(
                     other: ?
                 },
                 line: ram.line
-            }, False);
+            }, Invalid, False);
             if (!cRqIsPrefetch[n]) begin
                 prefetcher.reportAccess(procRq.addr, MISS);
                 llcPrefetcher.reportAccess(procRq.addr, MISS);
@@ -626,7 +627,7 @@ module mkIBank#(
                     other: ?
                 },
                 line: ? // data is no longer used
-            }, False);
+            }, Invalid, False);
             doAssert(ram.info.cs == S, "I$ replacement only replace S line");
             // update MSHR to save replaced tag
             // although we send req to parent later (when resp to parent is sent)
@@ -649,7 +650,7 @@ module mkIBank#(
         function Action cRqSetDepNoCacheChange;
         action
             cRqMshr.pipelineResp.setStateSlot(n, Depend, defaultValue);
-            pipeline.deqWrite(Invalid, pipeOut.ram, False);
+            pipeline.deqWrite(Invalid, pipeOut.ram, Invalid, False);
         endaction
         endfunction
 
@@ -750,7 +751,7 @@ module mkIBank#(
             $display("%t I %m pipelineResp: pRq: drop", $time);
             // pRq can be directly dropped, no successor (since just go through pipeline)
             pRqMshr.pipelineResp.releaseEntry(n);
-            pipeline.deqWrite(Invalid, pipeOut.ram, False);
+            pipeline.deqWrite(Invalid, pipeOut.ram, Invalid, False);
         end
         else begin
            if (verbose)
@@ -773,7 +774,7 @@ module mkIBank#(
                     other: ?
                 },
                 line: ? // line is not useful
-            }, False);
+            }, Invalid, False);
             // pRq is done
             pRqMshr.pipelineResp.setDone(n);
             // send resp to parent
@@ -834,7 +835,7 @@ module mkIBank#(
                 other: ?
             },
             line: ?
-        }, False);
+        }, Invalid, False);
 
         // check if we have finished all flush
         if (flush.index == maxBound &&
