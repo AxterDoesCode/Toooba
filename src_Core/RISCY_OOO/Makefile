@@ -120,6 +120,7 @@ copy_coherence_src_files:
 	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/Prefetcher/Prefetcher_intf.bsv         ./$(COHERENCE_SRC)/
 	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/Prefetcher/StridePrefetchers.bsv       ./$(COHERENCE_SRC)/
 	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/Prefetcher/CheriPrefetchers.bsv       ./$(COHERENCE_SRC)/
+	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/Prefetcher/NewCheriPrefetchers.bsv       ./$(COHERENCE_SRC)/
 	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/Prefetcher/MarkovPrefetchers.bsv       ./$(COHERENCE_SRC)/
 	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/Prefetcher/InstructionPrefetchers.bsv  ./$(COHERENCE_SRC)/
 	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/Prefetcher/SignaturePathPrefetcher.bsv ./$(COHERENCE_SRC)/

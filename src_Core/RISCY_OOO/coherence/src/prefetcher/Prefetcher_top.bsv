@@ -38,12 +38,14 @@ import BuildVector::*;
 import ProcTypes::*;
 import CHERICap::*;
 import CHERICC_Fat::*;
+import MemoryTypes::*;
 
 import Prefetcher_intf::*;
 import InstructionPrefetchers::*;
 import StridePrefetchers::*;
 import MarkovPrefetchers::*;
 import CheriPrefetchers::*;
+import NewCheriPrefetchers::*;
 import SignaturePathPrefetcher::*;
 
 `define VERBOSE True
@@ -138,11 +140,11 @@ endmodule
 
 module mkCheriPCPrefetcherAdapter#(module#(PCPrefetcher) mkPrefetcher)(CheriPCPrefetcher);
     let p <- mkPrefetcher;
-    method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, 
+    method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp,
         Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
-        p.reportAccess(addr, hash(pcHash), hitMiss);
+        if(memOp == Ld) p.reportAccess(addr, hash(pcHash), hitMiss);
     endmethod
-    method Action reportCacheDataArrival(CLine lineWithTags, Addr accessAddr, PCHash pcHash, Bool wasMiss, Bool wasPrefetch, 
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr accessAddr, PCHash pcHash, MemOp memOp, Bool wasMiss, Bool wasPrefetch, 
         Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
     endmethod
     method ActionValue#(Tuple2#(Addr, CapPipe)) getNextPrefetchAddr;
@@ -258,18 +260,18 @@ provisos ();
         return prefetchRq.first;
     endmethod
 
-    method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, 
+    method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp,
         Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
 
-        p1.reportAccess(addr, pcHash, hitMiss, boundsOffset, boundsLength, boundsVirtBase, capPerms);
-        p2.reportAccess(addr, pcHash, hitMiss, boundsOffset, boundsLength, boundsVirtBase, capPerms);
+        p1.reportAccess(addr, pcHash, hitMiss, memOp, boundsOffset, boundsLength, boundsVirtBase, capPerms);
+        p2.reportAccess(addr, pcHash, hitMiss, memOp, boundsOffset, boundsLength, boundsVirtBase, capPerms);
     endmethod
 
-    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, PCHash pcHash, 
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, PCHash pcHash, MemOp memOp, 
         Bool wasMiss, Bool wasPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
 
-        p1.reportCacheDataArrival(lineWithTags, addr, pcHash, wasMiss, wasPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
-        p2.reportCacheDataArrival(lineWithTags, addr, pcHash, wasMiss, wasPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
+        p1.reportCacheDataArrival(lineWithTags, addr, pcHash, memOp, wasMiss, wasPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
+        p2.reportCacheDataArrival(lineWithTags, addr, pcHash, memOp, wasMiss, wasPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
     endmethod
 
 `ifdef PERFORMANCE_MONITORING
@@ -440,6 +442,30 @@ module mkL1DPrefetcher#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(64) trainingTableSize <- mkParameter;
         Parameter#(4) inverseDecayChance <- mkParameter;
         let m <- mkCapPtrPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance);
+    `elsif DATA_PREFETCHER_CAP_PTR_NEW
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
+        Parameter#(4096) ptrTableSize <- mkParameter; 
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4) inverseDecayChance <- mkParameter;
+        Parameter#(1) onlyOnMiss <- mkParameter;
+        Parameter#(0) onlyExactCap <- mkParameter;
+        let m <- mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
+    `elsif DATA_PREFETCHER_CAP_PTR_NEW_ONHIT
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
+        Parameter#(4096) ptrTableSize <- mkParameter; 
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4) inverseDecayChance <- mkParameter;
+        Parameter#(0) onlyOnMiss <- mkParameter;
+        Parameter#(0) onlyExactCap <- mkParameter;
+        let m <- mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
+    `elsif DATA_PREFETCHER_CAP_PTR_NEW_EXACTCAP
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
+        Parameter#(4096) ptrTableSize <- mkParameter; 
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4) inverseDecayChance <- mkParameter;
+        Parameter#(1) onlyOnMiss <- mkParameter;
+        Parameter#(1) onlyExactCap <- mkParameter;
+        let m <- mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
     `elsif DATA_PREFETCHER_CAP_SPATIAL_PTR
         Parameter#(2097152) ptrMaxCapSizeToTrack <- mkParameter;
         Parameter#(4096) ptrTableSize <- mkParameter; 
@@ -530,6 +556,30 @@ module mkLLDPrefetcherInL1D#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(64) trainingTableSize <- mkParameter;
         Parameter#(4) inverseDecayChance <- mkParameter;
         let m <- mkCapPtrPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance);
+    `elsif DATA_PREFETCHER_CAP_PTR_NEW
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
+        Parameter#(4096) ptrTableSize <- mkParameter; 
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4) inverseDecayChance <- mkParameter;
+        Parameter#(1) onlyOnMiss <- mkParameter;
+        Parameter#(0) onlyExactCap <- mkParameter;
+        let m <- mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
+    `elsif DATA_PREFETCHER_CAP_PTR_NEW_ONHIT
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
+        Parameter#(4096) ptrTableSize <- mkParameter; 
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4) inverseDecayChance <- mkParameter;
+        Parameter#(0) onlyOnMiss <- mkParameter;
+        Parameter#(0) onlyExactCap <- mkParameter;
+        let m <- mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
+    `elsif DATA_PREFETCHER_CAP_PTR_NEW_EXACTCAP
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
+        Parameter#(4096) ptrTableSize <- mkParameter; 
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4) inverseDecayChance <- mkParameter;
+        Parameter#(1) onlyOnMiss <- mkParameter;
+        Parameter#(1) onlyExactCap <- mkParameter;
+        let m <- mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
     `elsif DATA_PREFETCHER_CAP_SPATIAL_PTR
         Parameter#(2097152) ptrMaxCapSizeToTrack <- mkParameter;
         Parameter#(4096) ptrTableSize <- mkParameter; 
