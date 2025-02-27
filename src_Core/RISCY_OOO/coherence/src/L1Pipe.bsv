@@ -278,7 +278,9 @@ module mkL1Pipe(
                 // find hit way (nothing is being replaced)
                 function Bool isMatch(Tuple3#(Msi, tagT, ownerT) csTagOwner);
                     match {.cs, .t, .o} = csTagOwner;
-                    return (cs > I || isValid(o)) && t == tag;
+                    Bool cRqHit = (cs > I || isValid(o)) && t == tag;
+                    Bool pRqHit = cs > I && t == tag;
+                    return cmd matches tagged CRq .* ? cRqHit : pRqHit;
                 endfunction
                 Maybe#(wayT) hitWay = searchIndex(isMatch, zip3(csVec, tagVec, ownerVec));
                 if(hitWay matches tagged Valid .w) begin

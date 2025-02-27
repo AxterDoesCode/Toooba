@@ -1126,8 +1126,8 @@ endfunction
                                 cur_cycle,
                                 n,
                                 procRq.addr,
-                                cRqQueuedEOC,
-                                "reqCs: ",
+                                fshow(cRqQueuedEOC),
+                                ", reqCs: ",
                                 fshow(procRq.toState),
                                 ", op: ",
                                 fshow(procRq.op)
