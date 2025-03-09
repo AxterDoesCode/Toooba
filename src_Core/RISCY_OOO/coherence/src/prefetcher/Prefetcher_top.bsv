@@ -466,6 +466,14 @@ module mkL1DPrefetcher#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(1) onlyOnMiss <- mkParameter;
         Parameter#(1) onlyExactCap <- mkParameter;
         let m <- mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
+    `elsif DATA_PREFETCHER_CAP_PTR_NEW_EXACTCAP_ONHIT
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
+        Parameter#(4096) ptrTableSize <- mkParameter; 
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4) inverseDecayChance <- mkParameter;
+        Parameter#(0) onlyOnMiss <- mkParameter;
+        Parameter#(1) onlyExactCap <- mkParameter;
+        let m <- mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
     `elsif DATA_PREFETCHER_CAP_SPATIAL_PTR
         Parameter#(2097152) ptrMaxCapSizeToTrack <- mkParameter;
         Parameter#(4096) ptrTableSize <- mkParameter; 
