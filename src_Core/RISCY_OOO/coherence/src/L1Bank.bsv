@@ -1051,6 +1051,7 @@ endfunction
         function Action cRqSetDepNoCacheChange;
         action
             cRqMshr.pipelineResp.setStateSlot(n, Depend, defaultValue);
+            cRqMshr.pipelineResp.setSucc(fromMaybe(?, cRqDependEOC), Valid (n));
             pipeline.deqWrite(Invalid, pipeOut.ram, pipeOutNextInQueue, False);
         endaction
         endfunction
@@ -1058,6 +1059,9 @@ endfunction
         function Action cRqQueue;
         action
             cRqMshr.pipelineResp.setStateSlot(n, Queued, defaultValue);
+            if (cRqQueuedEOC matches tagged Valid .eoc) begin
+                cRqMshr.pipelineResp.setSucc(eoc, Valid (n));
+            end
             pipeline.deqWrite(Invalid, pipeOut.ram, Valid(fromMaybe(n, pipeOutNextInQueue)), False);
         endaction
         endfunction
@@ -1091,7 +1095,6 @@ endfunction
                     if (cRqIsPrefetch[n]) begin
                         cRqDrop;
                     end else begin
-                        cRqMshr.pipelineResp.setSucc(fromMaybe(?, cRqDependEOC), Valid (n));
                         cRqSetDepNoCacheChange;
                     end
                     if (verbose)
@@ -1117,9 +1120,6 @@ endfunction
                     if (cRqIsPrefetch[n]) begin
                         cRqDrop;
                     end else begin
-                        if (cRqQueuedEOC matches tagged Valid .eoc) begin
-                            cRqMshr.pipelineResp.setSucc(eoc, Valid (n));
-                        end
                         cRqQueue;
                         if (prefetchVerbose)
                             $display("%t L1D cRq queued: mshr: %d, addr: 0x%h, succTo: ",
