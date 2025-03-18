@@ -80,7 +80,7 @@ interface FetchStage;
 
     // redirection methods
     method Action setWaitRedirect;
-    method Action redirect(Addr pc);
+    method Action redirect(Addr pc, Maybe#(Bool) redirect_type);
 `ifdef INCLUDE_GDB_CONTROL
    method Action setWaitFlush;
 `endif
@@ -378,7 +378,8 @@ module mkFetchStage(FetchStage);
 `endif
 `ifdef PERFORMANCE_MONITORING
     Reg#(Bool) redirect_evt_reg <- mkDReg(False);
-    Reg#(Bool) early_redirect_evt_reg <- mkDReg(False);
+    Reg#(Bool) jump_mispredict_evt_reg <- mkDReg(False);
+    Reg#(Bool) branch_mispredict_evt_reg <- mkDReg(False);
 `endif
 
     rule updatePcInBtb;
@@ -901,9 +902,6 @@ module mkFetchStage(FetchStage);
       // update PC and epoch
       if(redirectPc matches tagged Valid .rp) begin
          pc_reg[pc_decode_port] <= rp;
-`ifdef PERFORMANCE_MONITORING
-         early_redirect_evt_reg <= True;
-`endif
       end
       decode_epoch[0] <= decode_epoch_local;
       // send training data for next addr pred
@@ -989,7 +987,7 @@ module mkFetchStage(FetchStage);
     method Action setWaitRedirect;
         waitForRedirect[0] <= True;
     endmethod
-    method Action redirect(Addr new_pc);
+    method Action redirect(Addr new_pc, Maybe#(Bool) redirect_type);
         if (verbose) $display("Redirect: newpc %h, old f_main_epoch %d, new f_main_epoch %d",new_pc,f_main_epoch,f_main_epoch+1);
         //virtualReg <= virtualReg;
         //$display("%b\n",virtualReg);
@@ -997,6 +995,15 @@ module mkFetchStage(FetchStage);
 
         pc_reg[pc_redirect_port] <= new_pc;
         f_main_epoch <= (f_main_epoch == fromInteger(valueOf(NumEpochs)-1)) ? 0 : f_main_epoch + 1;
+
+        `ifdef PERFORMANCE_MONITORING
+        if(redirect_type matches tagged Valid .jump) begin
+            if(jump)    
+                jump_mispredict_evt_reg <= True;
+            else
+                branch_mispredict_evt_reg <= True;
+        end
+        `endif
         // redirect comes, stop stalling for redirect
         waitForRedirect[1] <= False;
         // this redirect may be caused by a trap/system inst in commit stage
@@ -1109,6 +1116,6 @@ module mkFetchStage(FetchStage);
     endinterface
 
 `ifdef PERFORMANCE_MONITORING
-    method FetchEvents events = FetchEvents{evt_REDIRECT: redirect_evt_reg, evt_EARLY_REDIRECT: early_redirect_evt_reg, branch_evts: dirPred.events};
+    method FetchEvents events = FetchEvents{evt_REDIRECT: redirect_evt_reg, evt_JUMP_REDIRECT: jump_mispredict_evt_reg, evt_BRANCH_REDIRECT: branch_mispredict_evt_reg};
 `endif
 endmodule

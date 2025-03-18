@@ -64,7 +64,9 @@ module mkTageTest(DirPredictor#(TageTrainInfo#(`NUM_TABLES), TageSpecInfo, TageT
         tage.dirPredInterface.confirmPred(results, count);
     endmethod*/
 
+    `ifdef PERFORMANCE_MONITORING
     method BranchEvents events = BranchEvents{evt_BRANCH_MISPREDICT: mispredict};
+    `endif
 
     method Action nextPc(Vector#(SupSize,Maybe#(PredIn#(TageFastTrainInfo))) next);
         tage.dirPredInterface.nextPc(next);

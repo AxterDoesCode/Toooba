@@ -1085,10 +1085,8 @@ typedef struct {
    SupCnt evt_REDIRECT;
    SupCnt evt_TRAP;
    SupCnt evt_BRANCH;
-   SupCnt evt_BRANCH_MISPREDICT;
-   SupCnt evt_EARLY_REDIRECT;
-   SupCnt evt_JAL;
-   SupCnt evt_JALR;
+   SupCnt evt_BRANCH_REDIRECT;
+   SupCnt evt_JUMP_REDIRECT;
    SupCnt evt_AUIPC;
    SupCnt evt_LOAD;
    SupCnt evt_STORE;
@@ -1118,8 +1116,9 @@ typedef TDiv#(SizeOf#(EventsCore),SizeOf#(SupCnt)) EventsCoreElements;
 
 typedef struct {
   Bool evt_REDIRECT;
-  Bool evt_EARLY_REDIRECT;
-  BranchEvents branch_evts;
+  Bool evt_JUMP_REDIRECT;
+  Bool evt_BRANCH_REDIRECT;
+  //BranchEvents branch_evts;
 } FetchEvents deriving (Bits, FShow);
 
 typedef struct {
@@ -1131,10 +1130,8 @@ typedef struct {
    HpmRpt evt_REDIRECT;
    HpmRpt evt_TRAP;
    HpmRpt evt_BRANCH;
-   HpmRpt evt_BRANCH_MISPREDICT;
-   HpmRpt evt_EARLY_REDIRECT;
-   HpmRpt evt_JAL;
-   HpmRpt evt_JALR;
+   HpmRpt evt_BRANCH_REDIRECT;
+   HpmRpt evt_JUMP_REDIRECT;
    HpmRpt evt_AUIPC;
    HpmRpt evt_LOAD;
    HpmRpt evt_STORE;
