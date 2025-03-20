@@ -5,12 +5,10 @@
 
 usage_line = (
     "  Usage:\n"
-    "    $ <this_prog>    <simulation_executable>  <repo_dir>  <logs_dir>  <arch>  <opt verbosity>  <opt parallelism> <opt timeout_secs>\n"
+    "    $ <this_prog>    <simulation_executable>  <repo_dir>  <logs_dir> <opt verbosity>  <opt parallelism> <opt timeout_secs>\n"
     "\n"
     "  Runs the RISC-V <simulation_executable>\n"
     "  on ISA tests: ELF files taken from <repo-dir>/isa and its sub-directories.\n"
-    "\n"
-    "  Runs it only on those ELF files that are relevant to architecture <arch>.\n"
     "\n"
     "  For each ELF file FOO, saves simulation output in <logs_dir>/FOO.log. \n"
     "\n"
@@ -29,12 +27,9 @@ usage_line = (
     "      Defaults to 60s\n."
     "\n"
     "  Example:\n"
-    "      $ <this_prog>  .exe_HW_sim  ~somebody/GitHub/Piccolo  ./Logs  RV32IMU  v1 4\n"
+    "      $ <this_prog>  .exe_HW_sim  ~somebody/GitHub/Toooba ./Logs v1 4\n"
     "    will run the verilator simulation executable on the following RISC-V ISA tests:\n"
-    "            ~somebody/GitHub/Tests/isa/rv32ui-p*\n"
-    "            ~somebody/GitHub/Tests/isa/rv32mi-p*\n"
-    "            ~somebody/GitHub/Tests/isa/rv32um-p*\n"
-    "    which are relevant for architecture RV32IMU\n"
+    "            ~somebody/GitHub/Tests/benchmarks/*.bin\n"
     "    and will leave a transcript of each test's simulation output in files like\n"
     "            ./Logs/rv32ui-p-add.log\n"
     "    Each log will contain an instruction trace (because of the 'v1' arg).\n"
@@ -56,15 +51,17 @@ exclude_list = []
 
 n_workers_max = 8
 
-timeout = 120
+timeout = 6000
 
+def print_hello ():
+    print ("hello")
 # ================================================================
 
 def main (argv = None):
     print ("Use flag --help  or --h for a help message")
     if ((len (argv) <= 1) or
         (argv [1] == '-h') or (argv [1] == '--help') or
-        (len (argv) < 5)):
+        (len (argv) < 4)):
 
         sys.stdout.write (usage_line)
         sys.stdout.write ("\n")
@@ -86,9 +83,9 @@ def main (argv = None):
         return 1
     repo = os.path.abspath (os.path.normpath (argv [2]))
 
-    elfs_path = os.path.join (repo, "Tests", "isa")
+    elfs_path = os.path.join (repo, "Tests", "benchmarks")
     if (not os.path.exists (elfs_path)):
-        sys.stderr.write ("ERROR: ELFs directory ({0}) does not exist?\n".format (elfs_path))
+        sys.stderr.write ("ERROR: BINs directory ({0}) does not exist?\n".format (elfs_path))
         sys.stdout.write ("\n")
         sys.stdout.write (usage_line)
         sys.stdout.write ("\n")
@@ -102,38 +99,22 @@ def main (argv = None):
         os.mkdir (logs_path)
     args_dict ['logs_path'] = logs_path
 
-    # Architecture string and implied ISA test families
-    arch_string = extract_arch_string (argv [4])
-    if (arch_string == None):
-        sys.stderr.write ("ERROR: no architecture specified?\n")
-        sys.stdout.write ("\n")
-        sys.stdout.write (usage_line)
-        sys.stdout.write ("\n")
-        return 1
-    args_dict ['arch_string'] = arch_string
-
-    test_families = select_test_families (arch_string)
-    print ("Testing the following families of ISA tests")
-    for tf in test_families:
-        print ("    " + tf)
-    args_dict ['test_families'] = test_families
-
     # Optional verbosity
     verbosity = 0
-    j = 5
-    if len (argv) >= 6:
-        if argv [5] == "v1":
+    j = 4
+    if len (argv) >= 5:
+        if argv [4] == "v1":
             verbosity = 1
-            j = 6
-        elif argv [5] == "v2":
+            j = 5
+        elif argv [4] == "v2":
             verbosity = 2
-            j = 6
+            j = 5
     args_dict ['verbosity'] = verbosity
 
     # Optional parallelism; limit it to 8
     if len (argv [j:]) != 0 and isdecimal (argv [j]):
         n_workers = int (argv [j])
-        j = 7
+        j = 6
     else:
         n_workers = multiprocessing.cpu_count () - 4
     n_workers = max(min (n_workers_max, n_workers), 1)
@@ -142,7 +123,7 @@ def main (argv = None):
     global timeout
     if len(argv[j:]) != 0 and isdecimal (argv[j]):
         timeout = int(argv[j])
-        j = 8
+        j = 7
     sys.stdout.write (f"Using {timeout}s timeout\n")
 
     # End of command-line arg processing
@@ -165,8 +146,6 @@ def main (argv = None):
 
     def fn_filter_regular_file (level, filename):
         (dirname, basename) = os.path.split (filename)
-        # Ignore filename if has any extension (heuristic that it's not an ELF file)
-        if "." in basename: return False
 
         # TEMPORARY FILTER WHILE DEBUGGING:
         if basename in exclude_list:
@@ -174,9 +153,10 @@ def main (argv = None):
             sys.stdout.write ("    This test is in exclude_list: {0}\n".format (basename))
             return False
 
-        # Ignore filename if does not match test_families
-        for x in args_dict ['test_families']:
-            if basename.find (x) != -1: return True
+        # Ignore filename if it is not a "*.bin"
+        if basename.find (".bin") != -1:
+            return True
+        
         return False
 
     def fn_filter_dir (level, filename):
@@ -185,7 +165,7 @@ def main (argv = None):
     # Traverse the elfs_path and collect filenames of relevant isa tests
     filenames = traverse (fn_filter_dir, fn_filter_regular_file, 0, elfs_path)
     n_tests   = len (filenames)
-    sys.stdout.write ("{0} relevant isa tests found under {1}\n".format (n_tests, elfs_path))
+    sys.stdout.write ("{0} relevant benchmarks found under {1}\n".format (n_tests, elfs_path))
     if n_tests == 0:
         return 0
     args_dict ['filenames'] = filenames
@@ -207,6 +187,7 @@ def main (argv = None):
     # Create n workers
     sys.stdout.write ("Creating {0} workers (sub-processes)\n".format (n_workers))
     workers        = [multiprocessing.Process (target = do_worker,
+                                               #args = (w, args_dict, tap_out))
                                                args = (w, args_dict))
                       for w in range (n_workers)]
 
@@ -229,83 +210,11 @@ def main (argv = None):
             num_passed   = num_passed   + n_p
 
     # Write final statistics
-    sys.stdout.write ("Total tests: {0} tests\n".format (n_tests))
+    sys.stdout.write ("Total benchmarks: {0} tests\n".format (n_tests))
     sys.stdout.write ("Executed:    {0} tests\n".format (num_executed))
     sys.stdout.write ("PASS:        {0} tests\n".format (num_passed))
     sys.stdout.write ("FAIL:        {0} tests\n".format (num_executed - num_passed))
     return 0
-
-# ================================================================
-# Extract the architecture string (e.g., RV64AIMSU) from the string s
-
-def extract_arch_string (s):
-    s1     = s.upper()
-    j_rv32 = s1.find ("RV32")
-    j_rv64 = s1.find ("RV64")
-
-    if (j_rv32 >= 0):
-        j = j_rv32
-    elif (j_rv64 >= 0):
-        j = j_rv64
-    else:
-        sys.stderr.write ("ERROR: cannot find architecture string beginning with RV32 or RV64 in: \n")
-        sys.stderr.write ("    '" + s + "'\n")
-        sys.exit (1)
-
-    k = j + 4
-    rv = s1 [j:k]
-
-    extns = ""
-    while (k < len (s)):
-        ch = s [k]
-        if (ch < "A") or (ch > "Z"): break
-        extns = extns + s [k]
-        k     = k + 1
-
-    arch = rv + extns
-    return arch
-
-# ================================================================
-# Select ISA test families based on provided arch string
-
-def select_test_families (arch):
-    arch = arch.lower ()
-    families = []
-
-    if arch.find ("32") != -1:
-        rv = 32
-        families = ["rv32ui-p", "rv32mi-p"]
-    else:
-        rv = 64
-        families = ["rv64ui-p", "rv64mi-p"]
-
-    if (arch.find ("s") != -1):
-        s = True
-        if rv == 32:
-            families.extend (["rv32ui-v", "rv32si-p"])
-        else:
-            families.extend (["rv64ui-v", "rv64si-p"])
-    else:
-        s = False
-
-    def add_family (extension):
-        if (arch.find (extension) != -1):
-            if rv == 32:
-                families.append ("rv32u" + extension + "-p")
-                if s:
-                    families.append ("rv32u" + extension + "-v")
-            else:
-                families.append ("rv64u" + extension + "-p")
-                if s:
-                    families.append ("rv64u" + extension + "-v")
-
-    add_family ("m")
-    add_family ("a")
-    add_family ("f")
-    add_family ("d")
-    add_family ("c")
-
-    return families
 
 # ================================================================
 # Recursively traverse the dir tree below path and collect filenames
@@ -364,7 +273,7 @@ def do_worker (worker_num, args_dict):
             return
         filename = filenames [my_index]
 
-        (message, passed) = do_isa_test (args_dict, filename)
+        (message, passed) = do_benchmark (args_dict, filename)
         num_executed = num_executed + 1
 
         if passed:
@@ -382,15 +291,15 @@ def do_worker (worker_num, args_dict):
                                       num_passed,
                                       num_executed - num_passed))
         sys.stdout.write (message)
-         # Create a TAP file to output individual test result in TAP format
-        tap_out = open("../isa_test_report.tap", "a+")
+        # Create a TAP file to output individual test result in TAP format
+        tap_out = open("../benchmark_report.tap", "a+")
         tap_out.write(("ok" if passed else "not ok") + " " + str(my_index + 1) + " - " + filenames[my_index] + "\n")
         tap_out.close()
 
 # ================================================================
 # For each ELF file, execute it in the RISC-V simulator
 
-def do_isa_test (args_dict, full_filename):
+def do_benchmark (args_dict, full_filename):
     message = ""
 
     (dirname, basename) = os.path.split (full_filename)
@@ -423,7 +332,7 @@ def do_isa_test (args_dict, full_filename):
             completed_process2 = run_command (command2, fd)
             passed = completed_process2 is not None and \
                 completed_process2.returncode == 0 and \
-                completed_process2.stdout.find ("PASS") != -1
+                not completed_process2.stdout.endswith ("FAIL 1")
         else:
             passed = False
 
