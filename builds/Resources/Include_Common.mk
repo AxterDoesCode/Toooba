@@ -17,6 +17,7 @@ help:
 	@echo '                           For Bluesim: generates Bluesim intermediate files'
 	@echo '                           For Verilog simulation: generates RTL'
 	@echo '    make  simulator    Compiles and links intermediate files/RTL to create simulation executable'
+	@echo '    make  tagsparams   Generates the CHERI tag controller parameters source file'
 	@echo '                           (Bluesim, verilator or iverilog)'
 	@echo '    make  all          = make  compile  simulator'
 	@echo ''
@@ -24,6 +25,7 @@ help:
 	@echo ''
 	@echo '    make  test         Runs simulation executable on rv32ui-p-add or rv64ui-p-add'
 	@echo '    make  isa_tests    Runs simulation executable on all relevant standard RISC-V ISA tests'
+	@echo '    make  benchmarks   Runs simulation executable on a set of benchmarks'
 	@echo ''
 	@echo '    make  clean        Remove intermediate build-files unnecessary for execution'
 	@echo '    make  full_clean   Restore to pristine state (pre-building anything)'
@@ -34,13 +36,9 @@ all: compile  simulator
 # ================================================================
 # Search path for bsc for .bsv files
 
-CORE_DIRS = $(REPO)/src_Core/CPU:$(REPO)/src_Core/ISA:$(REPO)/src_Core/Core:$(REPO)/src_Core/PLIC:$(REPO)/src_Core/Debug_Module:$(REPO)/src_Core/BSV_Additional_Libs
+TESTBENCH_DIRS = $(REPO)/src_Testbench/Top:$(REPO)/src_Testbench/SoC
 
-TESTBENCH_DIRS = $(REPO)/src_Testbench/Top:$(REPO)/src_Testbench/SoC:$(REPO)/src_Testbench/Fabrics/AXI4
-
-BLUESTUFF_DIRS = $(REPO)/src_Core/BSV_Additional_Libs/BlueStuff:$(REPO)/src_Core/BSV_Additional_Libs/BlueStuff/BlueUtils:$(REPO)/src_Core/BSV_Additional_Libs/BlueStuff/BlueBasics
-
-BSC_PATH = $(ALL_RISCY_DIRS):$(CORE_DIRS):$(TESTBENCH_DIRS):$(BLUESTUFF_DIRS):+
+BSC_PATH += -p +:$(TESTBENCH_DIRS):$(EXTRA_DIRS)
 
 # ----------------
 # Top-level file and module
@@ -48,19 +46,24 @@ BSC_PATH = $(ALL_RISCY_DIRS):$(CORE_DIRS):$(TESTBENCH_DIRS):$(BLUESTUFF_DIRS):+
 TOPFILE   ?= $(REPO)/src_Testbench/Top/Top_HW_Side.bsv
 TOPMODULE ?= mkTop_HW_Side
 
-# ----------------
-# Target for Bluestuff submodules.
-$(REPO)/src_Core/BSV_Additional_Libs/BlueStuff/.git:
-	git submodule update --init --recursive
-
 # ================================================================
 # bsc compilation flags
 
 BSC_COMPILATION_FLAGS += \
+	-D BSIM \
+	-D MULT_SYNTH    \
+	-D Near_Mem_Caches    \
+	-D FABRIC64    \
+	-D BLUESIM \
+	-D RVFI \
+	-D PERFORMANCE_MONITORING \
 	-keep-fires -aggressive-conditions -no-warn-action-shadowing -check-assert \
 	-suppress-warnings G0020 -steps-max-intervals 10000000   \
 	-steps-warn-interval 1000000 \
-	+RTS -K128M -RTS  -show-range-conflict
+	-promote-warnings T0054 \
+	+RTS -K128M -RTS  -show-range-conflict -show-schedule
+
+#	-D NO_SPEC_TRAINING -D NO_SPEC_REDIRECT -D NO_SPEC_STRAIGHT_PATH -D SPEC_RSB_FIXUP -D NO_SPEC_RSB_PUSH -D NO_SPEC_STL
 
 # ================================================================
 # Runs simulation executable on ELF given by EXAMPLE
@@ -96,13 +99,54 @@ isa_tests:
 	@echo "Finished running regressions; saved logs in Logs/"
 
 # ================================================================
+# Benchmarks
+
+.PHONY: benchmarks
+benchmarks:
+	@echo "Running benchmarks; saving logs in Logs/"
+	$(REPO)/Tests/Run_benchmarks.py  ./exe_HW_sim  $(REPO)  ./Logs
+	@echo "Finished running benchmarks"
+	$(REPO)/Tests/benchmarks/report_log.sh Logs/*.bin.log
+
+# ================================================================
+# Generate Bluespec CHERI tag controller source file
+CAPSIZE = 128
+TAGS_STRUCT = 0 64
+TAGS_ALIGN = 32
+.PHONY: tagsparams
+tagsparams: TagTableStructure.bsv
+TagTableStructure.bsv: $(REPO)/libs/TagController/tagsparams.py
+	@echo "INFO: Re-generating CHERI tag controller parameters"
+	$^ -v -c $(CAPSIZE) -s $(TAGS_STRUCT:"%"=%) -a $(TAGS_ALIGN) --data-store-base-addr 0x80000000 -b $@ 0x3fffc000 0xbffff000
+	@echo "INFO: Re-generated CHERI tag controller parameters"
+
+
+.PHONY: generate_hpm_vector
+generate_hpm_vector: GenerateHPMVector.bsv
+GenerateHPMVector.bsv: $(RISCV_HPM_EVENTS_DIR)/parse_counters.py
+	@echo "INFO: Re-generating GenerateHPMVector bluespec file"
+	$^ $(RISCV_HPM_EVENTS_DIR)/counters.yaml -m ProcTypes -b $@
+	@echo "INFO: Re-generated GenerateHPMVector bluespec file"
+
+
+.PHONY: stat_counters
+stat_counters: StatCounters.bsv
+StatCounters.bsv: $(RISCV_HPM_EVENTS_DIR)/parse_counters.py
+	@echo "INFO: Re-generating HPM events struct bluepsec file"
+	$^ $(RISCV_HPM_EVENTS_DIR)/counters.yaml -m ProcTypes -s $@
+	@echo "INFO: Re-generated HPM events struct bluespec file"
+compile: tagsparams #stat_counters generate_hpm_vector
+
+# ================================================================
 
 .PHONY: clean
 clean:
-	rm -r -f  *~  Makefile_*  symbol_table.txt  build_dir  obj_dir
+	rm -r -f  *~  Makefile_*  symbol_table.txt  build_dir/*  obj_dir Verilog_RTL/*
+	rm -f TagTableStructure.bsv StatCounters.bsv GenerateHPMVector.bsv
 
 .PHONY: full_clean
 full_clean: clean
 	rm -r -f  $(SIM_EXE_FILE)*  *.log  *.vcd  *.hex  Logs/
+	rm -f TagTableStructure.bsv StatCounters.bsv GenerateHPMVector.bsv .depends.mk
 
 # ================================================================

@@ -1,3 +1,18 @@
 [submodule "src_Core/BSV_Additional_Libs/BlueStuff"]
 	path = src_Core/BSV_Additional_Libs/BlueStuff
 	url = https://github.com/CTSRD-CHERI/BlueStuff.git
+[submodule "libs/TagController"]
+	path = libs/TagController
+	url = https://github.com/CTSRD-CHERI/TagController.git
+[submodule "libs/cheri-cap-lib"]
+	path = libs/cheri-cap-lib
+	url = https://github.com/CTSRD-CHERI/cheri-cap-lib.git
+[submodule "libs/RISCV_HPM_Events"]
+	path = libs/RISCV_HPM_Events
+	url = https://github.com/CTSRD-CHERI/RISCV_HPM_Events.git
+[submodule "libs/WindCoreInterface"]
+	path = libs/WindCoreInterface
+	url = https://github.com/CTSRD-CHERI/WindCoreInterface.git
+[submodule "Tests/benchmarks"]
+	path = Tests/benchmarks
+	url = https://github.com/CTSRD-CHERI/toooba-sim-benchmarks.git
