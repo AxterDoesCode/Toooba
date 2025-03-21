@@ -1350,7 +1350,7 @@ module mkCore#(CoreId coreId)(Core);
       l2Tlb.updateVMInfo(vmI, vmD);
 
       let startpc = csrf.dpc_read;
-      fetchStage.redirect (startpc);
+      fetchStage.redirect (startpc, tagged Invalid);
       renameStage.debug_resume;
       commitStage.debug_resume;
 
