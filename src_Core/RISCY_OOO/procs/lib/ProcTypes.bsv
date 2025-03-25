@@ -1119,8 +1119,8 @@ typedef struct {
    HpmRpt evt_REDIRECT;
    HpmRpt evt_TRAP;
    HpmRpt evt_BRANCH;
-   SupCnt evt_BRANCH_REDIRECT;
-   SupCnt evt_JUMP_REDIRECT;
+   HpmRpt evt_BRANCH_REDIRECT;
+   HpmRpt evt_JUMP_REDIRECT;
    HpmRpt evt_AUIPC;
    HpmRpt evt_LOAD;
    HpmRpt evt_STORE;
