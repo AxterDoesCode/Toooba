@@ -716,6 +716,8 @@ module mkFetchStage(FetchStage);
       Bit#(TAdd#(TLog#(SupSize),1)) branchCountRecieved = 0;
       Bit#(TAdd#(TLog#(SupSize),1)) trueBranchCount = 0; // Violating make the common case cast? very rarely /= branchCountRecieved, only on the edge case
       Bit#(SupSize) branchResults = 0;
+      Bool debug_predict_fail = False;
+      Bool debug_predict_recieve_fail = False;
       for (Integer i = 0; i < valueof(SupSize); i=i+1) begin
          Addr pc = decompressPc(validValue(decodeIn[i]).pc);
          Addr ppc = decompressPc(validValue(decodeIn[i]).ppc);
@@ -762,12 +764,14 @@ module mkFetchStage(FetchStage);
                             branchResults[trueBranchCount] = pack(dir_pred.taken);
                             trueBranchCount = trueBranchCount + 1;
                             
+                            `ifdef PERFORMANCE_MONITORING
                             // REMOVE AFTER DEBUG
                             if(dir_pred.pc != last_x16_pc) begin 
-                                debug_predict_fail_evt_reg <= True;
+                                debug_predict_fail = True;
                                 dir_pred = DirPredResult{taken: False, train: unpack(0), pc: ?};
                                 decode_epoch_local = !decode_epoch_local;
                             end
+                            `endif
 
                             `ifdef DEBUG_TAGETEST
                             doAssert(dir_pred.pc == last_x16_pc, "Branch PC is inconsistent\n");
@@ -775,8 +779,10 @@ module mkFetchStage(FetchStage);
                         end
                         else begin
                             // REMOVE AFTER DEBUG
-                            debug_recv_failure_evt_reg <= True;
+                            `ifdef PERFORMANCE_MONITORING
+                            debug_predict_recieve_fail = True;
                             decode_epoch_local = !decode_epoch_local;
+                            `endif
                         end
                     end
                     branchCountRecieved = branchCountRecieved+1;
@@ -944,6 +950,11 @@ module mkFetchStage(FetchStage);
             default: decRedirectOtherCnt.incr(1);
          endcase
       end
+`endif
+
+`ifdef PERFORMANCE_MONITORING
+    debug_predict_fail_evt_reg <= debug_predict_fail;
+    debug_recv_failure_evt_reg <= debug_predict_recieve_fail;
 `endif
    endrule
 
