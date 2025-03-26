@@ -1083,6 +1083,8 @@ module mkCore#(CoreId coreId)(Core);
          events.evt_REDIRECT = zeroExtend(pack(fe.evt_REDIRECT));
          events.evt_JUMP_REDIRECT = zeroExtend(pack(fe.evt_JUMP_REDIRECT));
          events.evt_BRANCH_REDIRECT = zeroExtend(pack(fe.evt_BRANCH_REDIRECT));
+         events.evt_DEBUG_PREDICT_FAIL = zeroExtend(pack(fe.evt_DEBUG_PREDICT_FAIL));
+         events.evt_DEBUG_RECV_FAILURE = zeroExtend(pack(fe.evt_DEBUG_RECV_FAILURE));
          hpm_core_events[1] <= events;
      endrule
 
@@ -1353,7 +1355,7 @@ module mkCore#(CoreId coreId)(Core);
       l2Tlb.updateVMInfo(vmI, vmD);
 
       let startpc = csrf.dpc_read;
-      fetchStage.redirect (startpc);
+      fetchStage.redirect (startpc, tagged Invalid);
       renameStage.debug_resume;
       commitStage.debug_resume;
 
