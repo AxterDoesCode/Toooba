@@ -1085,10 +1085,8 @@ typedef struct {
    SupCnt evt_REDIRECT;
    SupCnt evt_TRAP;
    SupCnt evt_BRANCH;
-   SupCnt evt_BRANCH_MISPREDICT;
-   SupCnt evt_EARLY_REDIRECT;
-   SupCnt evt_JAL;
-   SupCnt evt_JALR;
+   SupCnt evt_BRANCH_REDIRECT;
+   SupCnt evt_JUMP_REDIRECT;
    SupCnt evt_AUIPC;
    SupCnt evt_LOAD;
    SupCnt evt_STORE;
@@ -1111,15 +1109,18 @@ typedef struct {
    SupCnt evt_UNREPRESENTABLE_CAP; // XXX
    SupCnt evt_MEM_CAP_LOAD;
    SupCnt evt_MEM_CAP_STORE;
-   SupCnt evt_MEM_CAP_LOAD_TAG_SET;
-   SupCnt evt_MEM_CAP_STORE_TAG_SET;
+   SupCnt evt_DEBUG_PREDICT_FAIL;
+   SupCnt evt_DEBUG_RECV_FAILURE;
 } EventsCore deriving (Bits, FShow);
 typedef TDiv#(SizeOf#(EventsCore),SizeOf#(SupCnt)) EventsCoreElements;
 
 typedef struct {
   Bool evt_REDIRECT;
-  Bool evt_EARLY_REDIRECT;
-  BranchEvents branch_evts;
+  Bool evt_JUMP_REDIRECT;
+  Bool evt_BRANCH_REDIRECT;
+  Bool evt_DEBUG_PREDICT_FAIL;
+  Bool evt_DEBUG_RECV_FAILURE;
+  //BranchEvents branch_evts;
 } FetchEvents deriving (Bits, FShow);
 
 typedef struct {
@@ -1131,10 +1132,8 @@ typedef struct {
    HpmRpt evt_REDIRECT;
    HpmRpt evt_TRAP;
    HpmRpt evt_BRANCH;
-   HpmRpt evt_BRANCH_MISPREDICT;
-   HpmRpt evt_EARLY_REDIRECT;
-   HpmRpt evt_JAL;
-   HpmRpt evt_JALR;
+   HpmRpt evt_BRANCH_REDIRECT;
+   HpmRpt evt_JUMP_REDIRECT;
    HpmRpt evt_AUIPC;
    HpmRpt evt_LOAD;
    HpmRpt evt_STORE;
@@ -1157,8 +1156,8 @@ typedef struct {
    HpmRpt evt_UNREPRESENTABLE_CAP; // XXX
    HpmRpt evt_MEM_CAP_LOAD;
    HpmRpt evt_MEM_CAP_STORE;
-   HpmRpt evt_MEM_CAP_LOAD_TAG_SET;
-   HpmRpt evt_MEM_CAP_STORE_TAG_SET;
+   HpmRpt evt_DEBUG_PREDICT_FAIL;
+   HpmRpt evt_DEBUG_RECV_FAILURE;
 } EventsCoreMem deriving (Bits, FShow); // Memory needs more space for reporting delays
 typedef TDiv#(SizeOf#(EventsCoreMem),Report_Width) EventsCoreMemElements;
 `endif

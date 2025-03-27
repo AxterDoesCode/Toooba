@@ -383,13 +383,13 @@ module mkCore#(CoreId coreId)(Core);
                 method setRegReadyAggr = writeAggr(aluWrAggrPort(i));
                 interface sendBypass = sendBypassIfc;
                 method writeRegFile = writeCons(aluWrConsPort(i));
-                method Action redirect(Addr new_pc, SpecTag spec_tag, InstTag inst_tag, SpecBits spec_bits);
+                method Action redirect(Addr new_pc, SpecTag spec_tag, InstTag inst_tag, SpecBits spec_bits, Bool jump);
                     if (verbose) begin
                         $display("[ALU redirect - %d] ", i, fshow(new_pc),
                                  "; ", fshow(spec_tag), "; ", fshow(inst_tag));
                     end
                     epochManager.incrementEpoch;
-                    fetchStage.redirect(new_pc);
+                    fetchStage.redirect(new_pc, tagged Valid jump);
                     globalSpecUpdate.incorrectSpec(False, spec_tag, inst_tag, spec_bits);
                 endmethod
                 method Bool pauseExecute = globalSpecUpdate.pendingIncorrectSpec;
@@ -635,7 +635,9 @@ module mkCore#(CoreId coreId)(Core);
         method setReconcileI = reconcile_i._write(True);
         method setReconcileD = reconcile_d._write(True);
         method killAll = coreFix.killAll;
-        method redirectPc = fetchStage.redirect;
+        method Action redirectPc(Addr new_pc);
+            fetchStage.redirect(new_pc, tagged Invalid);
+        endmethod
         method Action recover_spec(DirPredSpecInfo specInfo);
             fetchStage.recover_spec(specInfo, False, True);
         endmethod
@@ -1079,8 +1081,10 @@ module mkCore#(CoreId coreId)(Core);
          EventsCore events = unpack(pack(commitStage.events));
          FetchEvents fe = fetchStage.events;
          events.evt_REDIRECT = zeroExtend(pack(fe.evt_REDIRECT));
-         events.evt_EARLY_REDIRECT = zeroExtend(pack(fe.evt_EARLY_REDIRECT));
-         events.evt_BRANCH_MISPREDICT = zeroExtend(pack(fe.branch_evts.evt_BRANCH_MISPREDICT));
+         events.evt_JUMP_REDIRECT = zeroExtend(pack(fe.evt_JUMP_REDIRECT));
+         events.evt_BRANCH_REDIRECT = zeroExtend(pack(fe.evt_BRANCH_REDIRECT));
+         events.evt_DEBUG_PREDICT_FAIL = zeroExtend(pack(fe.evt_DEBUG_PREDICT_FAIL));
+         events.evt_DEBUG_RECV_FAILURE = zeroExtend(pack(fe.evt_DEBUG_RECV_FAILURE));
          hpm_core_events[1] <= events;
      endrule
 
@@ -1351,7 +1355,7 @@ module mkCore#(CoreId coreId)(Core);
       l2Tlb.updateVMInfo(vmI, vmD);
 
       let startpc = csrf.dpc_read;
-      fetchStage.redirect (startpc);
+      fetchStage.redirect (startpc, tagged Invalid);
       renameStage.debug_resume;
       commitStage.debug_resume;
 
