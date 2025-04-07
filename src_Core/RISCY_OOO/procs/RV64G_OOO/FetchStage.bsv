@@ -766,7 +766,7 @@ module mkFetchStage(FetchStage);
                             
                             `ifdef PERFORMANCE_MONITORING
                             // REMOVE AFTER DEBUG
-                            if(dir_pred.pc != last_x16_pc) begin 
+                            if(dir_pred.pc[8:0] != last_x16_pc[8:0]) begin 
                                 debug_predict_fail = True;
                                 dir_pred = DirPredResult{taken: False, train: unpack(0), pc: ?};
                                 decode_epoch_local = !decode_epoch_local;
