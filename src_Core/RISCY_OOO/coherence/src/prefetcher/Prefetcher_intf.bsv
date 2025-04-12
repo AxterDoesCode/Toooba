@@ -40,6 +40,20 @@ typedef struct {
 	Bit#(Report_Width) evt_4;
 } EventsPrefetcher deriving (Bits, FShow);
 
+typedef union tagged {
+    void NoPrefetcherAuxData;
+`ifdef DATA_PREFETCHER_CAP_CHASER
+    Bit#(7) CapChaserConfidence;
+`endif
+} PrefetchAuxData deriving (Bits, Eq, FShow); 
+
+typedef struct {
+    Addr addr;
+    CapPipe cap;
+    Bool nextLevel;
+    PrefetchAuxData auxData;
+} PendingPrefetch deriving (Bits, Eq, FShow);
+
 interface Prefetcher;
     (* always_ready *)
     method Action reportAccess(Addr addr, HitOrMiss hitMiss);
@@ -58,13 +72,32 @@ interface PCPrefetcher;
 `endif
 endinterface
 
+interface CheriPrefetcher;
+    (* always_ready *)
+    method Action reportAccess(Addr addr, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr();
+`ifdef PERFORMANCE_MONITORING
+    method EventsPrefetcher events();
+`endif
+endinterface
+
 interface CheriPCPrefetcher;
     (* always_ready *)
-    method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
     method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, PCHash pcHash, MemOp memOp, 
         Bool wasMiss, Bool wasPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
-    method ActionValue#(Tuple2#(Addr, CapPipe)) getNextPrefetchAddr();
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr();
 `ifdef PERFORMANCE_MONITORING
+    method EventsPrefetcher events();
+`endif
+endinterface
+
+interface PrefetcherVector#(numeric type size);
+    method ActionValue#(Tuple2#(PendingPrefetch, Bit#(TLog#(size)))) getNextPrefetchAddr;
+    method Action reportAccess(Bit#(TLog#(size)) idx, Addr addr, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    method Action reportCacheDataArrival(Bit#(TLog#(size)) idx, CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+`ifdef PERFORMANCE_MONITORING //Currently configured to return events from the 0th prefetcher
     method EventsPrefetcher events();
 `endif
 endinterface

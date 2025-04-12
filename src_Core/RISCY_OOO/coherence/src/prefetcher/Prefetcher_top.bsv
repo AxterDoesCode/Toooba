@@ -39,6 +39,7 @@ import ProcTypes::*;
 import CHERICap::*;
 import CHERICC_Fat::*;
 import MemoryTypes::*;
+import TlbTypes::*;
 
 import Prefetcher_intf::*;
 import InstructionPrefetchers::*;
@@ -46,6 +47,7 @@ import StridePrefetchers::*;
 import MarkovPrefetchers::*;
 import CheriPrefetchers::*;
 import NewCheriPrefetchers::*;
+import ModifiedCheriPrefetchers::*;
 import SignaturePathPrefetcher::*;
 
 `define VERBOSE True
@@ -76,12 +78,15 @@ module mkAlwaysRequestPrefetcher(Prefetcher);
 `endif
 endmodule
 
-module mkAlwaysRequestTlbPrefetcher#(DTlbToPrefetcher toTlb)(Prefetcher);
+module mkAlwaysRequestTlbPrefetcher#(TlbToPrefetcher toTlb)(Prefetcher);
     rule reqTlb;
         $display ("%t Prefetcher req to TLB", $time);
         CapPipe start = almightyCap;
-        let cp = setAddr(start, 64'hc000dead);
-        toTlb.prefetcherReq(cp.value);
+        let cp = setAddr(start, 64'hc000dead).value;
+        toTlb.prefetcherReq(PrefetcherReqToTlb{
+            cap: cp,
+            id: 0
+        });
     endrule
     rule asd;
         $display ("%t Prefetcher tlb deqprefetcherresp", $time);
@@ -138,18 +143,86 @@ module mkPCPrefetcherAdapter#(module#(Prefetcher) mkPrefetcher)(PCPrefetcher);
 `endif
 endmodule
 
-module mkCheriPCPrefetcherAdapter#(module#(PCPrefetcher) mkPrefetcher)(CheriPCPrefetcher);
+module mkCheriPrefetcherAdapter#(module#(Prefetcher) mkPrefetcher)(CheriPrefetcher);
     let p <- mkPrefetcher;
-    method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp,
-        Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
-        if(memOp == Ld) p.reportAccess(addr, hash(pcHash), hitMiss);
+    method Action reportAccess(Addr addr, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+        if (!isPrefetch && memOp == Ld) p.reportAccess(addr, hitMiss);
+    endmethod
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr accessAddr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    endmethod
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
+        let addr <- p.getNextPrefetchAddr;
+        return PendingPrefetch {
+            addr: addr,
+            cap: almightyCap,
+            nextLevel: False,
+            auxData: NoPrefetcherAuxData
+        };
+    endmethod
+`ifdef PERFORMANCE_MONITORING
+    method EventsPrefetcher events;
+        return p.events;
+    endmethod
+`endif
+endmodule
+
+
+module mkCheriPCPrefetcherAdapterFromPC#(module#(PCPrefetcher) mkPrefetcher)(CheriPCPrefetcher);
+    let p <- mkPrefetcher;
+    method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+        if(!isPrefetch && memOp == Ld) p.reportAccess(addr, hash(pcHash), hitMiss);
+    endmethod
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr accessAddr, PCHash pcHash, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    endmethod
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
+        let addr <- p.getNextPrefetchAddr;
+        return PendingPrefetch {
+            addr: addr,
+            cap: almightyCap,
+            nextLevel: False,
+            auxData: NoPrefetcherAuxData
+        };
+    endmethod
+`ifdef PERFORMANCE_MONITORING
+    method EventsPrefetcher events;
+        return p.events;
+    endmethod
+`endif
+endmodule
+
+module mkCheriPCPrefetcherAdapterFromCheri#(module#(CheriPrefetcher) mkPrefetcher)(CheriPCPrefetcher);
+    let p <- mkPrefetcher;
+    method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+        p.reportAccess(addr, hitMiss, memOp, isPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
     endmethod
     method Action reportCacheDataArrival(CLine lineWithTags, Addr accessAddr, PCHash pcHash, MemOp memOp, Bool wasMiss, Bool wasPrefetch, 
         Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+        p.reportCacheDataArrival(lineWithTags, accessAddr, memOp, wasMiss, wasPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
     endmethod
-    method ActionValue#(Tuple2#(Addr, CapPipe)) getNextPrefetchAddr;
-        let addr <- p.getNextPrefetchAddr;
-        return tuple2(addr, almightyCap);
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
+        let x <- p.getNextPrefetchAddr;
+        return x;
+    endmethod
+`ifdef PERFORMANCE_MONITORING
+    method EventsPrefetcher events;
+        return p.events;
+    endmethod
+`endif
+endmodule
+
+module mkNextLevelPrefetcherAdapter#(module#(CheriPCPrefetcher) mkPrefetcher)(CheriPCPrefetcher);
+    let p <- mkPrefetcher;
+    method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+        p.reportAccess(addr, pcHash, hitMiss, memOp, isPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
+    endmethod
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr accessAddr, PCHash pcHash, MemOp memOp, Bool wasMiss, Bool wasPrefetch, 
+        Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+        p.reportCacheDataArrival(lineWithTags, accessAddr, pcHash, memOp, wasMiss, wasPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
+    endmethod
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
+        let x <- p.getNextPrefetchAddr;
+        x.nextLevel = True;
+        return x;
     endmethod
 `ifdef PERFORMANCE_MONITORING
     method EventsPrefetcher events;
@@ -188,39 +261,38 @@ module mkPrintPCPrefetcher(PCPrefetcher);
 `endif
 endmodule
 
-interface PrefetcherVector#(numeric type size);
-    method ActionValue#(Tuple2#(Addr, Bit#(TLog#(size)))) getNextPrefetchAddr;
-    method Action reportAccess(Bit#(TLog#(size)) idx, Addr addr, HitOrMiss hitMiss);
-`ifdef PERFORMANCE_MONITORING //Currently configured to return events from the 0th prefetcher
-    method EventsPrefetcher events();
-`endif
-endinterface
-
-module mkPrefetcherVector#(module#(Prefetcher) mkPrefetcher)
+module mkPrefetcherVector#(Vector#(size, module#(CheriPrefetcher)) mkPrefetchers)
 (
     PrefetcherVector#(size)
 ) provisos (
     Alias#(idxT, Bit#(TLog#(size)))
-);
-    Vector#(size, Prefetcher) prefetchers <- replicateM(mkPrefetcher);
-    Fifo#(1, Tuple2#(Addr, idxT)) prefetchRq <- mkBypassFifo;
+); 
+    Vector#(size, CheriPrefetcher) prefetchers;
+    for (Integer i = 0; i < valueOf(size); i=i+1) begin
+        prefetchers[i] <- mkPrefetchers[i];
+    end
+    Fifo#(1, Tuple2#(PendingPrefetch, idxT)) prefetchRq <- mkBypassFifo;
 
-    function XBarDstInfo#(Bit#(0),Tuple2#(Addr, idxT)) convertPrefetchRq(idxT item, Addr a);
+    function XBarDstInfo#(Bit#(0),Tuple2#(PendingPrefetch, idxT)) convertPrefetchRq(idxT item, PendingPrefetch a);
         return XBarDstInfo { 
             idx: 0,
             data: tuple2(a, item)
         };
     endfunction
-    function Get#(Addr) reqGet(Prefetcher p) = toGet(p.getNextPrefetchAddr);
+    function Get#(PendingPrefetch) reqGet(CheriPrefetcher p) = toGet(p.getNextPrefetchAddr);
     mkXBar(convertPrefetchRq, map(reqGet, prefetchers), vec(toPut(prefetchRq)));
 
-    method ActionValue#(Tuple2#(Addr, idxT)) getNextPrefetchAddr;
+    method ActionValue#(Tuple2#(PendingPrefetch, idxT)) getNextPrefetchAddr;
         prefetchRq.deq;
         return prefetchRq.first;
     endmethod
 
-    method Action reportAccess(idxT idx, Addr addr, HitOrMiss hitMiss);
-        prefetchers[idx].reportAccess(addr, hitMiss);
+    method Action reportAccess(Bit#(TLog#(size)) idx, Addr addr, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+        prefetchers[idx].reportAccess(addr, hitMiss, memOp, isPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
+    endmethod
+
+    method Action reportCacheDataArrival(Bit#(TLog#(size)) idx, CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+        prefetchers[idx].reportCacheDataArrival(lineWithTags, addr, memOp, wasMiss, wasPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
     endmethod
 
 `ifdef PERFORMANCE_MONITORING
@@ -231,47 +303,59 @@ module mkPrefetcherVector#(module#(Prefetcher) mkPrefetcher)
 `endif
 endmodule
 
-module mkPrefetcherDoubler#(module#(CheriPCPrefetcher) mkPrefetcher1, module#(CheriPCPrefetcher) mkPrefetcher2)
-    (CheriPCPrefetcher) 
-provisos ();
+module mkPrefetcherDoubler#(
+    module#(CheriPCPrefetcher) mkPrefetcher1, 
+    module#(CheriPCPrefetcher) mkPrefetcher2
+)(CheriPCPrefetcher);
+
+    Bool verbose = False;
+
     CheriPCPrefetcher p1 <- mkPrefetcher1;
     CheriPCPrefetcher p2 <- mkPrefetcher2;
-    Fifo#(1, Tuple2#(Addr, CapPipe)) prefetchRq <- mkBypassFifo;
+    Fifo#(1, PendingPrefetch) prefetchRq <- mkBypassFifo;
     Reg#(Addr) lastPrefetch <- mkConfigReg(0);
     Reg#(Addr) lastPrefetch2 <- mkConfigReg(0);
 
     rule getFromP1;
         let x <- p1.getNextPrefetchAddr;
-        if (lastPrefetch != tpl_1(x) && lastPrefetch2 != tpl_1(x)) begin
+        if (lastPrefetch != x.addr && lastPrefetch2 != x.addr) begin
             prefetchRq.enq(x);
         end
     endrule
     rule getFromP2;
         let x <- p2.getNextPrefetchAddr;
-        if (lastPrefetch != tpl_1(x) && lastPrefetch2 != tpl_1(x)) begin
+        if (lastPrefetch != x.addr && lastPrefetch2 != x.addr) begin
             prefetchRq.enq(x);
         end
     endrule
 
-    method ActionValue#(Tuple2#(Addr, CapPipe)) getNextPrefetchAddr;
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
         prefetchRq.deq;
         lastPrefetch2 <= lastPrefetch;
-        lastPrefetch <= tpl_1(prefetchRq.first);
+        lastPrefetch <= prefetchRq.first.addr;
         return prefetchRq.first;
     endmethod
 
-    method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp,
-        Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
-
-        p1.reportAccess(addr, pcHash, hitMiss, memOp, boundsOffset, boundsLength, boundsVirtBase, capPerms);
-        p2.reportAccess(addr, pcHash, hitMiss, memOp, boundsOffset, boundsLength, boundsVirtBase, capPerms);
+    method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+        p1.reportAccess(addr, pcHash, hitMiss, memOp, isPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
+        p2.reportAccess(addr, pcHash, hitMiss, memOp, isPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
+        if (verbose) $display("%t PrefetcherDoubler reportAccess vbase: 0x%h, offset: 0x%h, length: 0x%h",
+            $time,
+            boundsVirtBase,
+            boundsOffset,
+            boundsLength
+        );
     endmethod
 
-    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, PCHash pcHash, MemOp memOp, 
-        Bool wasMiss, Bool wasPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
-
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, PCHash pcHash, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
         p1.reportCacheDataArrival(lineWithTags, addr, pcHash, memOp, wasMiss, wasPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
         p2.reportCacheDataArrival(lineWithTags, addr, pcHash, memOp, wasMiss, wasPrefetch, boundsOffset, boundsLength, boundsVirtBase, capPerms);
+        if (verbose) $display("%t PrefetcherDoubler reportCacheDataArrival vbase: 0x%h, offset: 0x%h, length: 0x%h",
+            $time,
+            boundsVirtBase,
+            boundsOffset,
+            boundsLength
+        );
     endmethod
 
 `ifdef PERFORMANCE_MONITORING
@@ -374,22 +458,22 @@ module mkLLIPrefetcher(Prefetcher);
     return m;
 endmodule
 
-module mkL1DPrefetcher#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
+module mkL1DPrefetcher#(TlbToPrefetcher toTlb)(CheriPCPrefetcher);
 `ifdef DATA_PREFETCHER_IN_L1
     `ifdef DATA_PREFETCHER_BLOCK
         Parameter#(1) numLinesEachWay <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkBlockPrefetcher(numLinesEachWay)));
+        let m <- mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkBlockPrefetcher(numLinesEachWay)));
     `elsif DATA_PREFETCHER_STRIDE
         //let m <- mkStridePCPrefetcher;
         Parameter#(512) strideTableSize <- mkParameter;
         Parameter#(1) cLinesAheadToPrefetch <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapter(mkStride2PCPrefetcher(strideTableSize, cLinesAheadToPrefetch));
+        let m <- mkCheriPCPrefetcherAdapterFromPC(mkStride2PCPrefetcher(strideTableSize, cLinesAheadToPrefetch));
     `elsif DATA_PREFETCHER_STRIDE_ADAPTIVE
         Parameter#(512) strideTableSize <- mkParameter;
         Parameter#(1) cLinesPrefetchMin <- mkParameter;
         Parameter#(2) cLinesSmallStridePrefetchMax <- mkParameter;
         Parameter#(4) cLinesBigStridePrefetchMax <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapter(mkStrideAdaptivePCPrefetcher(
+        let m <- mkCheriPCPrefetcherAdapterFromPC(mkStrideAdaptivePCPrefetcher(
             strideTableSize, 
             cLinesPrefetchMin, 
             cLinesSmallStridePrefetchMax, 
@@ -398,15 +482,15 @@ module mkL1DPrefetcher#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(2) maxChainLength <- mkParameter;
         Parameter#(2048) narrowEntries <- mkParameter;
         Parameter#(128) wideEntries <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkMarkovPrefetcher(maxChainLength, narrowEntries, wideEntries)));
+        let m <- mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkMarkovPrefetcher(maxChainLength, narrowEntries, wideEntries)));
     `elsif DATA_PREFETCHER_MARKOV_ON_HIT
         Parameter#(1) maxChainLength <- mkParameter;
         Parameter#(32) numLastRequestsTracked <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkMarkovOnHitPrefetcher(maxChainLength, numLastRequestsTracked)));
+        let m <- mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkMarkovOnHitPrefetcher(maxChainLength, numLastRequestsTracked)));
     `elsif DATA_PREFETCHER_MARKOV_ON_HIT_2
         Parameter#(1) maxChainLength <- mkParameter;
         Parameter#(32) numLastRequestsTracked <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkMarkovOnHit2Prefetcher(maxChainLength, numLastRequestsTracked)));
+        let m <- mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkMarkovOnHit2Prefetcher(maxChainLength, numLastRequestsTracked)));
     `elsif DATA_PREFETCHER_ALL_IN_CAP
         Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
         let m <- mkAllInCapPrefetcher(maxCapSizeToPrefetch);
@@ -416,8 +500,8 @@ module mkL1DPrefetcher#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(1) pcInHash <- mkParameter;
         Parameter#(0) boundsInHash <- mkParameter;
         let m <- mkCheriStridePrefetcher(toTlb, strideTableSize, cLinesAheadToPrefetch, pcInHash, boundsInHash);
-        //let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkDoNothingPrefetcher));
-        //let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkAlwaysRequestTlbPrefetcher(toTlb)));
+        //let m <- mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkDoNothingPrefetcher));
+        //let m <- mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkAlwaysRequestTlbPrefetcher(toTlb)));
     `elsif DATA_PREFETCHER_CHERI_STRIDE_MIX
         Parameter#(512) strideTableSize <- mkParameter;
         Parameter#(1) cLinesAheadToPrefetch <- mkParameter;
@@ -428,8 +512,8 @@ module mkL1DPrefetcher#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
         let m1 = mkCheriStridePrefetcher(toTlb, strideTableSize, cLinesAheadToPrefetch, pcInHash, boundsNotInHash);
         let m2 = mkCheriStridePrefetcher(toTlb, strideTableSize, cLinesAheadToPrefetch, pcNotInHash, boundsInHash);
         let m <- mkPrefetcherDoubler(m1, m2);
-        //let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkDoNothingPrefetcher));
-        //let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkAlwaysRequestTlbPrefetcher(toTlb)));
+        //let m <- mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkDoNothingPrefetcher));
+        //let m <- mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkAlwaysRequestTlbPrefetcher(toTlb)));
     `elsif DATA_PREFETCHER_CAP_SPATIAL
         Parameter#(1048576) maxCapSizeToTrack <- mkParameter;
         Parameter#(2048) bitmapTableSize <- mkParameter;
@@ -488,91 +572,12 @@ module mkL1DPrefetcher#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
         let m2 = mkCapBitmapPrefetcher(maxCapSizeToTrack, bitmapTableSize, filterTableSize, inverseDecayChanceSpatial);
 
         let m <- mkPrefetcherDoubler(m1, m2);
-    `elsif DATA_PREFETCHER_SPP
-        Parameter#(64) stSets <- mkParameter;
-        Parameter#(4) stWays <- mkParameter;
-        Parameter#(512) ptEntries <- mkParameter;
-        Prob prefetchThreshold = 7'b1100000;
-        Bool useFilter = True;
-        let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkSignaturePathPrefetcher(
-            "./div_table.memhex",
-            stSets, stWays, ptEntries, prefetchThreshold, useFilter)));
-        //let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkPrintPrefetcher));
-    `elsif DATA_PREFETCHER_MEASURER
-        let m <- mkPCCapMeasurer;
-    `endif
-`else 
-    let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkDoNothingPrefetcher));
-    // Parameter#(512) strideTableSize <- mkParameter;
-    // Parameter#(2) cLinesAheadToPrefetch <- mkParameter;
-    // let m <- mkCheriPCPrefetcherAdapter(mkStride2PCPrefetcher(strideTableSize, cLinesAheadToPrefetch));
-`endif
-    return m;
-endmodule
-
-module mkLLDPrefetcherInL1D#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
-`ifdef DATA_PREFETCHER_IN_L1LL
-    `ifdef DATA_PREFETCHER_BLOCK
-        Parameter#(1) numLinesEachWay <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkBlockPrefetcher(numLinesEachWay)));
-    `elsif DATA_PREFETCHER_STRIDE
-        Parameter#(512) strideTableSize <- mkParameter;
-        Parameter#(2) cLinesAheadToPrefetch <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapter(mkStride2PCPrefetcher(strideTableSize, cLinesAheadToPrefetch));
-    `elsif DATA_PREFETCHER_STRIDE_ADAPTIVE
-        Parameter#(512) strideTableSize <- mkParameter;
-        Parameter#(1) cLinesPrefetchMin <- mkParameter;
-        Parameter#(2) cLinesSmallStridePrefetchMax <- mkParameter;
-        Parameter#(4) cLinesBigStridePrefetchMax <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapter(mkStrideAdaptivePCPrefetcher(
-            strideTableSize, 
-            cLinesPrefetchMin, 
-            cLinesSmallStridePrefetchMax, 
-            cLinesBigStridePrefetchMax));
-    `elsif DATA_PREFETCHER_MARKOV
-        Parameter#(2) maxChainLength <- mkParameter;
-        Parameter#(2048) narrowEntries <- mkParameter;
-        Parameter#(128) wideEntries <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkMarkovPrefetcher(maxChainLength, narrowEntries, wideEntries)));
-    `elsif DATA_PREFETCHER_MARKOV_ON_HIT
-        Parameter#(1) maxChainLength <- mkParameter;
-        Parameter#(32) numLastRequestsTracked <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkMarkovOnHitPrefetcher(maxChainLength, numLastRequestsTracked)));
-    `elsif DATA_PREFETCHER_MARKOV_ON_HIT_2
-        Parameter#(1) maxChainLength <- mkParameter;
-        Parameter#(32) numLastRequestsTracked <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkMarkovOnHit2Prefetcher(maxChainLength, numLastRequestsTracked)));
-    `elsif DATA_PREFETCHER_ALL_IN_CAP
+    `elsif DATA_PREFETCHER_CAP_PTR_HYBRID
         Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
-        let m <- mkAllInCapPrefetcher(maxCapSizeToPrefetch);
-    `elsif DATA_PREFETCHER_CHERI_STRIDE
-        Parameter#(512) strideTableSize <- mkParameter;
-        Parameter#(1) cLinesAheadToPrefetch <- mkParameter;
-        Parameter#(1) pcInHash <- mkParameter;
-        Parameter#(0) boundsInHash <- mkParameter;
-        let m <- mkCheriStridePrefetcher(toTlb, strideTableSize, cLinesAheadToPrefetch, pcInHash, boundsInHash);
-        //let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkDoNothingPrefetcher));
-    `elsif DATA_PREFETCHER_CAP_SPATIAL
-        Parameter#(4096) maxCapSizeToTrack <- mkParameter;
-        Parameter#(2048) bitmapTableSize <- mkParameter;
-        Parameter#(4) filterTableSize <- mkParameter;
-        Parameter#(128) inverseDecayChance <- mkParameter;
-        let m <- mkCapBitmapPrefetcher(maxCapSizeToTrack, bitmapTableSize, filterTableSize, inverseDecayChance);
-    `elsif DATA_PREFETCHER_CAP_PTR
-        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
-        Parameter#(4096) ptrTableSize <- mkParameter; 
-        Parameter#(64) trainingTableSize <- mkParameter;
-        Parameter#(4) inverseDecayChance <- mkParameter;
-        let m <- mkCapPtrPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance);
-    `elsif DATA_PREFETCHER_CAP_PTR_NEW
-        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
-        Parameter#(4096) ptrTableSize <- mkParameter; 
-        Parameter#(64) trainingTableSize <- mkParameter;
-        Parameter#(4) inverseDecayChance <- mkParameter;
-        Parameter#(1) onlyOnMiss <- mkParameter;
-        Parameter#(0) onlyExactCap <- mkParameter;
-        let m <- mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
-    `elsif DATA_PREFETCHER_CAP_PTR_NEW_ONHIT
+        Parameter#(0) onDemandHit <- mkParameter;
+        Parameter#(0) onPrefetchHit <- mkParameter;
+        let m1 <- mkCheriPCPrefetcherAdapterFromPC(mkAllInCapPrefetcher2(maxCapSizeToPrefetch, onDemandHit, onPrefetchHit));
+
         Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
         Parameter#(4096) ptrTableSize <- mkParameter; 
         Parameter#(64) trainingTableSize <- mkParameter;
@@ -580,6 +585,112 @@ module mkLLDPrefetcherInL1D#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(0) onlyOnMiss <- mkParameter;
         Parameter#(0) onlyExactCap <- mkParameter;
         let m <- mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
+
+        let m <- mkPrefetcherDoubler(m1, m2);
+    `elsif DATA_PREFETCHER_CAP_CHASER
+        Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
+        Parameter#(0) onDemandHit <- mkParameter;
+        Parameter#(0) onPrefetchHit <- mkParameter;
+        let m1 = mkCheriPCPrefetcherAdapterFromCheri(mkAllInCapPrefetcher2(maxCapSizeToPrefetch, onDemandHit, onPrefetchHit));
+
+        Parameter#(4096) maxCapSizeToTrack <- mkParameter;
+        Parameter#(256) ptrTableSize <- mkParameter; 
+        Parameter#(32) trainingTableSize <- mkParameter;
+        let m2 = mkCheriPCPrefetcherAdapterFromCheri(mkL1CapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize));
+
+        let m <- mkPrefetcherDoubler(m1, m2);
+    `elsif DATA_PREFETCHER_SPP
+        Parameter#(64) stSets <- mkParameter;
+        Parameter#(4) stWays <- mkParameter;
+        Parameter#(512) ptEntries <- mkParameter;
+        Prob prefetchThreshold = 7'b1100000;
+        Bool useFilter = True;
+        let m <- mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkSignaturePathPrefetcher(
+            "./div_table.memhex",
+            stSets, stWays, ptEntries, prefetchThreshold, useFilter)));
+        //let m <- mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkPrintPrefetcher));
+    `elsif DATA_PREFETCHER_MEASURER
+        let m <- mkPCCapMeasurer;
+    `endif
+`else 
+    let m <- mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkDoNothingPrefetcher));
+    // Parameter#(512) strideTableSize <- mkParameter;
+    // Parameter#(2) cLinesAheadToPrefetch <- mkParameter;
+    // let m <- mkCheriPCPrefetcherAdapterFromPC(mkStride2PCPrefetcher(strideTableSize, cLinesAheadToPrefetch));
+`endif
+    return m;
+endmodule
+
+module mkLLDPrefetcherInL1D#(TlbToPrefetcher toTlb)(CheriPCPrefetcher);
+`ifdef DATA_PREFETCHER_IN_L1LL
+    `ifdef DATA_PREFETCHER_BLOCK
+        Parameter#(1) numLinesEachWay <- mkParameter;
+        let m <- mkNextLevelPrefetcherAdapter(mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkBlockPrefetcher(numLinesEachWay))));
+    `elsif DATA_PREFETCHER_STRIDE
+        Parameter#(512) strideTableSize <- mkParameter;
+        Parameter#(2) cLinesAheadToPrefetch <- mkParameter;
+        let m <- mkNextLevelPrefetcherAdapter(mkCheriPCPrefetcherAdapterFromPC(mkStride2PCPrefetcher(strideTableSize, cLinesAheadToPrefetch)));
+    `elsif DATA_PREFETCHER_STRIDE_ADAPTIVE
+        Parameter#(512) strideTableSize <- mkParameter;
+        Parameter#(1) cLinesPrefetchMin <- mkParameter;
+        Parameter#(2) cLinesSmallStridePrefetchMax <- mkParameter;
+        Parameter#(4) cLinesBigStridePrefetchMax <- mkParameter;
+        let m <- mkNextLevelPrefetcherAdapter(mkCheriPCPrefetcherAdapterFromPC(mkStrideAdaptivePCPrefetcher(
+            strideTableSize, 
+            cLinesPrefetchMin, 
+            cLinesSmallStridePrefetchMax, 
+            cLinesBigStridePrefetchMax)));
+    `elsif DATA_PREFETCHER_MARKOV
+        Parameter#(2) maxChainLength <- mkParameter;
+        Parameter#(2048) narrowEntries <- mkParameter;
+        Parameter#(128) wideEntries <- mkParameter;
+        let m <- mkNextLevelPrefetcherAdapter(mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkMarkovPrefetcher(maxChainLength, narrowEntries, wideEntries))));
+    `elsif DATA_PREFETCHER_MARKOV_ON_HIT
+        Parameter#(1) maxChainLength <- mkParameter;
+        Parameter#(32) numLastRequestsTracked <- mkParameter;
+        let m <- mkNextLevelPrefetcherAdapter(mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkMarkovOnHitPrefetcher(maxChainLength, numLastRequestsTracked))));
+    `elsif DATA_PREFETCHER_MARKOV_ON_HIT_2
+        Parameter#(1) maxChainLength <- mkParameter;
+        Parameter#(32) numLastRequestsTracked <- mkParameter;
+        let m <- mkNextLevelPrefetcherAdapter(mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkMarkovOnHit2Prefetcher(maxChainLength, numLastRequestsTracked))));
+    `elsif DATA_PREFETCHER_ALL_IN_CAP
+        Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
+        let m <- mkNextLevelPrefetcherAdapter(mkAllInCapPrefetcher(maxCapSizeToPrefetch));
+    `elsif DATA_PREFETCHER_CHERI_STRIDE
+        Parameter#(512) strideTableSize <- mkParameter;
+        Parameter#(1) cLinesAheadToPrefetch <- mkParameter;
+        Parameter#(1) pcInHash <- mkParameter;
+        Parameter#(0) boundsInHash <- mkParameter;
+        let m <- mkNextLevelPrefetcherAdapter(mkCheriStridePrefetcher(toTlb, strideTableSize, cLinesAheadToPrefetch, pcInHash, boundsInHash));
+        //let m <- mkNextLevelPrefetcherAdapter(mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkDoNothingPrefetcher));
+    `elsif DATA_PREFETCHER_CAP_SPATIAL
+        Parameter#(4096) maxCapSizeToTrack <- mkParameter;
+        Parameter#(2048) bitmapTableSize <- mkParameter;
+        Parameter#(4) filterTableSize <- mkParameter;
+        Parameter#(128) inverseDecayChance <- mkParameter;
+        let m <- mkNextLevelPrefetcherAdapter(mkCapBitmapPrefetcher(maxCapSizeToTrack, bitmapTableSize, filterTableSize, inverseDecayChance));
+    `elsif DATA_PREFETCHER_CAP_PTR
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
+        Parameter#(4096) ptrTableSize <- mkParameter; 
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4) inverseDecayChance <- mkParameter;
+        let m <- mkNextLevelPrefetcherAdapter(mkCapPtrPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance));
+    `elsif DATA_PREFETCHER_CAP_PTR_NEW
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
+        Parameter#(4096) ptrTableSize <- mkParameter; 
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4) inverseDecayChance <- mkParameter;
+        Parameter#(1) onlyOnMiss <- mkParameter;
+        Parameter#(0) onlyExactCap <- mkParameter;
+        let m <- mkNextLevelPrefetcherAdapter(mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
+    `elsif DATA_PREFETCHER_CAP_PTR_NEW_ONHIT
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
+        Parameter#(4096) ptrTableSize <- mkParameter; 
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4) inverseDecayChance <- mkParameter;
+        Parameter#(0) onlyOnMiss <- mkParameter;
+        Parameter#(0) onlyExactCap <- mkParameter;
+        let m <- mkNextLevelPrefetcherAdapter(mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap));
     `elsif DATA_PREFETCHER_CAP_PTR_NEW_EXACTCAP
         Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
         Parameter#(4096) ptrTableSize <- mkParameter; 
@@ -587,7 +698,7 @@ module mkLLDPrefetcherInL1D#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(4) inverseDecayChance <- mkParameter;
         Parameter#(1) onlyOnMiss <- mkParameter;
         Parameter#(1) onlyExactCap <- mkParameter;
-        let m <- mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
+        let m <- mkNextLevelPrefetcherAdapter(mkCapPtrPrefetcher2(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap));
     `elsif DATA_PREFETCHER_CAP_SPATIAL_PTR
         Parameter#(2097152) ptrMaxCapSizeToTrack <- mkParameter;
         Parameter#(4096) ptrTableSize <- mkParameter; 
@@ -601,28 +712,28 @@ module mkLLDPrefetcherInL1D#(DTlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(128) inverseDecayChanceSpatial <- mkParameter;
         let m2 = mkCapBitmapPrefetcher(maxCapSizeToTrack, bitmapTableSize, filterTableSize, inverseDecayChanceSpatial);
 
-        let m <- mkPrefetcherDoubler(m1, m2);
+        let m <- mkNextLevelPrefetcherAdapter(mkPrefetcherDoubler(m1, m2));
     `elsif DATA_PREFETCHER_SPP
         Parameter#(64) stSets <- mkParameter;
         Parameter#(4) stWays <- mkParameter;
         Parameter#(512) ptEntries <- mkParameter;
         Prob prefetchThreshold = 7'b1100000;
         Bool useFilter = True;
-        let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkSignaturePathPrefetcher(
+        let m <- mkNextLevelPrefetcherAdapter(mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkSignaturePathPrefetcher(
             "./div_table.memhex",
-            stSets, stWays, ptEntries, prefetchThreshold, useFilter)));
+            stSets, stWays, ptEntries, prefetchThreshold, useFilter))));
     `endif
 `else 
-    let m <- mkCheriPCPrefetcherAdapter(mkPCPrefetcherAdapter(mkDoNothingPrefetcher));
+    let m <- mkNextLevelPrefetcherAdapter(mkCheriPCPrefetcherAdapterFromPC(mkPCPrefetcherAdapter(mkDoNothingPrefetcher)));
 `endif
     return m;
 endmodule
 
-module mkLLDPrefetcher(Prefetcher);
+module mkLLDPrefetcher#(TlbToPrefetcher toTlb)(CheriPrefetcher);
 `ifdef DATA_PREFETCHER_IN_LL
     `ifdef DATA_PREFETCHER_BLOCK
         Parameter#(1) numLinesEachWay <- mkParameter;
-        let m <- mkBlockPrefetcher(numLinesEachWay);
+        let m <- mkCheriPrefetcherAdapter(mkBlockPrefetcher(numLinesEachWay));
     `elsif DATA_PREFETCHER_STRIDE
         doAssert(False, "Illegal data prefetcher type for LL cache!");
     `elsif DATA_PREFETCHER_STRIDE_ADAPTIVE
@@ -631,15 +742,15 @@ module mkLLDPrefetcher(Prefetcher);
         Parameter#(2) maxChainLength <- mkParameter;
         Parameter#(2048) narrowEntries <- mkParameter;
         Parameter#(128) wideEntries <- mkParameter;
-        let m <- mkMarkovPrefetcher(maxChainLength, narrowEntries, wideEntries);
+        let m <- mkCheriPrefetcherAdapter(mkMarkovPrefetcher(maxChainLength, narrowEntries, wideEntries));
     `elsif DATA_PREFETCHER_MARKOV_ON_HIT
         Parameter#(1) maxChainLength <- mkParameter;
         Parameter#(32) numLastRequestsTracked <- mkParameter;
-        let m <- mkMarkovOnHitPrefetcher(maxChainLength, numLastRequestsTracked);
+        let m <- mkCheriPrefetcherAdapter(mkMarkovOnHitPrefetcher(maxChainLength, numLastRequestsTracked));
     `elsif DATA_PREFETCHER_MARKOV_ON_HIT_2
         Parameter#(1) maxChainLength <- mkParameter;
         Parameter#(32) numLastRequestsTracked <- mkParameter;
-        let m <- mkMarkovOnHit2Prefetcher(maxChainLength, numLastRequestsTracked);
+        let m <- mkCheriPrefetcherAdapter(mkMarkovOnHit2Prefetcher(maxChainLength, numLastRequestsTracked));
     `elsif DATA_PREFETCHER_ALL_IN_CAP
         doAssert(False, "Illegal data prefetcher type for LL cache!");
     `elsif DATA_PREFETCHER_SPP
@@ -648,12 +759,20 @@ module mkLLDPrefetcher(Prefetcher);
         Parameter#(512) ptEntries <- mkParameter;
         Prob prefetchThreshold = 7'b0100000;
         Bool useFilter = True;
-        let m <- mkSignaturePathPrefetcher(
+        let m <- mkCheriPrefetcherAdapter(mkSignaturePathPrefetcher(
             "./div_table.memhex",
-            stSets, stWays, ptEntries, prefetchThreshold, useFilter);
+            stSets, stWays, ptEntries, prefetchThreshold, useFilter));
+    `elsif DATA_PREFETCHER_CAP_PTR_NEW
+        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
+        Parameter#(4096) ptrTableSize <- mkParameter; 
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4) inverseDecayChance <- mkParameter;
+        Parameter#(0) onlyOnMiss <- mkParameter;
+        Parameter#(0) onlyExactCap <- mkParameter;
+        let m <- mkCapPtrPrefetcher3(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
     `endif
 `else 
-    let m <- mkDoNothingPrefetcher;
+    let m <- mkCheriPrefetcherAdapter(mkDoNothingPrefetcher);
 `endif
     return m;
 endmodule

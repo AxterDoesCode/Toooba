@@ -1,9 +1,14 @@
-# Configured to divide two 4-bit numbers
-# Giving a 7-bit result value (fixed point representation with 7 fractional bits)
+# Configured to divide two n-bit numbers
+# Giving an m-bit result value (fixed point representation with m fractional bits)
 # Thus the result of the divison must be between 0 and 1.
 # This is used for divisions in the Signature Path Prefetcher.
 
-with open("div_table.bsvi", "w") as fout:
+import sys
+
+inWidth = int(sys.argv[1])
+outWidth = int(sys.argv[2])
+
+with open(f"div_table_{inWidth}x{inWidth}to{outWidth}.bsvi", "w") as fout:
     fout.write ("// ***** This file was generated from a script *****\n")
     fout.write ("\n")
     fout.write ("\n")
@@ -11,27 +16,28 @@ with open("div_table.bsvi", "w") as fout:
     fout.write ("\n")
     fout.write ("\n")
     fout.write ("\n")
-    fout.write ("function Bit #(7) fn_read_divtable (Bit #(8) addr);\n")
+    fout.write (f"function Bit #({outWidth}) readDivtable{inWidth}x{inWidth}to{outWidth} (Bit #({inWidth*2}) addr);\n")
     fout.write ("   return\n")
     fout.write ("      case (addr)\n")
     addr = 0
-    for i in range(0, 16):
-        for j in range(0, 16):
+    for dividend in range(0, 2**inWidth):
+        for divisor in range(0, 2**inWidth):
 
-            if (j == 0):
+            if (divisor == 0):
                 div = 0
-            elif (i > j):
+            elif (dividend > divisor):
                 div = 1
             else:
-                div = float(i) / float(j)
-            div = div * 127 
+                div = float(dividend) / float(divisor)
+            div = div * (2**outWidth)
             div = round(div)
+            div = min(div, (2**outWidth-1))
             divstr = '{0:07b}'.format(div)
-            print(i, j, divstr)
+            print(dividend, divisor, divstr)
             #f.write("1111111\n")   
             fout.write(f"            {addr}: 7'b_{divstr};\n")
             addr += 1
     fout.write ("         default: 7'h0;\n")
     fout.write ("      endcase;\n")
-    fout.write ("endfunction: fn_read_divtable\n")
+    fout.write (f"endfunction: readDivtable{inWidth}x{inWidth}to{outWidth}\n")
     fout.write ("\n")

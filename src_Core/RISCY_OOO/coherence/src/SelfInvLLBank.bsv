@@ -352,6 +352,7 @@ module mkSelfInvLLBank#(
             addr: r.addr,
             fromState: r.fromState,
             toState: r.toState,
+            op: r.op,
             canUpToE: r.canUpToE,
             child: r.child,
             byteEn: ?,
@@ -383,6 +384,7 @@ module mkSelfInvLLBank#(
             addr: r.addr,
             fromState: r.fromState,
             toState: r.toState,
+            op: r.op,
             canUpToE: r.canUpToE,
             child: r.child,
             byteEn: ?,
@@ -403,6 +405,7 @@ module mkSelfInvLLBank#(
             addr: r.addr,
             fromState: I,
             toState: write ? M : S, // later on we use toState to distinguish DMA write vs. read
+            op: write ? St : Ld,
             canUpToE: False, // DMA should not go to E
             child: ?,
             byteEn: r.byteEn,
@@ -445,6 +448,7 @@ module mkSelfInvLLBank#(
             addr: r.addr,
             fromState: I,
             toState: write ? M : S,
+            op: write ? St : Ld,
             canUpToE: False,
             child: ?,
             byteEn: r.byteEn,

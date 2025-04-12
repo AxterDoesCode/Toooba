@@ -75,6 +75,7 @@ import CHERICap::*;
 import CHERICC_Fat::*;
 import ISA_Decls_CHERI::*;
 import CacheUtils::*;
+import Prefetcher_intf::*;
 `ifdef PERFORMANCE_MONITORING
 import PerformanceMonitor::*;
 import BlueUtils::*;
@@ -203,7 +204,7 @@ endmodule
 typedef DTlb#(MemExeToFinish) DTlbSynth;
 (* synthesize *)
 module mkDTlbSynth(DTlbSynth);
-    function TlbReq getTlbReq(MemExeToFinish x);
+    function TlbReq createTlbReq(MemExeToFinish x);
         return TlbReq {
             addr: getAddr(x.vaddr),
             write: (case(x.mem_func)
@@ -215,33 +216,18 @@ module mkDTlbSynth(DTlbSynth);
         };
     endfunction
     
-    function DTlbReq#(MemExeToFinish) createReqForPrefetch(CapPipe vaddr);
+    function TlbReq createReqForPrefetch(PrefetcherReqToTlb req);
         //return unpack(0);
-        return (DTlbReq {
-            inst: MemExeToFinish {
-                mem_func: Ld,
-                tag: unpack(0),
-                ldstq_tag: tagged Ld 'h0,
-                shiftedBE: DataMemAccess(unpack(~0)),
-                vaddr: vaddr,
-`ifdef INCLUDE_TANDEM_VERIF
-                store_data: unpack(0),
-                store_data_BE: unpack(0),
-`endif
-                misaligned: unpack(0),
-                capStore: False,
-                allowCapLoad: False,
-                capException: Invalid,
-                check: unpack(0)
-            },
-            specBits: unpack(~0) 
-        });
-       
-
+        return TlbReq {
+            addr: getAddr(req.cap),
+            write: False,
+            capStore: False,
+            potentialCapLoad: True
+        };
     endfunction
     function CapPipe getCap(MemExeToFinish inst) = inst.vaddr;
     
-    let m <- mkDTlb(getTlbReq, createReqForPrefetch, getCap);
+    let m <- mkDTlb(createTlbReq, createReqForPrefetch, getCap);
     return m;
 endmodule
 

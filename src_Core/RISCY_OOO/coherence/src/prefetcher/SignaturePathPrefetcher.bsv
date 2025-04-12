@@ -35,7 +35,7 @@ import RWBramCore::*;
 import FixedPoint::*;
 import SpecialRegs::*;
 
-`include "div_table.bsvi"
+`include "div_table_4x4to7.bsvi"
 
 interface Divider;
     method Action doDiv1(Bit#(4) a, Bit#(4) b);
@@ -47,21 +47,18 @@ interface Divider;
 endinterface
 
 module mkDivider#(String divTableFile)(Divider);
-    RBramCore#(Bit#(8), Bit#(7)) divide_table <- 
-        mkRBramCore(divTableFile, True);
-    
     FIFOF#(Bit#(7)) div1Res <- mkPipelineFIFOF;
     FIFOF#(Bit#(7)) div2Res <- mkPipelineFIFOF;
 
     method Action doDiv1(Bit#(4) a, Bit#(4) b);
         Bit#(8) addr = {a, b};
-        Bit#(7) divres = fn_read_divtable(addr);
+        Bit#(7) divres = readDivtable4x4to7(addr);
         div1Res.enq(divres);
     endmethod
 
     method Action doDiv2(Bit#(4) a, Bit#(4) b);
         Bit#(8) addr = {a, b};
-        Bit#(7) divres = fn_read_divtable(addr);
+        Bit#(7) divres = readDivtable4x4to7(addr);
         div2Res.enq(divres);
     endmethod
 

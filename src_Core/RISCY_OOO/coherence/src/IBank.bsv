@@ -431,6 +431,7 @@ module mkIBank#(
             addr: addr,
             fromState: ?,
             toState: S,
+            op: Ld,
             canUpToE: False,
             id: 0,
             child: ?,
@@ -456,6 +457,7 @@ module mkIBank#(
             addr: req.addr,
             fromState: I, // I$ upgrade from I
             toState: S, // I$ upgrade to S
+            op: Ld,
             canUpToE: False,
             id: slot.way,
             child: ?,

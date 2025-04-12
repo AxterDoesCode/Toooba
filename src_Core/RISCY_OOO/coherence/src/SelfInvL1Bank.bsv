@@ -409,6 +409,7 @@ module mkSelfInvL1Bank#(
             addr: req.addr,
             fromState: slot.cs,
             toState: req.toState,
+            op: req.op,
             canUpToE: True,
             id: slot.way,
             child: ?

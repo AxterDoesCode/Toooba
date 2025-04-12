@@ -100,7 +100,7 @@
 `define DRAM_MAX_READS TExp#(`LOG_LLC_WAYS) // max reads in DRAM, match LLC ways
 `define DRAM_MAX_WRITES 16 // write buffer size in AWS DRAM controller
 `define DRAM_MAX_REQS 24
-`define DRAM_LATENCY 60 // model a constant dram latency
+`define DRAM_LATENCY 80 // model a constant dram latency
 
 `ifdef SECURITY
 `define LOG_DRAM_REGION_NUM 6 // 64 DRAM regions
@@ -143,8 +143,8 @@
     `define L1D_CRQ_NUM 8
 
     // LLC
-    `define LOG_LLC_LINES 8 // 32KB
-    `define LOG_LLC_WAYS 3 // 8 ways
+    `define LOG_LLC_LINES 11 // 128KB
+    `define LOG_LLC_WAYS 4 // 16 ways
 
 `endif
 
