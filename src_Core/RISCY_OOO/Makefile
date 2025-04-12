@@ -58,6 +58,7 @@ copy_procs_lib_files:
 	cp -p $(RISCY_HOME)/$(PROCS_LIB)/LLCache.bsv                ./$(PROCS_LIB)/
 	cp -p $(RISCY_HOME)/$(PROCS_LIB)/LLCDmaConnect.bsv          ./$(PROCS_LIB)/
 	cp -p $(RISCY_HOME)/$(PROCS_LIB)/LLCRqMshrSecureModel.bsv   ./$(PROCS_LIB)/
+	cp -p $(RISCY_HOME)/$(PROCS_LIB)/LLCTlb.bsv                ./$(PROCS_LIB)/
 	cp -p $(RISCY_HOME)/$(PROCS_LIB)/MemLoader.bsv              ./$(PROCS_LIB)/
 	cp -p $(RISCY_HOME)/$(PROCS_LIB)/MemLoaderIF.bsv            ./$(PROCS_LIB)/
 	cp -p $(RISCY_HOME)/$(PROCS_LIB)/MemoryTypes.bsv            ./$(PROCS_LIB)/

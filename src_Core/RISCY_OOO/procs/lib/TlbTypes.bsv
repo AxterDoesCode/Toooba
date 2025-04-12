@@ -26,6 +26,9 @@
 import Vector::*;
 import Types::*;
 import ProcTypes::*;
+import Prefetcher_intf::*;
+import CHERICap::*;
+import CHERICC_Fat::*;
 
 // processor req/resp with I/D TLB
 typedef struct{
@@ -43,6 +46,33 @@ typedef Bit#(TLog#(DTlbReqNum)) DTlbReqIdx;
 // non-blocking L2 TLB
 typedef `L2TLB_REQ_NUM L2TlbReqNum;
 typedef Bit#(TLog#(L2TlbReqNum)) L2TlbReqIdx;
+
+// number of prefetcher TLB requests
+`ifndef PREFETCHER_TLB_REQ_NUM
+    `define PREFETCHER_TLB_REQ_NUM 4
+`endif
+typedef `PREFETCHER_TLB_REQ_NUM PrefetcherTlbReqNum;
+typedef Bit#(TLog#(PrefetcherTlbReqNum)) PrefetcherTlbReqIdx;
+typedef Bit#(TAdd#(TLog#(PrefetcherTlbReqNum),TLog#(CoreNum))) CombinedLLCTlbReqIdx;
+
+// prefetcher req/resp with L1 TLB
+typedef struct {
+    CapPipe cap;
+    PrefetcherTlbReqIdx id;
+} PrefetcherReqToTlb deriving (Bits, Eq, FShow);
+typedef struct {
+    Addr paddr;
+    CapPipe cap;
+    PrefetcherTlbReqIdx id;
+    Bool haveException;
+    Bool permsCheckPass;
+} TlbRespToPrefetcher deriving (Bits, Eq, FShow);
+
+interface TlbToPrefetcher;
+    method Action prefetcherReq(PrefetcherReqToTlb req);
+    method TlbRespToPrefetcher prefetcherResp;
+    method Action deqPrefetcherResp;
+endinterface
 
 // Only for Sv39
 typedef 27 VpnSz;
@@ -93,6 +123,12 @@ typedef struct {
     PageWalkLevel level;
     Asid          asid;
 } TlbEntry deriving (Bits, Eq, FShow);
+
+typedef union tagged {
+    TlbEntry ValidTlbEntry;
+    void TlbDisabled;
+    void TlbFault;
+} TaggedTlbEntry deriving (Bits, Eq, FShow);
 
 // SV39 translate
 function Vpn getVpn(Addr addr) = addr[38:12];

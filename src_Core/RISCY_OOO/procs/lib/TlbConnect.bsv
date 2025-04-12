@@ -30,11 +30,15 @@ import TlbTypes::*;
 import CacheUtils::*;
 import ITlb::*;
 import DTlb::*;
+import LLCTlb::*;
 import L2Tlb::*;
+import Vector::*;
+import CrossBar::*;
+import BuildVector::*;
 
-module mkTlbConnect#(ITlbToParent i, DTlbToParent d, L2TlbToChildren l2)(Empty);
+module mkTlbConnect#(ITlbToParent i, DTlbToParent d, FifoDeq#(LLCTlbRqToP#(PrefetcherTlbReqIdx)) rqFromLLCTlb, FifoEnq#(LLCTlbRsFromP#(PrefetcherTlbReqIdx)) rsToLLCTlb, L2TlbToChildren l2)(Empty);
     // give priority to DTlb req
-    (* descending_urgency = "sendDTlbReq, sendITlbReq" *)
+    (* descending_urgency = "sendDTlbReq, sendITlbReq, sendLLCTlbReq" *)
     rule sendDTlbReq;
         DTlbRqToP r <- toGet(d.rqToP).get;
         l2.rqFromC.put(L2TlbRqFromC {
@@ -47,6 +51,14 @@ module mkTlbConnect#(ITlbToParent i, DTlbToParent d, L2TlbToChildren l2)(Empty);
         ITlbRqToP r <- toGet(i.rqToP).get;
         l2.rqFromC.put(L2TlbRqFromC {
             child: I,
+            vpn: r.vpn
+        });
+    endrule
+
+    rule sendLLCTlbReq;
+        LLCTlbRqToP#(PrefetcherTlbReqIdx) r <- toGet(rqFromLLCTlb).get;
+        l2.rqFromC.put(L2TlbRqFromC {
+            child: LLC(r.id),
             vpn: r.vpn
         });
     endrule
@@ -64,6 +76,14 @@ module mkTlbConnect#(ITlbToParent i, DTlbToParent d, L2TlbToChildren l2)(Empty);
         i.rsFromP.enq(ITlbRsFromP {entry: r.entry});
     endrule
 
+    rule sendRsToLLCTlb(l2.rsToC.first.child matches tagged LLC .id);
+        L2TlbRsToC r <- toGet(l2.rsToC).get;
+        rsToLLCTlb.enq(LLCTlbRsFromP {
+            entry: r.entry,
+            id: id
+        });
+    endrule
+
     mkConnection(d.flush.request, l2.dTlbReqFlush);
     mkConnection(i.flush.request, l2.iTlbReqFlush);
 
@@ -71,5 +91,27 @@ module mkTlbConnect#(ITlbToParent i, DTlbToParent d, L2TlbToChildren l2)(Empty);
         let x <- l2.flushDone.get;
         d.flush.response.put(?);
         i.flush.response.put(?);
+    endrule
+endmodule
+
+module mkLLCTlbConnect#(LLCTlbToParent#(CombinedLLCTlbReqIdx) llcTlb, Vector#(CoreNum, ParentToLLCTlb#(PrefetcherTlbReqIdx)) l2Tlbs)(Empty);
+    // Crossbar from L2TLBs into the LLC
+    function XBarDstInfo#(Bit#(0), LLCTlbRsFromP#(CombinedLLCTlbReqIdx)) getL2TlbRsDstInfo(Bit#(TLog#(CoreNum)) idx, LLCTlbRsFromP#(PrefetcherTlbReqIdx) rs);
+        return XBarDstInfo {idx: 0, data: LLCTlbRsFromP {
+            entry: rs.entry,
+            id: {rs.id, extend(idx)}
+        }};
+    endfunction
+    function Get#(LLCTlbRsFromP#(PrefetcherTlbReqIdx)) l2TlbRsGet(ParentToLLCTlb#(PrefetcherTlbReqIdx) l2Tlb) = toGet(l2Tlb.rsToLLCTlb);
+    mkXBar(getL2TlbRsDstInfo, map(l2TlbRsGet, l2Tlbs), vec(toPut(llcTlb.rsFromP)));
+
+    rule doForwardRq;
+        let rq = llcTlb.rqToP.first;
+        llcTlb.rqToP.deq;
+        Bit#(TLog#(CoreNum)) idx = truncate(rq.id);
+        l2Tlbs[idx].rqFromLLCTlb.enq(LLCTlbRqToP {
+            vpn: rq.vpn,
+            id: truncateLSB(rq.id)
+        });
     endrule
 endmodule

@@ -88,6 +88,7 @@ endinterface
 typedef union tagged {
     void I;
     DTlbReqIdx D;
+    PrefetcherTlbReqIdx LLC;
 } TlbChild deriving(Bits, Eq, FShow);
 typedef struct {
     TlbChild child;
@@ -96,7 +97,7 @@ typedef struct {
 
 typedef struct {
     TlbChild child;
-    Maybe#(TlbEntry) entry;
+    TaggedTlbEntry entry;
 } L2TlbRsToC deriving(Bits, Eq, FShow);
 
 interface L2TlbToChildren;
@@ -356,7 +357,8 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 
         // get correct VM info
         VMInfo vm_info = cRq.child == I ? vm_info_I : vm_info_D;
-        doAssert(vm_info.sv39, "must be in sv39 mode");
+        //doAssert(vm_info.sv39, "must be in sv39 mode");
+        // ^ Send a specifically-tagged response to say the TLb was disabled
 
         // get resp from 4KB TLB and mega-giga TLB
         let resp4KB = tlb4KB.resp;
@@ -373,7 +375,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // resp to child
             rsToCQ.enq(L2TlbRsToC {
                 child: cRq.child,
-                entry: Valid (entry)
+                entry: ValidTlbEntry (entry)
             });
             // req is done
             pendValid_tlbResp[idx] <= False;
@@ -395,7 +397,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // resp with invalid entry
             rsToCQ.enq(L2TlbRsToC {
                 child: cRq.child,
-                entry: Invalid
+                entry: TlbDisabled
             });
             // deq 4KB TLB array
             tlb4KB.deqResp(Invalid);
@@ -583,7 +585,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // resp with invalid entry
             rsToCQ.enq(L2TlbRsToC {
                 child: cRq.child,
-                entry: Invalid
+                entry: TlbFault
             });
             // req is done
             pendValid_pageWalk[idx] <= False;
@@ -692,7 +694,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 // resp child
                 rsToCQ.enq(L2TlbRsToC {
                     child: cRq.child,
-                    entry: Valid (entry)
+                    entry: ValidTlbEntry (entry)
                 });
 `ifdef PERFORMANCE_MONITORING
                 // page table walks are counted as accesses

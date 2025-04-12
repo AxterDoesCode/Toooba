@@ -62,6 +62,13 @@ import PerformanceMonitor::*;
 import StatCounters::*;
 import BlueUtils::*;
 `endif
+import CHERICC_Fat::*;
+import CHERICap::*;
+import LLCTlb::*;
+import BuildVector::*;
+import TlbTypes::*;
+import CrossBar::*;
+import MemoryTypes::*;
 
 export LLCRqStuck(..);
 export LLBank(..);
@@ -108,6 +115,7 @@ interface LLBank#(
     interface ParentCacheToChild#(cRqIdT, Bit#(TLog#(childNum))) to_child;
     interface DmaServer#(dmaRqIdT) dma;
     interface MemFifoClient#(LdMemRqId#(Bit#(TLog#(cRqNum))), void) to_mem;
+    interface LLCTlbToParent#(CombinedLLCTlbReqIdx) to_tlb;
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
     interface Get#(LLCRqStuck#(childNum, cRqIdT, dmaRqIdT)) cRqStuck;
     // performance
@@ -182,6 +190,8 @@ module mkLLBank#(
     Alias#(cRqSlotT, LLCRqSlot#(wayT, tagT, Vector#(childNum, DirPend))), // cRq MSHR slot
     Alias#(llCmdT, LLCmd#(childT, cRqIndexT)),
     Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, dirT, cacheOwnerT, PrefetchInfo, RandRepInfo, Line, void, llCmdT)),
+    Alias#(rqToTlbT, LLCTlbRqToP#(CombinedLLCTlbReqIdx)),
+    Alias#(rsFromTlbT, LLCTlbRsFromP#(CombinedLLCTlbReqIdx)),
     // requirements
     Bits#(cRqIdT, _cRqIdSz),
     Bits#(dmaRqIdT, _dmaRqIdSz),
@@ -241,9 +251,26 @@ module mkLLBank#(
     Count#(Bit#(32)) removedCRqs <- mkCount(0);
 
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
-    PrefetcherVector#(TDiv#(childNum, 2)) dataPrefetchers <- mkPrefetcherVector(mkLLDPrefetcher);
-    PrefetcherVector#(TDiv#(childNum, 2)) instrPrefetchers <- mkPrefetcherVector(mkLLIPrefetcher);
+    // Create TLBs for data prefetchers
+    Vector#(CoreNum, LLCTlb) dataPrefetcherTlbs <- replicateM(mkLLCTlb);
+    function module#(CheriPrefetcher) mkmkLLDPrefetcher(LLCTlb tlb);
+        return mkLLDPrefetcher(tlb.toPrefetcher);
+    endfunction
+    PrefetcherVector#(CoreNum) dataPrefetchers <- mkPrefetcherVector(map(mkmkLLDPrefetcher, dataPrefetcherTlbs));
+    PrefetcherVector#(CoreNum) instrPrefetchers <- mkPrefetcherVector(vec(mkCheriPrefetcherAdapter(mkLLIPrefetcher)));
     Fifo#(32, Tuple5#(Addr, childT, Addr, Addr, Addr)) overflowPrefetchQueue <- mkOverflowBypassFifo;
+
+    // XBar for TLBs
+    Fifo#(2, rqToTlbT) rqToTlbQ <- mkCFFifo;
+    Fifo#(2, rsFromTlbT) rsFromTlbQ <- mkCFFifo;
+    function XBarDstInfo#(Bit#(0), rqToTlbT) getTlbRqDstInfo(Bit#(TLog#(CoreNum)) idx, LLCTlbRqToP#(PrefetcherTlbReqIdx) rq);
+        return XBarDstInfo {idx: 0, data: LLCTlbRqToP {
+            vpn: rq.vpn,
+            id: {rq.id, extend(idx)}
+        }};
+    endfunction
+    function Get#(LLCTlbRqToP#(PrefetcherTlbReqIdx)) tlbRqGet(LLCTlb tlb) = toGet(tlb.toParent.rqToP);
+    mkXBar(getTlbRqDstInfo, map(tlbRqGet, dataPrefetcherTlbs), vec(toPut(rqToTlbQ)));
 
     Reg#(Bit#(64)) crqMshrEnqs <- mkConfigReg(0);
     Reg#(Bit#(64)) crqMshrDeqs <- mkConfigReg(0);
@@ -295,6 +322,16 @@ action
 `endif
 endaction
 endfunction
+
+    rule doForwardTlbResp;
+        let rs = rsFromTlbQ.first;
+        rsFromTlbQ.deq;
+        Bit#(TLog#(CoreNum)) idx = truncate(rs.id);
+        dataPrefetcherTlbs[idx].toParent.rsFromP.enq(LLCTlbRsFromP {
+            entry: rs.entry,
+            id: truncateLSB(rs.id)
+        });
+    endrule
 
 
     rule checkIfMshrFull;
@@ -413,6 +450,7 @@ endfunction
             addr: r.addr,
             fromState: r.fromState,
             toState: r.toState,
+            op: r.op,
             canUpToE: r.canUpToE,
             child: r.child,
             byteEn: ?,
@@ -468,6 +506,7 @@ endfunction
             addr: addr,
             fromState: I,
             toState: S,
+            op: Ld,
             canUpToE: True,
             child: child,
             byteEn: ?,
@@ -509,21 +548,23 @@ endfunction
     // Rule only fires when no work from child and DMA
     rule createDataPrefetchRq(newCRqSrc == Invalid);
         let x <- dataPrefetchers.getNextPrefetchAddr;
-        match {.addr, .cacheIdx} = x;
+        match {.prefetch, .cacheIdx} = x;
+        doAssert(!prefetch.nextLevel, "cannot issue a next-level prefetch in the LLCache");
         //Request from L1D of cacheIdx-th core
         childT child = {cacheIdx, '0};
         cRqT cRq = LLRq {
-            addr: addr,
+            addr: prefetch.addr,
             fromState: I,
             toState: E,
+            op: Ld,
             canUpToE: True,
             child: child,
             byteEn: ?,
             id: Child (?),
-            boundsOffset: ?,
-            boundsLength: ?,
-            boundsVirtBase: ?,
-            capPerms: ?
+            boundsOffset: getOffset(prefetch.cap),
+            boundsLength: saturating_truncate(getLength(prefetch.cap)),
+            boundsVirtBase: getBase(prefetch.cap),
+            capPerms: getPerms(prefetch.cap)
         };
         // setup new MSHR entry
         cRqIndexT n <- cRqMshr.transfer.getEmptyEntryInit(cRq, Invalid);
@@ -557,21 +598,22 @@ endfunction
     // Rule only fires when no work from child and DMA
     rule createInstrPrefetchRq(newCRqSrc == Invalid);
         let x <- instrPrefetchers.getNextPrefetchAddr;
-        match {.addr, .cacheIdx} = x;
+        match {.prefetch, .cacheIdx} = x;
         //Request from L1D of cacheIdx-th core
         childT child = {cacheIdx, '1};
         cRqT cRq = LLRq {
-            addr: addr,
+            addr: prefetch.addr,
             fromState: I,
             toState: S,
+            op: Ld,
             canUpToE: True,
             child: child,
             byteEn: ?,
             id: Child (?),
-            boundsOffset: ?,
-            boundsLength: ?,
-            boundsVirtBase: ?,
-            capPerms: ?
+            boundsOffset: getOffset(prefetch.cap),
+            boundsLength: saturating_truncate(getLength(prefetch.cap)),
+            boundsVirtBase: getBase(prefetch.cap),
+            capPerms: getPerms(prefetch.cap)
         };
         // setup new MSHR entry
         cRqIndexT n <- cRqMshr.transfer.getEmptyEntryInit(cRq, Invalid);
@@ -601,6 +643,7 @@ endfunction
             addr: r.addr,
             fromState: r.fromState,
             toState: r.toState,
+            op: r.op,
             canUpToE: r.canUpToE,
             child: r.child,
             byteEn: ?,
@@ -625,6 +668,7 @@ endfunction
             addr: r.addr,
             fromState: I,
             toState: write ? M : S, // later on we use toState to distinguish DMA write vs. read
+            op: write ? St : Ld,
             canUpToE: False, // DMA should not go to E
             child: ?,
             byteEn: r.byteEn,
@@ -674,6 +718,7 @@ endfunction
             addr: r.addr,
             fromState: I,
             toState: write ? M : S,
+            op: write ? St : Ld,
             canUpToE: False,
             child: ?,
             byteEn: r.byteEn,
@@ -1071,6 +1116,36 @@ endfunction
 `endif
     endrule
 
+    function Action prefetcherReportAccess(cRqT cRq, HitOrMiss hitmiss, Bool isPrefetch);
+    action
+        if (cRq.child[0] == 1) begin
+            instrPrefetchers.reportAccess(
+                truncateLSB(cRq.child), cRq.addr, hitmiss, cRq.op, isPrefetch, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
+            );
+        end
+        else begin
+            dataPrefetchers.reportAccess(
+                truncateLSB(cRq.child), cRq.addr, hitmiss, cRq.op, isPrefetch, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
+            );
+        end
+    endaction
+    endfunction
+
+    function Action prefetcherReportCacheDataArrival(cRqT cRq, CLine lineWithTags, Bool wasMiss, Bool wasPrefetch);
+    action
+        if (cRq.child[0] == 1) begin
+            instrPrefetchers.reportCacheDataArrival(
+                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
+            );
+        end
+        else begin
+            dataPrefetchers.reportCacheDataArrival(
+                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
+            );
+        end
+    endaction
+    endfunction
+
     // Final stage of pipeline: process all kinds of msg
     pipeOutT pipeOut = pipeline.first;
     ramDataT ram = pipeOut.ram;
@@ -1094,8 +1169,9 @@ endfunction
             fshow(cRq)
         );
         if (prefetchVerbose)
-            $display("%t LL cRq hit: addr: 0x%h, cRq is prefetch: %d, wasMiss: %d",
+            $display("%t LL cRq hit mshr: %d, addr: 0x%h, cRq is prefetch: %d, wasMiss: %d",
                 cur_cycle,
+                n,
                 cRq.addr,
                 cRqIsPrefetch[n],
                 wasMiss
@@ -1162,16 +1238,8 @@ endfunction
             },
             line: ram.line // use line in ram
         }, True); // hit, so update rep info
-        if (!cRqIsPrefetch[n]) begin
-            if (cRq.child[0] == 1) begin
-                instrPrefetchers.reportAccess(
-                        truncateLSB(cRq.child), cRq.addr, HIT);
-            end
-            else begin
-                dataPrefetchers.reportAccess(
-                        truncateLSB(cRq.child), cRq.addr, HIT);
-            end
-        end
+        prefetcherReportAccess(cRq, HIT, cRqIsPrefetch[n]);
+        prefetcherReportCacheDataArrival(cRq, ram.line, wasMiss, cRqIsPrefetch[n]);
     endaction
     endfunction
 
@@ -1367,16 +1435,7 @@ endfunction
                 },
                 line: ram.line
             }, False);
-            if (!cRqIsPrefetch[n]) begin
-                if (cRq.child[0] == 1) begin
-                    instrPrefetchers.reportAccess(
-                            truncateLSB(cRq.child), cRq.addr, MISS);
-                end
-                else begin
-                    dataPrefetchers.reportAccess(
-                            truncateLSB(cRq.child), cRq.addr, MISS);
-                end
-            end
+            prefetcherReportAccess(cRq, MISS, cRqIsPrefetch[n]);
             LineAddr repLineAddr = getLineAddr({ram.info.tag, truncate(cRq.addr)});
             if (prefetchVerbose)
                 $display("%t LL cRq miss (no rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, cRq is prefetch: %d, ramCs: ",
@@ -1458,16 +1517,7 @@ endfunction
                     dirPend: dirPend
                 });
             end
-            if (!cRqIsPrefetch[n]) begin
-                if (cRq.child[0] == 1) begin
-                    instrPrefetchers.reportAccess(
-                            truncateLSB(cRq.child), cRq.addr, MISS);
-                end
-                else begin
-                    dataPrefetchers.reportAccess(
-                            truncateLSB(cRq.child), cRq.addr, MISS);
-                end
-            end
+            prefetcherReportAccess(cRq, MISS, cRqIsPrefetch[n]);
             LineAddr repLineAddr = getLineAddr({ram.info.tag, truncate(cRq.addr)});
             if (prefetchVerbose)
                 $display("%t LL cRq miss (rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, cRq is prefetch: %d, ramCs: ",
@@ -1530,8 +1580,12 @@ endfunction
                 else begin
                     // must be hitting on a line being replaced
                     // add to rep dependency
-                    cRqMshr.pipelineResp.setRepSucc(cOwner.mshrIdx, Valid (n));
-                    cRqSetDepNoCacheChange;
+                    if (cRqIsPrefetch[n]) begin
+                        cRqDrop;
+                    end else begin
+                        cRqMshr.pipelineResp.setRepSucc(cOwner.mshrIdx, Valid (n));
+                        cRqSetDepNoCacheChange;
+                    end
                    if (verbose)
                     $display("%t LL %m pipelineResp: cRq: own by other cRq, rep dep: ", $time,
                         fshow(cOwner)
@@ -1844,6 +1898,11 @@ endfunction
         interface rdMissResp = toGet(dmaRdMissQ);
         interface rdHitResp = toGet(dmaRdHitQ);
 `endif
+    endinterface
+
+    interface LLCTlbToParent to_tlb;
+        interface rqToP = toFifoDeq(rqToTlbQ);
+        interface rsFromP = toFifoEnq(rsFromTlbQ);
     endinterface
 
     interface MemFifoClient to_mem;

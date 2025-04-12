@@ -43,6 +43,7 @@ module mkL1LLConnect#(
                 addr: r.addr,
                 fromState: r.fromState,
                 toState: r.toState,
+                op: r.op,
                 canUpToE: r.canUpToE,
                 id: r.id,
                 child: child,

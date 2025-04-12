@@ -71,12 +71,15 @@ import Types::*;
 import ProcTypes::*;
 import L1CoCache::*;
 import L2Tlb::*;
+import LLCTlb::*;
+import TlbTypes::*;
 import CCTypes::*;
 import CacheUtils::*;
 import LLCache::*;
 import MemLoader::*;
 import L1LLConnect::*;
 import LLCDmaConnect::*;
+import TlbConnect::*;
 import MMIOAddrs::*;
 import MMIOCore::*;
 import DramCommon::*;
@@ -145,6 +148,15 @@ module mkProc (Proc_IFC);
    end
    mkL1LLConnect(llc.to_child, l1);
 
+   // ================================================================
+   // LLC tlb to L2 tlb
+
+   Vector#(CoreNum, ParentToLLCTlb#(PrefetcherTlbReqIdx)) toLLCTlbs = ?;
+   for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
+      toLLCTlbs[i] = core[i].toLLCTlb;
+   end
+   let llc_tlb_connect <- mkLLCTlbConnect(llc.to_tlb, toLLCTlbs);
+   
    // ================================================================
    // LLC's DMA connections
 

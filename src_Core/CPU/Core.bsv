@@ -71,6 +71,7 @@ import Exec::*;
 import FetchStage::*;
 import ITlb::*;
 import DTlb::*;
+import LLCTlb::*;
 import L2Tlb::*;
 import TlbConnect::*;
 import EpochManager::*;
@@ -174,6 +175,8 @@ interface Core;
     // coherent caches to LLC
     interface ChildCacheToParent#(L1Way, void) dCacheToParent;
     interface ChildCacheToParent#(L1Way, void) iCacheToParent;
+    // L2Tlb to LLC tlb
+    interface ParentToLLCTlb#(PrefetcherTlbReqIdx) toLLCTlb;
     // DMA to LLC
     interface TlbMemClient tlbToMem;
     // MMIO
@@ -548,7 +551,9 @@ module mkCore#(CoreId coreId)(Core);
 
     // L2 TLB
     L2Tlb l2Tlb <- mkL2Tlb;
-    mkTlbConnect(iTlb.toParent, dTlb.toParent, l2Tlb.toChildren);
+    Fifo#(2, LLCTlbRqToP#(PrefetcherTlbReqIdx)) rqFromLLCTlbQ <- mkCFFifo;
+    Fifo#(2, LLCTlbRsFromP#(PrefetcherTlbReqIdx)) rsToLLCTlbQ <- mkCFFifo;
+    mkTlbConnect(iTlb.toParent, dTlb.toParent, toFifoDeq(rqFromLLCTlbQ), toFifoEnq(rsToLLCTlbQ), l2Tlb.toChildren);
 
     // flags to flush
     Reg#(Bool)  flush_tlbs <- mkReg(False);
@@ -1562,6 +1567,11 @@ module mkCore#(CoreId coreId)(Core);
 
     interface dCacheToParent = dMem.to_parent;
     interface iCacheToParent = iMem.to_parent;
+
+    interface ParentToLLCTlb toLLCTlb;
+        interface rqFromLLCTlb = toFifoEnq(rqFromLLCTlbQ);
+        interface rsToLLCTlb = toFifoDeq(rsToLLCTlbQ);
+    endinterface
 
     interface tlbToMem = l2Tlb.toMem;
 

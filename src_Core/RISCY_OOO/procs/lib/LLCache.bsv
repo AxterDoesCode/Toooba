@@ -55,6 +55,8 @@ import SelfInvLLBank::*;
 import L1CoCache::*;
 import LLCDmaConnect::*;
 import Performance::*;
+import LLCTlb::*;
+import TlbTypes::*;
 `ifdef PERFORMANCE_MONITORING
 import StatCounters::*;
 `endif
@@ -253,6 +255,7 @@ interface LLCache;
     interface ParentCacheToChild#(LLCRqId, LLChild) to_child;
     interface DmaServer#(LLCDmaReqId) dma;
     interface MemFifoClient#(LdMemRqId#(LLCRqMshrIdx), void) to_mem;
+    interface LLCTlbToParent#(CombinedLLCTlbReqIdx) to_tlb;
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
     interface Get#(LLCStuck) cRqStuck;
     // performance
@@ -437,6 +440,7 @@ module mkLLCache(LLCache);
     interface to_child = cache.to_child;
     interface dma = cache.dma;
     interface to_mem = cache.to_mem;
+    interface to_tlb = cache.to_tlb;
     interface cRqStuck = cache.cRqStuck;
 
 `endif // SECURITY

@@ -45,6 +45,7 @@ import Assert::*;
 import CacheUtils::*;
 import Types::*;
 import ProcTypes::*;
+import TlbTypes::*;
 import Performance::*;
 import Fifos::*;
 import CCTypes::*;
@@ -171,7 +172,7 @@ endmodule
 
 typedef L1Bank#(LgDBankNum, L1WayNum, DIndexSz, DTagSz, DCRqNum, DPRqNum, DProcReqId) DCacheWrapper;
 
-module mkDCacheWrapper#(L1ProcResp#(DProcReqId) procResp, DTlbToPrefetcher toPrefetcher)(DCacheWrapper);
+module mkDCacheWrapper#(L1ProcResp#(DProcReqId) procResp, TlbToPrefetcher toPrefetcher)(DCacheWrapper);
     let m <- mkL1Cache(mkDCRqMshrWrapper, mkDPRqMshrWrapper, mkDPipeline, procResp, toPrefetcher);
     return m;
 endmodule
@@ -203,7 +204,7 @@ interface DCoCache;
     interface Get#(L1DPRqStuck) pRqStuck;
 endinterface
 
-module mkDCoCache#(L1ProcResp#(DProcReqId) procResp, DTlbToPrefetcher toPrefetcher)(DCoCache);
+module mkDCoCache#(L1ProcResp#(DProcReqId) procResp, TlbToPrefetcher toPrefetcher)(DCoCache);
     let cache <- mkDCacheWrapper(procResp, toPrefetcher);
 
     // perf counters

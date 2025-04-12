@@ -228,19 +228,6 @@ interface L1ProcResp#(type idT);
     method Action evict(LineAddr a); // called when cache line is evicted
 endinterface
 
-typedef struct {
-    Addr paddr;
-    Bool haveException;
-    Bool permsCheckPass;
-    CapPipe cap;
-} DTlbRespToPrefetcher deriving (Bits, Eq, FShow);
-
-interface DTlbToPrefetcher;
-    method Action prefetcherReq(CapPipe addr);
-    method DTlbRespToPrefetcher prefetcherResp;
-    method Action deqPrefetcherResp;
-endinterface
-
 // RISCV-specific store-cond return values
 typedef 0 ScSuccVal;
 typedef 1 ScFailVal;
@@ -273,6 +260,7 @@ typedef struct {
     Addr addr;
     Msi fromState;
     Msi toState;
+    MemOp op;
     Bool canUpToE; // meaningful to upgrade to E if toState is S
     idT id; // slot id in child cache
     childT child; // from which child
@@ -337,6 +325,7 @@ typedef struct {
     // child req stuff
     Msi fromState;
     Msi toState;
+    MemOp op;
     Bool canUpToE;
     childT child;
     // dma req stuff

@@ -54,6 +54,7 @@ import LatencyTimer::*;
 import HasSpecBits::*;
 import Vector::*;
 import Ehr::*;
+import Prefetcher_intf::*;
 `ifdef PERFORMANCE_MONITORING
 import PerformanceMonitor::*;
 import CCTypes::*;
@@ -64,7 +65,7 @@ import StatCounters::*;
 export DTlbReq(..);
 export DTlbResp(..);
 export DTlbRqToP(..);
-export DTlbToPrefetcher(..);
+export TlbToPrefetcher(..);
 export DTlbTransRsFromP(..);
 export DTlbToParent(..);
 export DTlb(..);
@@ -95,7 +96,7 @@ typedef struct {
 typedef struct {
     // may get page fault: i.e. hit invalid page or
     // get non-leaf page at last-level page table
-    Maybe#(TlbEntry) entry;
+    TaggedTlbEntry entry;
     DTlbReqIdx id;
 } DTlbTransRsFromP deriving(Bits, Eq, FShow);
 
@@ -118,7 +119,7 @@ interface DTlb#(type instT);
     method DTlbResp#(instT) procResp;
     method Action deqProcResp;
 
-    interface DTlbToPrefetcher toPrefetcher;
+    interface TlbToPrefetcher toPrefetcher;
 
     // req/resp with L2 TLB
     interface DTlbToParent toParent;
@@ -147,8 +148,8 @@ typedef union tagged {
 } DTlbWait deriving(Bits, Eq, FShow);
 
 module mkDTlb#(
-    function TlbReq getTlbReq(instT inst),
-    function DTlbReq#(instT) createReqForPrefetch(CapPipe vaddr),
+    function TlbReq createTlbReq(instT inst),
+    function TlbReq createReqForPrefetch(PrefetcherReqToTlb prefetch),
     function CapPipe getCap(instT inst))
     (DTlb::DTlb#(instT)) provisos(Bits#(instT, a__), FShow#(instT));
     Bool verbose = False;
@@ -175,7 +176,7 @@ module mkDTlb#(
     Vector#(DTlbReqNum, Reg#(instT)) pendInst <- replicateM(mkRegU);
     Vector#(DTlbReqNum, Reg#(TlbResp)) pendResp <- replicateM(mkRegU);
     Vector#(DTlbReqNum, Ehr#(2, SpecBits)) pendSpecBits <- replicateM(mkEhr(?));
-    Vector#(DTlbReqNum, Reg#(Bool)) pendIsPrefetch <- replicateM(mkRegU);
+    Vector#(DTlbReqNum, Reg#(Maybe#(PrefetcherReqToTlb))) pendPrefetchInst <- replicateM(mkRegU);
 
     // ordering of methods/rules that access pend reqs
     // procReq mutually exclusive with doPRs (no procReq when pRs ready)
@@ -224,7 +225,7 @@ module mkDTlb#(
     Fifo#(1, void) flushRqToPQ <- mkCFFifo;
     Fifo#(1, void) flushRsFromPQ <- mkCFFifo;
     RWire#(DTlbReq#(instT)) rqFromProc <- mkRWire;
-    RWire#(DTlbReq#(instT)) rqFromPrefetcher <- mkRWire;
+    RWire#(PrefetcherReqToTlb) rqFromPrefetcher <- mkRWire;
 
     // perf counters
     LatencyTimer#(DTlbReqNum, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
@@ -293,6 +294,14 @@ module mkDTlb#(
         if(verbose) $display("[DTLB] flush done");
     endrule
 
+    function getTlbReq(DTlbReqIdx idx);
+        if (pendPrefetchInst[idx] matches tagged Valid .req) begin
+            return createReqForPrefetch(req);
+        end else begin
+            return createTlbReq(pendInst[idx]);
+        end
+    endfunction
+
     // get resp from parent TLB
     // At high level, this rule is always exclusive with doStartFlush, though
     // we don't bother to make compiler understand this...
@@ -301,14 +310,14 @@ module mkDTlb#(
         // the current req being served is either the initiating req or other
         // req pending on the same resp
         let idx = fromMaybe(pRs.id, respForOtherReq);
-        TlbReq r = getTlbReq(pendInst[idx]);
-        $display("%t DTlb doPRs", $time);
+        TlbReq r = getTlbReq(idx);
+        if(verbose) $display("%t DTlb doPRs", $time);
 
         if(pendPoisoned[idx]) begin
             // poisoned inst, do nothing
             if(verbose) $display("[DTLB] refill poisoned: idx %d; ", idx, fshow(r));
         end
-        else if(pRs.entry matches tagged Valid .en) begin
+        else if(pRs.entry matches tagged ValidTlbEntry .en) begin
             // check permission
             if (verbose)
                 $display("dPRs: vm_info: ", fshow(vm_info),
@@ -325,8 +334,8 @@ module mkDTlb#(
                                             r.potentialCapLoad);
             if (permCheck.allowed) begin
                 // fill TLB, and record resp
-                if (!pendIsPrefetch[idx]) begin
-                tlb.addEntry(en);
+                if (!isValid(pendPrefetchInst[idx])) begin
+                    tlb.addEntry(en);
                 end
                 let trans_addr = translate(r.addr, en.ppn, en.level);
                 pendResp[idx] <= tuple3(trans_addr, Invalid, permCheck.allowCap);
@@ -334,7 +343,10 @@ module mkDTlb#(
                     $display("[DTLB] refill: idx %d; ", idx, fshow(r),
                              "; ", fshow(trans_addr));
                 end
-            end
+            end 
+            else if(pRs.entry == TlbDisabled) begin
+                doAssert(True, "L2TLB should not be disabled if TLB sent a request");
+            end 
             else begin
                 // page fault
                 Exception fault = permCheck.excCode;
@@ -389,7 +401,7 @@ module mkDTlb#(
                 missPeerCnt.incr(1);
             end
             else begin
-                if (!pendIsPrefetch[idx]) begin
+                if (!isValid(pendPrefetchInst[idx])) begin
                     missParentLat.incr(zeroExtend(lat));
                     missParentCnt.incr(1);
                 end
@@ -402,7 +414,7 @@ module mkDTlb#(
 `endif
 `ifdef PERFORMANCE_MONITORING
         EventsL1D ev = unpack(0);
-        if (!pendIsPrefetch[idx]) begin
+        if (!isValid(pendPrefetchInst[idx])) begin
             ev.evt_TLB_MISS_LAT = saturating_truncate(lat);
             ev.evt_TLB_MISS = 1;
         end
@@ -428,7 +440,7 @@ module mkDTlb#(
     // idx of entries that are ready to resp to proc
     function Maybe#(DTlbReqIdx) validProcRespIdx;
         function Bool validResp(DTlbReqIdx i);
-            return pendValid_procResp[i] && pendWait[i] == None && !pendPoisoned[i] && !pendIsPrefetch[i];
+            return pendValid_procResp[i] && pendWait[i] == None && !pendPoisoned[i] && !isValid(pendPrefetchInst[i]);
         endfunction
         Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
         return find(validResp, idxVec);
@@ -436,7 +448,7 @@ module mkDTlb#(
 
     function Maybe#(DTlbReqIdx) validPrefetcherRespIdx;
         function Bool validResp(DTlbReqIdx i);
-            return pendValid_procResp[i] && pendWait[i] == None && !pendPoisoned[i] && pendIsPrefetch[i];
+            return pendValid_procResp[i] && pendWait[i] == None && isValid(pendPrefetchInst[i]);
         endfunction
         Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
         return find(validResp, idxVec);
@@ -444,7 +456,7 @@ module mkDTlb#(
 
     function Maybe#(DTlbReqIdx) poisonedProcRespIdx;
         function Bool poisonedResp(DTlbReqIdx i);
-            return pendValid_procResp[i] && pendWait[i] == None && pendPoisoned[i];
+            return pendValid_procResp[i] && pendWait[i] == None && pendPoisoned[i] && !isValid(pendPrefetchInst[i]);
         endfunction
         Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
         return find(poisonedResp, idxVec);
@@ -452,7 +464,7 @@ module mkDTlb#(
 
     // drop poisoned resp
     rule doPoisonedProcResp(poisonedProcRespIdx matches tagged Valid .idx &&& freeQInited);
-        $display ("%t Dtlb dropPoisoned", $time);
+        if(verbose) $display ("%t Dtlb dropPoisoned", $time);
         pendValid_procResp[idx] <= False;
         freeQ.enq(idx);
         freeQEnqs <= freeQEnqs + 1;
@@ -475,36 +487,33 @@ module mkDTlb#(
     rule handleMergedRq if (!needFlush && !ldTransRsFromPQ.notEmpty && rqToPQ.notFull && freeQInited &&
         (isValid(rqFromProc.wget) || isValid(rqFromPrefetcher.wget))
     ); 
-        $display ("%t DTlb handleMergedRq", $time);
-        Bool isPrefetch = False;
-        DTlbReq#(instT) req = unpack(0);
-        if (rqFromProc.wget matches tagged Valid .t) begin
-            req = t;
-            isPrefetch = False;
-        end
-        else if (rqFromPrefetcher.wget matches tagged Valid .t) begin
-            req = t;
-            isPrefetch = True;
-        end
-        else begin
-            doAssert(False, "Unreachable");
-        end
+        if(verbose) $display ("%t DTlb handleMergedRq", $time);
         // allocate MSHR entry
         freeQ.deq;
         freeQDeqs <= freeQDeqs + 1;
         DTlbReqIdx idx = freeQ.first;
         doAssert(!pendValid_procReq[idx], "free entry cannot be valid");
         doAssert(pendWait[idx] == None, "entry cannot wait for parent resp");
-
         pendValid_procReq[idx] <= True;
         pendPoisoned[idx] <= False;
-        pendInst[idx] <= req.inst;
-        pendIsPrefetch[idx] <= isPrefetch;
-        pendSpecBits_procReq[idx] <= req.specBits;
         // pendWait and pendResp are set later in this method
 
-        // try to translate
-        TlbReq r = getTlbReq(req.inst);
+        TlbReq r = ?;
+        if (rqFromProc.wget matches tagged Valid .req) begin
+            pendInst[idx] <= req.inst;
+            pendSpecBits_procReq[idx] <= req.specBits;
+            pendPrefetchInst[idx] <= Invalid;
+            r = createTlbReq(req.inst);
+        end
+        else if (rqFromPrefetcher.wget matches tagged Valid .req) begin
+            pendSpecBits_procReq[idx] <= 0;
+            pendPrefetchInst[idx] <= rqFromPrefetcher.wget;
+            r = createReqForPrefetch(req);
+        end
+        else begin
+            doAssert(False, "Unreachable");
+        end
+        
 
 `ifdef SECURITY
         // Security check
@@ -536,7 +545,7 @@ module mkDTlb#(
                 // TLB hit
                 let entry = trans_result.entry;
                 // check permission
-            $display("procReq: vm_info: ", fshow(vm_info),
+            if(verbose) $display("procReq: vm_info: ", fshow(vm_info),
                      "         en     : ", fshow(entry),
                      "         r      : ", fshow(r)
                      );
@@ -548,7 +557,7 @@ module mkDTlb#(
                                                 r.write ? DataStore : DataLoad,
                                                 r.capStore,
                                                 r.potentialCapLoad);
-                $display("Permission check output 2: ", fshow(permCheck));
+                if(verbose) $display("Permission check output 2: ", fshow(permCheck));
                 if (permCheck.allowed) begin
                     // update TLB replacement info
                     tlb.updateRepByHit(trans_result.index);
@@ -592,7 +601,7 @@ module mkDTlb#(
                 function Bool reqSamePage(DTlbReqIdx i);
                     // we can ignore pendValid here, because not-None pendWait implies
                     // pendValid is true
-                    let r_i = getTlbReq(pendInst[i]);
+                    let r_i = getTlbReq(i);
                     return pendWait[i] == WaitParent && getVpn(r.addr) == getVpn(r_i.addr);
                 endfunction
                 Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
@@ -631,7 +640,7 @@ module mkDTlb#(
 `ifdef PERF_COUNT
         // perf: access
         if(doStats) begin
-            if (!pendIsPrefetch[idx])
+            if (!isValid(pendPrefetchInst[idx]))
                 accessCnt.incr(1);
             else 
                 prefetchAccessCnt.incr(1);
@@ -647,7 +656,7 @@ module mkDTlb#(
     endrule
 
     rule decrementPrefetchTimeout if (!isValid(doingWrongSpec.wget) && prefetchTimeout > 0);
-        $display ("Dtlb dectimeout");
+        if(verbose) $display ("Dtlb dectimeout");
         prefetchTimeout <= prefetchTimeout - 1;
     endrule
     
@@ -662,7 +671,7 @@ module mkDTlb#(
     method Bool flush_done = !needFlush;
 
     method Action updateVMInfo(VMInfo vm);
-        $display("%t DTlb updateVMInfo", $time);
+        if(verbose) $display("%t DTlb updateVMInfo", $time);
         vm_info <= vm;
     endmethod
 
@@ -683,21 +692,20 @@ module mkDTlb#(
         rqFromProc.wset(req);
     endmethod
 
-    interface DTlbToPrefetcher toPrefetcher;
-        method Action prefetcherReq(CapPipe vaddr) if(
+    interface TlbToPrefetcher toPrefetcher;
+        method Action prefetcherReq(PrefetcherReqToTlb req) if(
             !isValid(rqFromProc.wget) && !needFlush && !ldTransRsFromPQ.notEmpty && 
             rqToPQ.notFull && freeQInited && freeQ.notEmpty && !isValid(doingWrongSpec.wget) && (prefetchTimeout == 0) && (freeQEnqs-freeQDeqs >= 3)
         );
-            DTlbReq#(instT) req = createReqForPrefetch(vaddr);
             //wrongSpec_prefetcherReq_conflict.wset(?);
-            $display ("%t DTlb prefetcherReq ", $time, fshow(req));
+            if(verbose) $display ("%t DTlb prefetcherReq ", $time, fshow(req));
             rqFromPrefetcher.wset(req);
         endmethod
 
         method Action deqPrefetcherResp if(
             validPrefetcherRespIdx matches tagged Valid .idx &&& freeQInited &&& !isValid(doingWrongSpec.wget)
         );
-            $display ("%t DTlb deqPrefetcherReq ", $time, fshow(idx));
+            if(verbose) $display ("%t DTlb deqPrefetcherReq ", $time, fshow(idx));
             pendValid_procResp[idx] <= False;
             freeQ.enq(idx);
             freeQEnqs <= freeQEnqs + 1;
@@ -705,15 +713,17 @@ module mkDTlb#(
             //wrongSpec_procResp_conflict.wset(?);
         endmethod
 
-        method DTlbRespToPrefetcher prefetcherResp if(
+        method TlbRespToPrefetcher prefetcherResp if(
             validPrefetcherRespIdx matches tagged Valid .idx &&& freeQInited
         );
             let resp = pendResp[idx];
-            return DTlbRespToPrefetcher {
+            let req = fromMaybe(?, pendPrefetchInst[idx]);
+            return TlbRespToPrefetcher {
                 paddr: tpl_1(resp),
-                haveException: isValid(tpl_2(resp)),
-                permsCheckPass: tpl_3(resp),
-                cap: getCap(pendInst[idx])
+                cap: req.cap,
+                id: req.id,
+                haveException: isValid(tpl_2(resp)) || pendPoisoned[idx],
+                permsCheckPass: tpl_3(resp)
             };
         endmethod
     endinterface
@@ -721,7 +731,7 @@ module mkDTlb#(
     method Action deqProcResp if(
         validProcRespIdx matches tagged Valid .idx &&& freeQInited
     );
-        $display ("%t DTlb deqProcReq ", $time, fshow(idx));
+        if(verbose) $display ("%t DTlb deqProcReq ", $time, fshow(idx));
         pendValid_procResp[idx] <= False;
         freeQ.enq(idx);
         freeQEnqs <= freeQEnqs + 1;
@@ -751,12 +761,12 @@ module mkDTlb#(
     interface SpeculationUpdate specUpdate;
         method Action incorrectSpeculation(Bool kill_all, SpecTag x);
             // poison entries
-            $display ("%t Dtlb incorrectSpeculation killall %b spectag", $time, kill_all, fshow(x));
+            if(verbose) $display ("%t Dtlb incorrectSpeculation killall %b spectag", $time, kill_all, fshow(x));
             if (kill_all) begin
                 prefetchTimeout <= 4;
             end
             for(Integer i = 0 ; i < valueOf(DTlbReqNum) ; i = i+1) begin
-                if((kill_all || pendSpecBits_wrongSpec[i][x] == 1'b1) || (pendIsPrefetch[i])) begin
+                if((kill_all || pendSpecBits_wrongSpec[i][x] == 1'b1) || isValid(pendPrefetchInst[i])) begin
                     pendPoisoned[i] <= True;
                 end
             end
