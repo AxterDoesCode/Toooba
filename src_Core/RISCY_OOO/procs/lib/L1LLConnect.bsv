@@ -48,6 +48,7 @@ module mkL1LLConnect#(
                 id: r.id,
                 child: child,
                 isPrefetchRq: r.isPrefetchRq,
+                prefetchAuxData: r.prefetchAuxData,
                 boundsOffset: r.boundsOffset,
                 boundsLength: r.boundsLength,
                 boundsVirtBase: r.boundsVirtBase,

@@ -45,6 +45,7 @@ import Connectable::*;
 import GetPut::*;
 import ClientServer::*;
 import CHERICC_Fat::*;
+import Prefetcher_intf::*;
 
 typedef enum {
     I = 2'd0,
@@ -265,6 +266,7 @@ typedef struct {
     idT id; // slot id in child cache
     childT child; // from which child
     Bool isPrefetchRq;
+    PrefetchAuxData prefetchAuxData;
     Addr boundsOffset;
     Addr boundsLength;
     Addr boundsVirtBase;
@@ -291,6 +293,7 @@ typedef struct {
     Maybe#(Line) data;
     idT id; // slot id in cache
     Bool cameFromPrefetch;
+    PrefetchAuxData prefetchAuxData;
     Addr boundsOffset;
     Addr boundsLength;
     Addr boundsVirtBase;

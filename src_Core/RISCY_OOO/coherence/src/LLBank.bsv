@@ -251,6 +251,7 @@ module mkLLBank#(
     Count#(Bit#(32)) removedCRqs <- mkCount(0);
 
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
+    Vector#(cRqNum, Reg#(PrefetchAuxData)) cRqPrefetchAuxData <- replicateM(mkReg(?));
     // Create TLBs for data prefetchers
     Vector#(CoreNum, LLCTlb) dataPrefetcherTlbs <- replicateM(mkLLCTlb);
     function module#(CheriPrefetcher) mkmkLLDPrefetcher(LLCTlb tlb);
@@ -258,7 +259,7 @@ module mkLLBank#(
     endfunction
     PrefetcherVector#(CoreNum) dataPrefetchers <- mkPrefetcherVector(map(mkmkLLDPrefetcher, dataPrefetcherTlbs));
     PrefetcherVector#(CoreNum) instrPrefetchers <- mkPrefetcherVector(vec(mkCheriPrefetcherAdapter(mkLLIPrefetcher)));
-    Fifo#(32, Tuple5#(Addr, childT, Addr, Addr, Addr)) overflowPrefetchQueue <- mkOverflowBypassFifo;
+    Fifo#(32, cRqFromCT) overflowPrefetchQueue <- mkOverflowBypassFifo;
 
     // XBar for TLBs
     Fifo#(2, rqToTlbT) rqToTlbQ <- mkCFFifo;
@@ -446,22 +447,22 @@ endfunction
     rule cRqTransfer_new_child(!cRqRetryIndexQ.notEmpty && newCRqSrc == Valid (Child));
         rqFromCQ.deq;
         cRqFromCT r = rqFromCQ.first;
-        cRqT cRq = LLRq {
-            addr: r.addr,
-            fromState: r.fromState,
-            toState: r.toState,
-            op: r.op,
-            canUpToE: r.canUpToE,
-            child: r.child,
-            byteEn: ?,
-            id: Child (r.id),
-            boundsOffset: r.boundsOffset,
-            boundsLength: r.boundsLength,
-            boundsVirtBase: r.boundsVirtBase,
-            capPerms: r.capPerms
-        };
         if (!r.isPrefetchRq || (crqMshrEnqs - crqMshrDeqs < 12)) begin
             // setup new MSHR entry
+            cRqT cRq = LLRq {
+                addr: r.addr,
+                fromState: r.fromState,
+                toState: r.toState,
+                op: r.op,
+                canUpToE: r.canUpToE,
+                child: r.child,
+                byteEn: ?,
+                id: Child (r.id),
+                boundsOffset: r.boundsOffset,
+                boundsLength: r.boundsLength,
+                boundsVirtBase: r.boundsVirtBase,
+                capPerms: r.capPerms
+            };
             cRqIndexT n <- cRqMshr.transfer.getEmptyEntryInit(cRq, Invalid);
             crqMshrEnqs <= crqMshrEnqs + 1;
             // send to pipeline
@@ -470,6 +471,7 @@ endfunction
                 mshrIdx: n
             }));
             cRqIsPrefetch[n] <= r.isPrefetchRq;
+            cRqPrefetchAuxData[n] <= r.prefetchAuxData;
             // change round robin
             flipPriorNewCRqSrc;
             if (verbose)
@@ -494,26 +496,26 @@ endfunction
         end
         else begin
             $display ("%t LL crqTransfer_new_child: postponing prefetch rq, mshr entries: %d", $time, crqMshrEnqs - crqMshrDeqs);
-            overflowPrefetchQueue.enq(tuple5(r.addr, r.child, r.boundsOffset, r.boundsLength, r.boundsVirtBase));
+            overflowPrefetchQueue.enq(r);
         end
     endrule
 
     rule createDataPrefetchRqFromQueue if (crqMshrEnqs - crqMshrDeqs < 12);
         overflowPrefetchQueue.deq;
-        match {.addr, .child, .boundsOffset, .boundsLength, .boundsVirtBase} = overflowPrefetchQueue.first;
+        cRqFromCT r = overflowPrefetchQueue.first;
         //Request from L1D of cacheIdx-th core
         cRqT cRq = LLRq {
-            addr: addr,
+            addr: r.addr,
             fromState: I,
             toState: S,
             op: Ld,
             canUpToE: True,
-            child: child,
+            child: r.child,
             byteEn: ?,
             id: Child (?),
-            boundsOffset: boundsOffset,
-            boundsLength: boundsLength,
-            boundsVirtBase: boundsVirtBase,
+            boundsOffset: r.boundsOffset,
+            boundsLength: r.boundsLength,
+            boundsVirtBase: r.boundsVirtBase,
             capPerms: ?
         };
         // setup new MSHR entry
@@ -525,6 +527,8 @@ endfunction
             mshrIdx: n
         }));
         cRqIsPrefetch[n] <= True;
+        cRqPrefetchAuxData[n] <= r.prefetchAuxData;
+
         // change round robin
         //flipPriorNewCRqSrc;
        if (verbose)
@@ -575,6 +579,7 @@ endfunction
             mshrIdx: n
         }));
         cRqIsPrefetch[n] <= True;
+        cRqPrefetchAuxData[n] <= prefetch.auxData;
         // change round robin
         flipPriorNewCRqSrc;
         if (verbose)
@@ -624,6 +629,7 @@ endfunction
             mshrIdx: n
         }));
         cRqIsPrefetch[n] <= True;
+        cRqPrefetchAuxData[n] <= prefetch.auxData;
         // change round robin
         flipPriorNewCRqSrc;
        if (verbose)
@@ -683,6 +689,7 @@ endfunction
         crqMshrEnqs <= crqMshrEnqs + 1;
         // send to pipeline
         cRqIsPrefetch[n] <= False;
+        cRqPrefetchAuxData[n] <= NoPrefetchAuxData;
         pipeline.send(CRq (LLPipeCRqIn {
             addr: cRq.addr,
             mshrIdx: n
@@ -1004,6 +1011,7 @@ endfunction
             data: rsData,
             id: cRqId,
             cameFromPrefetch: cRqIsPrefetch[n],
+            prefetchAuxData: cRqPrefetchAuxData[n],
             boundsOffset: cRq.boundsOffset,
             boundsLength: cRq.boundsLength,
             boundsVirtBase: cRq.boundsVirtBase
@@ -1116,31 +1124,29 @@ endfunction
 `endif
     endrule
 
-    function Action prefetcherReportAccess(cRqT cRq, HitOrMiss hitmiss, Bool isPrefetch);
+    function Action prefetcherReportAccess(cRqT cRq, HitOrMiss hitmiss, Bool isPrefetch, PrefetchAuxData prefetchAuxData);
     action
         if (cRq.child[0] == 1) begin
             instrPrefetchers.reportAccess(
-                truncateLSB(cRq.child), cRq.addr, hitmiss, cRq.op, isPrefetch, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
+                truncateLSB(cRq.child), cRq.addr, hitmiss, cRq.op, isPrefetch, prefetchAuxData, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
             );
-        end
-        else begin
+        end else begin
             dataPrefetchers.reportAccess(
-                truncateLSB(cRq.child), cRq.addr, hitmiss, cRq.op, isPrefetch, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
+                truncateLSB(cRq.child), cRq.addr, hitmiss, cRq.op, isPrefetch, prefetchAuxData, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
             );
         end
     endaction
     endfunction
 
-    function Action prefetcherReportCacheDataArrival(cRqT cRq, CLine lineWithTags, Bool wasMiss, Bool wasPrefetch);
+    function Action prefetcherReportCacheDataArrival(cRqT cRq, CLine lineWithTags, Bool wasMiss, Bool wasPrefetch, PrefetchAuxData prefetchAuxData);
     action
         if (cRq.child[0] == 1) begin
             instrPrefetchers.reportCacheDataArrival(
-                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
+                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, prefetchAuxData, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
             );
-        end
-        else begin
+        end else begin
             dataPrefetchers.reportCacheDataArrival(
-                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
+                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, prefetchAuxData, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
             );
         end
     endaction
@@ -1238,8 +1244,8 @@ endfunction
             },
             line: ram.line // use line in ram
         }, True); // hit, so update rep info
-        prefetcherReportAccess(cRq, HIT, cRqIsPrefetch[n]);
-        prefetcherReportCacheDataArrival(cRq, ram.line, wasMiss, cRqIsPrefetch[n]);
+        prefetcherReportAccess(cRq, HIT, cRqIsPrefetch[n], cRqPrefetchAuxData[n]);
+        prefetcherReportCacheDataArrival(cRq, ram.line, wasMiss, cRqIsPrefetch[n], cRqPrefetchAuxData[n]);
     endaction
     endfunction
 
@@ -1435,7 +1441,7 @@ endfunction
                 },
                 line: ram.line
             }, False);
-            prefetcherReportAccess(cRq, MISS, cRqIsPrefetch[n]);
+            prefetcherReportAccess(cRq, MISS, cRqIsPrefetch[n], cRqPrefetchAuxData[n]);
             LineAddr repLineAddr = getLineAddr({ram.info.tag, truncate(cRq.addr)});
             if (prefetchVerbose)
                 $display("%t LL cRq miss (no rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, cRq is prefetch: %d, ramCs: ",
@@ -1517,7 +1523,7 @@ endfunction
                     dirPend: dirPend
                 });
             end
-            prefetcherReportAccess(cRq, MISS, cRqIsPrefetch[n]);
+            prefetcherReportAccess(cRq, MISS, cRqIsPrefetch[n], cRqPrefetchAuxData[n]);
             LineAddr repLineAddr = getLineAddr({ram.info.tag, truncate(cRq.addr)});
             if (prefetchVerbose)
                 $display("%t LL cRq miss (rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, cRq is prefetch: %d, ramCs: ",

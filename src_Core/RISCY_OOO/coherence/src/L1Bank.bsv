@@ -204,8 +204,16 @@ module mkL1Bank#(
     // we process AMO resp in a new cycle to cut critical path
     Reg#(Maybe#(AmoHitInfo#(cRqIdxT, procRqT))) processAmo <- mkReg(Invalid);
 
+    // MSHR extension for prefetch requests
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
     Vector#(cRqNum, Reg#(PrefetchAuxData)) cRqPrefetchAuxData <- replicateM(mkReg(?));
+
+    // A queue for responses from LL prefetches
+    // We should inform the prefetcher that a hit occured, but that might conflict with telling the prefetcher
+    // about a hit in the L1. Therefore need to queue up the responses and tell the prefetcher about them
+    // when there isn't an L1 hit.
+    Fifo#(2, pRsFromPT) llcDataArrivalQ <- mkOverflowBypassFifo;
+
 `ifdef DATA_PREFETCHER_IN_L1
     let prefetcher <- mkL1DPrefetcher(toPrefetcher);
 `else
@@ -391,6 +399,7 @@ endfunction
             mshrIdx: n
         }));
         cRqIsPrefetch[n] <= False;
+        cRqPrefetchAuxData[n] <= NoPrefetchAuxData;
         // performance counter: cRq type
         incrReqCnt(r.op, r.boundsOffset, r.boundsLength);
        if (verbose)
@@ -441,13 +450,21 @@ endfunction
                 data: resp.data,
                 way: resp.id
             }));
+        end else begin
+            if (isValid(resp.data)) begin
+                llcDataArrivalQ.enq(resp);
+            end
         end
-        //if (resp.data matches tagged Valid .data)
-        //    prefetcher.reportCacheDataArrival(
-        //        data, resp.addr, /*pcHash:*/ 0, Ld, /* count as miss */ True, resp.cameFromPrefetch,
-        //         resp.boundsOffset, resp.boundsLength, resp.boundsVirtBase, /*capPerms:*/ unpack(0)
-        //    );
         if (verbose) $display("%t L1 %m pRsTransfer: ", $time, fshow(resp));
+    endrule
+
+    (* descending_urgency = "pipelineResp_cRq, notifyPrefetcherOfLlcHit" *)
+    rule notifyPrefetcherOfLlcHit;
+        let resp = llcDataArrivalQ.first;
+        llcDataArrivalQ.deq;
+        prefetcher.reportCacheDataArrival(fromMaybe(?, resp.data), resp.addr, /*pcHash:*/ 0, Ld, /* count as miss */ False, /* This is a prefetch */ True,
+            resp.prefetchAuxData, resp.boundsOffset, resp.boundsLength, resp.boundsVirtBase, /*capPerms:*/ unpack(0)
+        );
     endrule
 
     (* descending_urgency = "pRqTransfer, cRqTransfer_retry, cRqTransfer_new, createPrefetchRq" *)
@@ -463,6 +480,7 @@ endfunction
                 id: 0,
                 child: ?,
                 isPrefetchRq: True,
+                prefetchAuxData: prefetch.auxData,
                 boundsOffset: getOffset(prefetch.cap),
                 boundsLength: saturating_truncate(getLength(prefetch.cap)),
                 boundsVirtBase: getBase(prefetch.cap),
@@ -625,6 +643,7 @@ endfunction
             id: slot.way,
             child: ?,
             isPrefetchRq: False,
+            prefetchAuxData: NoPrefetchAuxData,
             boundsOffset: req.boundsOffset,
             boundsLength: req.boundsLength,
             boundsVirtBase: req.boundsVirtBase,
@@ -796,8 +815,8 @@ endfunction
                 cRqRetryIndexQ.enq(nextInQueue);
                 cRqMshr.manageQueue.resetEntry(nextInQueue);
             end
-            prefetcher.reportAccess(req.addr, req.pcHash, HIT, req.op, cRqIsPrefetch[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
-            prefetcher.reportCacheDataArrival(curLine, req.addr, req.pcHash, req.op, wasMiss, cRqIsPrefetch[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
+            prefetcher.reportAccess(req.addr, req.pcHash, HIT, req.op, cRqIsPrefetch[n], cRqPrefetchAuxData[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
+            prefetcher.reportCacheDataArrival(curLine, req.addr, req.pcHash, req.op, wasMiss, cRqIsPrefetch[n], cRqPrefetchAuxData[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
             if (verbose)
                 $display("%t L1 %m pipelineResp: Hit func: update ram: ", $time,
                     fshow(newLine), " ; ",
@@ -955,7 +974,7 @@ endfunction
                 },
                 line: ram.line
             }, pipeOutNextInQueue, False);
-            prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.op, cRqIsPrefetch[n], procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
+            prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.op, cRqIsPrefetch[n], cRqPrefetchAuxData[n], procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
             LineAddr repLineAddr = getLineAddr({ram.info.tag, truncate(procRq.addr)});
             if (prefetchVerbose)
                 $display("%t L1D cRq miss (no rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, cRq is prefetch: %d, ramCs: ",
@@ -996,7 +1015,7 @@ endfunction
                 waitP: False // we send req to parent later (when resp to parent is sent)
             });
             cRqMshr.pipelineResp.setData(n, ram.info.cs == M ? Valid (ram.line) : Invalid);
-            prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.op, cRqIsPrefetch[n], procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
+            prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, procRq.op, cRqIsPrefetch[n], cRqPrefetchAuxData[n], procRq.boundsOffset, procRq.boundsLength, procRq.boundsVirtBase, procRq.capPerms);
             // send replacement resp to parent
             rsToPIndexQ.enq(CRq (n));
             // reset link addr
