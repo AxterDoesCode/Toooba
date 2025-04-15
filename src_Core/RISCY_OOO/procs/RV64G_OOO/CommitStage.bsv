@@ -1100,6 +1100,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 `ifdef PERFORMANCE_MONITORING
         EventsCore events = unpack(0);
         events.evt_BRANCH = brCnt;
+        events.evt_JAL = jmpCnt;
+        events.evt_JALR = jrCnt;
         events.evt_AUIPC = auipcCnt; // XXX
         events.evt_LOAD = ldCnt;
         events.evt_STORE = stCnt;
