@@ -1109,8 +1109,8 @@ typedef struct {
    SupCnt evt_UNREPRESENTABLE_CAP; // XXX
    SupCnt evt_MEM_CAP_LOAD;
    SupCnt evt_MEM_CAP_STORE;
-   SupCnt evt_DEBUG_PREDICT_FAIL;
-   SupCnt evt_DEBUG_RECV_FAILURE;
+   SupCnt evt_MEM_CAP_LOAD_TAG_SET;
+   SupCnt evt_MEM_CAP_STORE_TAG_SET;
 } EventsCore deriving (Bits, FShow);
 typedef TDiv#(SizeOf#(EventsCore),SizeOf#(SupCnt)) EventsCoreElements;
 
@@ -1118,8 +1118,6 @@ typedef struct {
   Bool evt_REDIRECT;
   Bool evt_JUMP_REDIRECT;
   Bool evt_BRANCH_REDIRECT;
-  Bool evt_DEBUG_PREDICT_FAIL;
-  Bool evt_DEBUG_RECV_FAILURE;
   //BranchEvents branch_evts;
 } FetchEvents deriving (Bits, FShow);
 
@@ -1156,8 +1154,8 @@ typedef struct {
    HpmRpt evt_UNREPRESENTABLE_CAP; // XXX
    HpmRpt evt_MEM_CAP_LOAD;
    HpmRpt evt_MEM_CAP_STORE;
-   HpmRpt evt_DEBUG_PREDICT_FAIL;
-   HpmRpt evt_DEBUG_RECV_FAILURE;
+   HpmRpt evt_MEM_CAP_LOAD_TAG_SET;
+   HpmRpt evt_MEM_CAP_STORE_TAG_SET;
 } EventsCoreMem deriving (Bits, FShow); // Memory needs more space for reporting delays
 typedef TDiv#(SizeOf#(EventsCoreMem),Report_Width) EventsCoreMemElements;
 `endif

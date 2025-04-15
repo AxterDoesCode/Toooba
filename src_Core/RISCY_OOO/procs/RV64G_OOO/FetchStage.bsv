@@ -380,8 +380,6 @@ module mkFetchStage(FetchStage);
     Reg#(Bool) redirect_evt_reg <- mkDReg(False);
     Reg#(Bool) jump_mispredict_evt_reg <- mkDReg(False);
     Reg#(Bool) branch_mispredict_evt_reg <- mkDReg(False);
-    Reg#(Bool) debug_recv_failure_evt_reg <- mkDReg(False);
-    Reg#(Bool) debug_predict_fail_evt_reg <- mkDReg(False);
 `endif
 
     rule updatePcInBtb;
@@ -750,6 +748,7 @@ module mkFetchStage(FetchStage);
                     $display("DECODE DEQUEUE on %x ", pc, fshow(decode_result.dInst.iType), "\n");
                     
                     if(decode_result.dInst.iType == Br && !likely_epoch_change) begin
+                        // So it compiles - REMOVE LATER! 
                         `ifdef DEBUG_TAGETEST
                         $display("DECODE PREDICT on %x %x\n", pc, last_x16_pc);
                         `endif
@@ -762,21 +761,9 @@ module mkFetchStage(FetchStage);
                             branchResults[trueBranchCount] = pack(dir_pred.taken);
                             trueBranchCount = trueBranchCount + 1;
                             
-                            // REMOVE AFTER DEBUG
-                            if(dir_pred.pc != last_x16_pc) begin 
-                                debug_predict_fail_evt_reg <= True;
-                                dir_pred = DirPredResult{taken: False, train: unpack(0), pc: ?};
-                                decode_epoch_local = !decode_epoch_local;
-                            end
-
                             `ifdef DEBUG_TAGETEST
                             doAssert(dir_pred.pc == last_x16_pc, "Branch PC is inconsistent\n");
                             `endif
-                        end
-                        else begin
-                            // REMOVE AFTER DEBUG
-                            debug_recv_failure_evt_reg <= True;
-                            decode_epoch_local = !decode_epoch_local;
                         end
                     end
                     branchCountRecieved = branchCountRecieved+1;
@@ -1008,11 +995,7 @@ module mkFetchStage(FetchStage);
 
         pc_reg[pc_redirect_port] <= new_pc;
         f_main_epoch <= (f_main_epoch == fromInteger(valueOf(NumEpochs)-1)) ? 0 : f_main_epoch + 1;
-        // redirect comes, stop stalling for redirect
-        waitForRedirect[1] <= False;
-        // this redirect may be caused by a trap/system inst in commit stage
-        // we conservatively set wait for flush TODO make this an input parameter
-        waitForFlush[2] <= True;
+
         `ifdef PERFORMANCE_MONITORING
         if(redirect_type matches tagged Valid .jump) begin
             if(jump)    
@@ -1020,8 +1003,15 @@ module mkFetchStage(FetchStage);
             else
                 branch_mispredict_evt_reg <= True;
         end
-        redirect_evt_reg <= True;
         `endif
+        // redirect comes, stop stalling for redirect
+        waitForRedirect[1] <= False;
+        // this redirect may be caused by a trap/system inst in commit stage
+        // we conservatively set wait for flush TODO make this an input parameter
+        waitForFlush[2] <= True;
+`ifdef PERFORMANCE_MONITORING
+        redirect_evt_reg <= True;
+`endif
     endmethod
 
 `ifdef INCLUDE_GDB_CONTROL
@@ -1126,6 +1116,6 @@ module mkFetchStage(FetchStage);
     endinterface
 
 `ifdef PERFORMANCE_MONITORING
-    method FetchEvents events = FetchEvents{evt_REDIRECT: redirect_evt_reg, evt_JUMP_REDIRECT: jump_mispredict_evt_reg, evt_BRANCH_REDIRECT: branch_mispredict_evt_reg, evt_DEBUG_RECV_FAILURE: debug_recv_failure_evt_reg, evt_DEBUG_PREDICT_FAIL: debug_predict_fail_evt_reg};
+    method FetchEvents events = FetchEvents{evt_REDIRECT: redirect_evt_reg, evt_JUMP_REDIRECT: jump_mispredict_evt_reg, evt_BRANCH_REDIRECT: branch_mispredict_evt_reg};
 `endif
 endmodule
