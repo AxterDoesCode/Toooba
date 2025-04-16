@@ -80,7 +80,7 @@ interface FetchStage;
 
     // redirection methods
     method Action setWaitRedirect;
-    method Action redirect(Addr pc, Maybe#(Bool) redirect_type);
+    method Action redirect(Addr pc);
 `ifdef INCLUDE_GDB_CONTROL
    method Action setWaitFlush;
 `endif
@@ -378,10 +378,7 @@ module mkFetchStage(FetchStage);
 `endif
 `ifdef PERFORMANCE_MONITORING
     Reg#(Bool) redirect_evt_reg <- mkDReg(False);
-    Reg#(Bool) jump_mispredict_evt_reg <- mkDReg(False);
-    Reg#(Bool) branch_mispredict_evt_reg <- mkDReg(False);
-    Reg#(Bool) debug_recv_failure_evt_reg <- mkDReg(False);
-    Reg#(Bool) debug_predict_fail_evt_reg <- mkDReg(False);
+    Reg#(Bool) early_redirect_evt_reg <- mkDReg(False);
 `endif
 
     rule updatePcInBtb;
@@ -507,7 +504,7 @@ module mkFetchStage(FetchStage);
 
         // Search the last few translations to look for a match.
         Maybe#(UInt#(TLog#(PageBuffSize))) m_buff_match_idx = findElem(Valid(getVpn(pc)), buffered_translation_virt_pc);
-        if (m_buff_match_idx matches tagged Valid .buff_match_idx) begin
+        if (m_buff_match_idx matches tagged Valid .buff_match_idx  &&& (!predInput.deqS[0].canDeq || isCurrentPredInput(predInput.deqS[0].first))) begin
             let next_fetch_pc = fromMaybe(pc + (2 * (zeroExtend(posLastSupX2) + 1)), pred_next_pc);
             let pc_idxs <- pcBlocks.insertAndReserve(truncateLSB(pc), truncateLSB(next_fetch_pc));
             PcIdx pc_idx = pc_idxs.inserted;
@@ -716,8 +713,6 @@ module mkFetchStage(FetchStage);
       Bit#(TAdd#(TLog#(SupSize),1)) branchCountRecieved = 0;
       Bit#(TAdd#(TLog#(SupSize),1)) trueBranchCount = 0; // Violating make the common case cast? very rarely /= branchCountRecieved, only on the edge case
       Bit#(SupSize) branchResults = 0;
-      Bool debug_predict_fail = False;
-      Bool debug_predict_recieve_fail = False;
       for (Integer i = 0; i < valueof(SupSize); i=i+1) begin
          Addr pc = decompressPc(validValue(decodeIn[i]).pc);
          Addr ppc = decompressPc(validValue(decodeIn[i]).ppc);
@@ -752,6 +747,7 @@ module mkFetchStage(FetchStage);
                     $display("DECODE DEQUEUE on %x ", pc, fshow(decode_result.dInst.iType), "\n");
                     
                     if(decode_result.dInst.iType == Br && !likely_epoch_change) begin
+                        // So it compiles - REMOVE LATER! 
                         `ifdef DEBUG_TAGETEST
                         $display("DECODE PREDICT on %x %x\n", pc, last_x16_pc);
                         `endif
@@ -764,24 +760,8 @@ module mkFetchStage(FetchStage);
                             branchResults[trueBranchCount] = pack(dir_pred.taken);
                             trueBranchCount = trueBranchCount + 1;
                             
-                            `ifdef PERFORMANCE_MONITORING
-                            // REMOVE AFTER DEBUG
-                            if(dir_pred.pc[8:0] != last_x16_pc[8:0]) begin 
-                                debug_predict_fail = True;
-                                dir_pred = DirPredResult{taken: False, train: unpack(0), pc: ?};
-                                decode_epoch_local = !decode_epoch_local;
-                            end
-                            `endif
-
                             `ifdef DEBUG_TAGETEST
                             doAssert(dir_pred.pc == last_x16_pc, "Branch PC is inconsistent\n");
-                            `endif
-                        end
-                        else begin
-                            // REMOVE AFTER DEBUG
-                            `ifdef PERFORMANCE_MONITORING
-                            debug_predict_recieve_fail = True;
-                            decode_epoch_local = !decode_epoch_local;
                             `endif
                         end
                     end
@@ -921,6 +901,9 @@ module mkFetchStage(FetchStage);
       // update PC and epoch
       if(redirectPc matches tagged Valid .rp) begin
          pc_reg[pc_decode_port] <= rp;
+`ifdef PERFORMANCE_MONITORING
+         early_redirect_evt_reg <= True;
+`endif
       end
       decode_epoch[0] <= decode_epoch_local;
       // send training data for next addr pred
@@ -950,11 +933,6 @@ module mkFetchStage(FetchStage);
             default: decRedirectOtherCnt.incr(1);
          endcase
       end
-`endif
-
-`ifdef PERFORMANCE_MONITORING
-    debug_predict_fail_evt_reg <= debug_predict_fail;
-    debug_recv_failure_evt_reg <= debug_predict_recieve_fail;
 `endif
    endrule
 
@@ -1011,7 +989,7 @@ module mkFetchStage(FetchStage);
     method Action setWaitRedirect;
         waitForRedirect[0] <= True;
     endmethod
-    method Action redirect(Addr new_pc, Maybe#(Bool) redirect_type);
+    method Action redirect(Addr new_pc);
         if (verbose) $display("Redirect: newpc %h, old f_main_epoch %d, new f_main_epoch %d",new_pc,f_main_epoch,f_main_epoch+1);
         //virtualReg <= virtualReg;
         //$display("%b\n",virtualReg);
@@ -1024,15 +1002,9 @@ module mkFetchStage(FetchStage);
         // this redirect may be caused by a trap/system inst in commit stage
         // we conservatively set wait for flush TODO make this an input parameter
         waitForFlush[2] <= True;
-        `ifdef PERFORMANCE_MONITORING
-        if(redirect_type matches tagged Valid .jump) begin
-            if(jump)    
-                jump_mispredict_evt_reg <= True;
-            else
-                branch_mispredict_evt_reg <= True;
-        end
+`ifdef PERFORMANCE_MONITORING
         redirect_evt_reg <= True;
-        `endif
+`endif
     endmethod
 
 `ifdef INCLUDE_GDB_CONTROL
@@ -1137,6 +1109,6 @@ module mkFetchStage(FetchStage);
     endinterface
 
 `ifdef PERFORMANCE_MONITORING
-    method FetchEvents events = FetchEvents{evt_REDIRECT: redirect_evt_reg, evt_JUMP_REDIRECT: jump_mispredict_evt_reg, evt_BRANCH_REDIRECT: branch_mispredict_evt_reg, evt_DEBUG_RECV_FAILURE: debug_recv_failure_evt_reg, evt_DEBUG_PREDICT_FAIL: debug_predict_fail_evt_reg};
+    method FetchEvents events = FetchEvents{evt_REDIRECT: redirect_evt_reg, evt_EARLY_REDIRECT: early_redirect_evt_reg, branch_evts: dirPred.events};
 `endif
 endmodule
