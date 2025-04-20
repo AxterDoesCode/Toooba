@@ -116,6 +116,8 @@ interface LLBank#(
     interface DmaServer#(dmaRqIdT) dma;
     interface MemFifoClient#(LdMemRqId#(Bit#(TLog#(cRqNum))), void) to_mem;
     interface LLCTlbToParent#(CombinedLLCTlbReqIdx) to_tlb;
+    // Training data from L1 prefetchers
+    method Action sendDataPrefetcherBroadcastData(Tuple2#(PrefetcherBroadcastData, Bit#(TLog#(CoreNum))) data);
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
     interface Get#(LLCRqStuck#(childNum, cRqIdT, dmaRqIdT)) cRqStuck;
     // performance
@@ -1142,11 +1144,11 @@ endfunction
     action
         if (cRq.child[0] == 1) begin
             instrPrefetchers.reportCacheDataArrival(
-                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, prefetchAuxData, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
+                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, False, prefetchAuxData, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
             );
         end else begin
             dataPrefetchers.reportCacheDataArrival(
-                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, prefetchAuxData, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
+                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, False, prefetchAuxData, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
             );
         end
     endaction
@@ -1931,6 +1933,10 @@ endfunction
             };
         endmethod
     endinterface
+
+    method Action sendDataPrefetcherBroadcastData(Tuple2#(PrefetcherBroadcastData, Bit#(TLog#(CoreNum))) data);
+        dataPrefetchers.sendBroadcastData(tpl_2(data), tpl_1(data));
+    endmethod
 
     method Action setPerfStatus(Bool stats);
 `ifdef PERF_COUNT

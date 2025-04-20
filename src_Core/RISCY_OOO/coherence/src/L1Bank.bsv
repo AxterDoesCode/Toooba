@@ -109,6 +109,8 @@ interface L1Bank#(
     interface L1ProcReq#(procRqIdT) procReq;
     // reset link addr
     method Action resetLinkAddr;
+    // get prefetcher broadcast data
+    method ActionValue#(PrefetcherBroadcastData) getPrefetcherBroadcastData;
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
     interface Get#(L1CRqStuck) cRqStuck;
     interface Get#(L1PRqStuck) pRqStuck;
@@ -199,7 +201,7 @@ module mkL1Bank#(
     Reg#(Maybe#(LineAddr)) linkAddrRst = linkAddrEhr[1]; // reset by outside use port 1
 
     Reg#(Bit#(64)) crqMshrEnqs <- mkReg(0);
-    Reg#(Bit#(64)) crqMshrDeqs <- mkReg(0);
+    Reg#(Bit#(64)) crqMshrDeqs <- mkConfigReg(0);
 
     // we process AMO resp in a new cycle to cut critical path
     Reg#(Maybe#(AmoHitInfo#(cRqIdxT, procRqT))) processAmo <- mkReg(Invalid);
@@ -209,15 +211,15 @@ module mkL1Bank#(
     Vector#(cRqNum, Reg#(PrefetchAuxData)) cRqPrefetchAuxData <- replicateM(mkReg(?));
 
     // A queue for responses from LL prefetches
-    // We should inform the prefetcher that a hit occured, but that might conflict with telling the prefetcher
-    // about a hit in the L1. Therefore need to queue up the responses and tell the prefetcher about them
-    // when there isn't an L1 hit.
-    Fifo#(2, pRsFromPT) llcDataArrivalQ <- mkOverflowBypassFifo;
+    // We should inform the prefetcher that its prefetch to the LLC hit, but that might conflict with telling the prefetcher
+    // about a hit in the L1. Therefore we need to queue up the responses and tell the prefetcher about them
+    // when it doesn't hold up the pipeline.
+    Fifo#(4, pRsFromPT) llcDataArrivalQ <- mkOverflowBypassFifo;
 
-`ifdef DATA_PREFETCHER_IN_L1
-    let prefetcher <- mkL1DPrefetcher(toPrefetcher);
+`ifdef DATA_PREFETCHER_IN_L1_FORWARDING
+    let prefetcher <- mkNextLevelPrefetcherAdapter(mkL1DPrefetcher(toPrefetcher));
 `else
-    let prefetcher <- mkLLDPrefetcherInL1D(toPrefetcher);
+    let prefetcher <- mkL1DPrefetcher(toPrefetcher);
 `endif
 
     // security flush
@@ -463,7 +465,7 @@ endfunction
         let resp = llcDataArrivalQ.first;
         llcDataArrivalQ.deq;
         prefetcher.reportCacheDataArrival(fromMaybe(?, resp.data), resp.addr, /*pcHash:*/ 0, Ld, /* count as miss */ False, /* This is a prefetch */ True,
-            resp.prefetchAuxData, resp.boundsOffset, resp.boundsLength, resp.boundsVirtBase, /*capPerms:*/ unpack(0)
+            /* From the next level cache */ True, resp.prefetchAuxData, resp.boundsOffset, resp.boundsLength, resp.boundsVirtBase, /*capPerms:*/ unpack(0)
         );
     endrule
 
@@ -725,11 +727,8 @@ endfunction
         Line newLine = curLine;
         Bool lineTouched = True; // assume touched and set to false in a few cases
         LineMemDataOffset dataSel = getLineMemDataOffset(req.addr);
-        if (req.op == Ld)
-        $display ("%t prefetcher Ld crqhit wasMiss %d wasPrefetch %d addr %h", $time, wasMiss, cRqIsPrefetch[n], req.addr);
         if (ram.info.other.wasPrefetch && !cRqIsPrefetch[n] && req.op == Ld) begin
             //Hit on a prefetched cache line!
-            $display ("%t L1 demand hit on prefetched cache line", $time);
         `ifdef PERF_COUNT
             usedPrefetchCnt.incr(1);
         `endif
@@ -816,7 +815,7 @@ endfunction
                 cRqMshr.manageQueue.resetEntry(nextInQueue);
             end
             prefetcher.reportAccess(req.addr, req.pcHash, HIT, req.op, cRqIsPrefetch[n], cRqPrefetchAuxData[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
-            prefetcher.reportCacheDataArrival(curLine, req.addr, req.pcHash, req.op, wasMiss, cRqIsPrefetch[n], cRqPrefetchAuxData[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
+            prefetcher.reportCacheDataArrival(curLine, req.addr, req.pcHash, req.op, wasMiss, cRqIsPrefetch[n], False, cRqPrefetchAuxData[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
             if (verbose)
                 $display("%t L1 %m pipelineResp: Hit func: update ram: ", $time,
                     fshow(newLine), " ; ",
@@ -1438,6 +1437,11 @@ endfunction
         linkAddrRst <= Invalid;
     endmethod
 
+    method ActionValue#(PrefetcherBroadcastData) getPrefetcherBroadcastData;
+        let x <- prefetcher.getBroadcastData;
+        return x;
+    endmethod
+
     interface Get cRqStuck;
         method ActionValue#(L1CRqStuck) get;
             let s <- cRqMshr.stuck.get;
@@ -1700,6 +1704,12 @@ module mkL1Cache#(
         for(Integer i = 0; i < valueof(bankNum); i = i+1) begin
             banks[i].resetLinkAddr;
         end
+    endmethod
+
+    // TODO: need to use a crossbar if we want more than one bank
+    method ActionValue#(PrefetcherBroadcastData) getPrefetcherBroadcastData;
+        let x <- banks[0].getPrefetcherBroadcastData;
+        return x;
     endmethod
 
     method Action flush;

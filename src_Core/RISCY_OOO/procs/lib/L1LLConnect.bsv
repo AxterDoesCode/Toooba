@@ -93,6 +93,7 @@ module mkL1LLConnect#(
                 data: rs.data,
                 id: rs.id,
                 cameFromPrefetch: rs.cameFromPrefetch,
+                prefetchAuxData: rs.prefetchAuxData,
                 boundsOffset: rs.boundsOffset,
                 boundsLength: rs.boundsLength,
                 boundsVirtBase: rs.boundsVirtBase

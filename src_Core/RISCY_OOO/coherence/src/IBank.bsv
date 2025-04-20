@@ -175,7 +175,6 @@ module mkIBank#(
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
 
     let prefetcher <- mkL1IPrefetcher;
-    let llcPrefetcher <- mkLLIPrefetcherInL1I;
 
 `ifdef DEBUG_ICACHE
     // id for each cRq, incremented when each new req comes
@@ -424,6 +423,7 @@ module mkIBank#(
         doAssert(req.toState == I, "I$ only has downgrade req to I");
     endrule
 
+/*
     (* descending_urgency = "sendRqToP, sendPrefetchRqToP" *)
     rule sendPrefetchRqToP;
         let addr <- llcPrefetcher.getNextPrefetchAddr;
@@ -448,6 +448,7 @@ module mkIBank#(
                 fshow(cRqToP)
             );
     endrule
+*/
 
     rule sendRqToP;
         rqToPIndexQ.deq;
@@ -549,7 +550,6 @@ module mkIBank#(
         }, Invalid, True); // hit, so update rep info
         if (!cRqIsPrefetch[n]) begin
             prefetcher.reportAccess(req.addr, HIT);
-            llcPrefetcher.reportAccess(req.addr, HIT);
         end
         // process req to get superscalar inst read results
         // set MSHR entry as Done & save inst results
@@ -612,7 +612,6 @@ module mkIBank#(
             }, Invalid, False);
             if (!cRqIsPrefetch[n]) begin
                 prefetcher.reportAccess(procRq.addr, MISS);
-                llcPrefetcher.reportAccess(procRq.addr, MISS);
             end
         endaction
         endfunction
@@ -643,7 +642,6 @@ module mkIBank#(
             });
             if (!cRqIsPrefetch[n]) begin
                 prefetcher.reportAccess(procRq.addr, MISS);
-                llcPrefetcher.reportAccess(procRq.addr, MISS);
             end
             // send replacement resp to parent
             rsToPIndexQ.enq(CRq (n));

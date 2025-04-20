@@ -84,6 +84,8 @@ import MMIOAddrs::*;
 import MMIOCore::*;
 import DramCommon::*;
 import Performance::*;
+import Prefetcher_intf::*;
+import Fifos::*;
 `ifdef PERFORMANCE_MONITORING
 import StatCounters::*;
 `endif
@@ -147,6 +149,19 @@ module mkProc (Proc_IFC);
       l1[i + valueof(CoreNum)] = core[i].iCacheToParent;
    end
    mkL1LLConnect(llc.to_child, l1);
+
+   // Forward L1 prefetcher broadcasts to L2
+   Fifo#(4, Tuple2#(PrefetcherBroadcastData, Bit#(TLog#(CoreNum)))) prefetcherBroadcastData <- mkBypassFifo;
+   for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
+       rule queuePrefetcherBroadcastDataFromL1;
+           let x <- core[i].getPrefetcherBroadcastData;
+           prefetcherBroadcastData.enq(tuple2(x, fromInteger(i)));
+       endrule
+   end
+   rule forwardPrefetcherBroadcastDataToLL;
+      prefetcherBroadcastData.deq;
+      llc.sendDataPrefetcherBroadcastData(prefetcherBroadcastData.first);
+   endrule
 
    // ================================================================
    // LLC tlb to L2 tlb

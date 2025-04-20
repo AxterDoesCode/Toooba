@@ -57,6 +57,7 @@ import LLCDmaConnect::*;
 import Performance::*;
 import LLCTlb::*;
 import TlbTypes::*;
+import Prefetcher_intf::*;
 `ifdef PERFORMANCE_MONITORING
 import StatCounters::*;
 `endif
@@ -256,6 +257,7 @@ interface LLCache;
     interface DmaServer#(LLCDmaReqId) dma;
     interface MemFifoClient#(LdMemRqId#(LLCRqMshrIdx), void) to_mem;
     interface LLCTlbToParent#(CombinedLLCTlbReqIdx) to_tlb;
+    method Action sendDataPrefetcherBroadcastData(Tuple2#(PrefetcherBroadcastData, Bit#(TLog#(CoreNum))) data);
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
     interface Get#(LLCStuck) cRqStuck;
     // performance
@@ -475,4 +477,9 @@ module mkLLCache(LLCache);
 `ifdef PERFORMANCE_MONITORING
     method EventsLL events = cache.events;
 `endif
+
+    method Action sendDataPrefetcherBroadcastData(Tuple2#(PrefetcherBroadcastData, Bit#(TLog#(CoreNum))) data);
+        cache.sendDataPrefetcherBroadcastData(data);
+    endmethod
+
 endmodule

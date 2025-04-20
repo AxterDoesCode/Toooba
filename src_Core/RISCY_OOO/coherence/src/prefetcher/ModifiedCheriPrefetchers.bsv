@@ -354,7 +354,7 @@ module mkCapPtrPrefetcherNonPC#(
         end
     endmethod
 
-    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
         if (memOp == Ld && boundsLength <= fromInteger(valueOf(maxCapSizeToTrack)) && boundsLength >= 16) begin
             $display ("%t Prefetcher reportCacheDataArrival wasMiss %d wasPrefetch %d access addr %h boundslen %d offset %h pcHash deadbeef ", 
                 $time, 
@@ -442,6 +442,13 @@ module mkCapPtrPrefetcherNonPC#(
         if (`VERBOSE) $display("%t Prefetcher getNextPrefetchAddr %h", $time, prefetchQueue.first);
         prefetchQueue.deq;
         return prefetchQueue.first;
+    endmethod
+
+    method ActionValue#(PrefetcherBroadcastData) getBroadcastData if (False);
+        return ?;
+    endmethod
+
+    method Action sendBroadcastData(PrefetcherBroadcastData data);
     endmethod
 
 `ifdef PERFORMANCE_MONITORING

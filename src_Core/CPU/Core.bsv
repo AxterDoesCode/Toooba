@@ -108,6 +108,7 @@ import CHERICap::*;
 import CHERICC_Fat::*;
 import Bag::*;
 import VnD::*;
+import Prefetcher_intf::*;
 
 `ifdef RVFI_DII
 import Toooba_RVFI_DII_Bridge::*;
@@ -181,6 +182,8 @@ interface Core;
     interface TlbMemClient tlbToMem;
     // MMIO
     interface MMIOCoreToPlatform mmioToPlatform;
+    // prefetcher broadcast data
+    method ActionValue#(PrefetcherBroadcastData) getPrefetcherBroadcastData;
     // stats enable
     method ActionValue#(Bool) sendDoStats;
     method Action recvDoStats(Bool x);
@@ -1576,6 +1579,11 @@ module mkCore#(CoreId coreId)(Core);
     interface tlbToMem = l2Tlb.toMem;
 
     interface mmioToPlatform = mmio.toP;
+
+    method ActionValue#(PrefetcherBroadcastData) getPrefetcherBroadcastData; 
+        let x <- dMem.getPrefetcherBroadcastData;
+        return x;
+    endmethod
 
     method sendDoStats = csrf.sendDoStats;
     method recvDoStats = csrf.recvDoStats;

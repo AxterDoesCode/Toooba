@@ -60,6 +60,7 @@ import SelfInvL1Pipe::*;
 import SelfInvL1Bank::*;
 import SelfInvIPipe::*;
 import SelfInvIBank::*;
+import Prefetcher_intf::*;
 `ifdef PERFORMANCE_MONITORING
 import StatCounters::*;
 `endif
@@ -188,6 +189,7 @@ interface DCoCache;
     method Action flush;
     method Bool flush_done;
     method Action resetLinkAddr;
+    method ActionValue#(PrefetcherBroadcastData) getPrefetcherBroadcastData;
     interface Perf#(L1DPerfType) perf;
 `ifdef PERFORMANCE_MONITORING
     method EventsL1D events;
@@ -252,6 +254,11 @@ module mkDCoCache#(L1ProcResp#(DProcReqId) procResp, TlbToPrefetcher toPrefetche
 
     method Action resetLinkAddr;
         cache.resetLinkAddr;
+    endmethod
+
+    method ActionValue#(PrefetcherBroadcastData) getPrefetcherBroadcastData;
+        let x <- cache.getPrefetcherBroadcastData;
+        return x;
     endmethod
 
     interface Perf perf;
