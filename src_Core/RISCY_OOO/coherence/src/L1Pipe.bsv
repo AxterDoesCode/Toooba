@@ -185,7 +185,7 @@ module mkL1Pipe(
     Add#(tagSz, b__, AddrSz)
 );
 
-   Bool verbose = True;
+   Bool verbose = False;
 
     // RAMs
     Vector#(wayNum, RWBramCore#(indexT, infoT)) infoRam <- replicateM(mkRWBramCoreForwarded);

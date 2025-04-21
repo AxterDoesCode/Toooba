@@ -171,7 +171,7 @@ module mkL1Bank#(
     Add#(TAdd#(tagSz, indexSz), TAdd#(lgBankNum, LgLineSzBytes), AddrSz)
 );
 
-    Bool verbose = True;
+    Bool verbose = False;
     Bool prefetchVerbose = True;
 
     L1CRqMshr#(cRqNum, indexT, wayT, tagT, procRqT) cRqMshr <- mkL1CRqMshrLocal;
@@ -744,7 +744,7 @@ endfunction
                     end else begin
                         incrTagCnt(extend(countElem(True, curLine.tag)));
                         procResp.respLd(req.id, getTaggedDataAt(curLine, dataSel));
-                        if (verbose) $display("%t L1Bank hit data: ", $time, fshow(getTaggedDataAt(curLine, dataSel)));
+                        if (prefetchVerbose) $display("%t L1Bank hit data: ", $time, fshow(getTaggedDataAt(curLine, dataSel)));
                     end
                 end else begin
                     lineTouched = False;
