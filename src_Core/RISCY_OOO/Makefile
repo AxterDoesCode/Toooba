@@ -112,6 +112,7 @@ copy_coherence_src_files:
 	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/RandomReplace.bsv        ./$(COHERENCE_SRC)/
 	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/RWBramCore.bsv           ./$(COHERENCE_SRC)/
 	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/RWBramCoreSequential.bsv ./$(COHERENCE_SRC)/
+	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/RWSetAssocBramCore.bsv   ./$(COHERENCE_SRC)/
 	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/SelfInvIBank.bsv         ./$(COHERENCE_SRC)/
 	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/SelfInvIPipe.bsv         ./$(COHERENCE_SRC)/
 	cp -p $(RISCY_HOME)/$(COHERENCE_SRC)/SelfInvL1Bank.bsv        ./$(COHERENCE_SRC)/

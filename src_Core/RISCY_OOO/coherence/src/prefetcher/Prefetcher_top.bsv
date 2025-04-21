@@ -57,6 +57,10 @@ import SignaturePathPrefetcher::*;
     `define DATA_PREFETCHER_IN_LL
 `endif
 
+`ifdef DATA_PREFETCHER_IN_L1_FORWARDING
+    `define DATA_PREFETCHER_IN_L1
+`endif
+
 module mkDoNothingPrefetcher(Prefetcher);
     method Action reportAccess(Addr addr, HitOrMiss hitMiss);
     endmethod

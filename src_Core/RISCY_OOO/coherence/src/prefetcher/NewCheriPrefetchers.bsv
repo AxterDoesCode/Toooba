@@ -32,6 +32,7 @@ import Vector::*;
 import FIFO::*;
 import Fifos::*;
 import RWBramCore::*;
+import RWSetAssocBramCore::*;
 import CHERICap::*;
 import CHERICC_Fat::*;
 import LFSR::*;
@@ -166,10 +167,12 @@ typedef struct {
 /* For preparing broadcast messages to the LL cache */
 typedef struct {
     Bit#(ptIdxTagBits) ptrTableIdxTag;
+    Bit#(ptWayBits) ptrTableWay;
     Bit#(confBits) nFetched;
     Bit#(capOffsetBits) bestOffset;
 } CapChaserL1BroadcastPrep#(
     numeric type ptIdxTagBits,
+    numeric type ptWayBits,
     numeric type confBits,
     numeric type capOffsetBits
 ) deriving (Bits, Eq, FShow);
@@ -202,11 +205,15 @@ module mkL1CapChaserPrefetcher#(
     Parameter#(l1OnlyMode) ____,
     Parameter#(trainingDecayCycles) _____
 )(CheriPrefetcher) provisos (
+    // The number of sets in the pointer table is the size divided by ways
+    NumAlias#(ptrTableWays, 2),
+    NumAlias#(ptrTableSets, TDiv#(ptrTableSize, ptrTableWays)),
     // The tables are indexed by hashes, so access is already inexact.
     // Choose how much tag to store to tradeoff storage vs accuracy.
     NumAlias#(ptrTableTagBits, 12),
-    NumAlias#(ptrTableIdxBits, TLog#(ptrTableSize)),
+    NumAlias#(ptrTableIdxBits, TLog#(ptrTableSets)),
     NumAlias#(ptrTableIdxTagBits, TAdd#(ptrTableIdxBits, ptrTableTagBits)),
+    NumAlias#(ptrTableWayBits, TLog#(ptrTableWays)),
     NumAlias#(trainingTableTagBits, 12),
     NumAlias#(trainingTableIdxBits, TLog#(trainingTableSize)),
     NumAlias#(trainingTableIdxTagBits, TAdd#(trainingTableIdxBits, trainingTableTagBits)),
@@ -231,6 +238,7 @@ module mkL1CapChaserPrefetcher#(
     Alias#(ptrTableIdxT, Bit#(ptrTableIdxBits)),
     Alias#(ptrTableTagT, Bit#(ptrTableTagBits)),
     Alias#(ptrTableIdxTagT, Bit#(ptrTableIdxTagBits)),
+    Alias#(ptrTableWayT, Bit#(ptrTableWayBits)),
     Alias#(trainingTableIdxT, Bit#(trainingTableIdxBits)),
     Alias#(trainingTableTagT, Bit#(trainingTableTagBits)),
     Alias#(trainingTableIdxTagT, Bit#(trainingTableIdxTagBits)),
@@ -243,7 +251,7 @@ module mkL1CapChaserPrefetcher#(
     Alias#(observedCapT, CapChaserL1ObservedCap#(ptrTableIdxTagBits, trainingTableIdxTagBits, capOffsetBits)),
     Alias#(observedCLineT, CapChaserL1ObservedCLine#(ptrTableIdxTagBits, trainingTableIdxTagBits, capOffsetBits)),
     Alias#(candidatePrefetchT, CapChaserL1CandidatePrefetch#(ptrTableConfBits)),
-    Alias#(broadcastPrepT, CapChaserL1BroadcastPrep#(ptrTableIdxTagBits, ptrTableConfBits, capOffsetBits)),
+    Alias#(broadcastPrepT, CapChaserL1BroadcastPrep#(ptrTableIdxTagBits, ptrTableWayBits, ptrTableConfBits, capOffsetBits)),
     Alias#(trainingTableUpdateT, CapChaserL1TtUpdate#(trainingTableIdxTagBits, capOffsetBits)),
 
     // Entry types
@@ -256,10 +264,6 @@ module mkL1CapChaserPrefetcher#(
     // Training decay counter reset value
     NumAlias#(trainingDecayReset, TSub#(trainingDecayCycles, 1)),
     Add#(1, g__, trainingDecayCycles),
-
-    // Set-associative pointer table
-    //NumAlias#(ptrTableWays, 4),
-    //Add#(e__, TLog#(ptrTableWays), TLog#(ptrTableSize)),    
 
     // Ugh
     Add#(h__, 6, TMax#(TAdd#(TLog#(maxCapSizeToTrack), 1), 7)),
@@ -282,7 +286,14 @@ module mkL1CapChaserPrefetcher#(
     RWBramCore#(trainingTableIdxT, trainingTableEntryT) trainingTable <- mkRWBramCoreForwarded();
 
     // Pointer table
-    RWBramCore#(ptrTableIdxT, ptrTableEntryT) ptrTable <- mkRWBramCoreForwarded();
+    function Bool isPtrTableMatch(ptrTableEntryT entry, ptrTableTagT tag);
+        return (entry matches tagged Valid .e ? e.tag == tag : False); 
+    endfunction
+    function Bool isPtrTableReplaceCandidate(ptrTableEntryT entry);
+        return !isValid(entry);
+    endfunction
+    RWSetAssocBramCore#(ptrTableIdxT, ptrTableWayT, ptrTableEntryT, ptrTableTagT) ptrTable 
+        <- mkRWSetAssocBramCore(isPtrTableMatch, isPtrTableReplaceCandidate);
 
     // Queues for training table lookups 
     // ttLookupQ can be bypass: doTtLookup just initiates a table lookup.
@@ -317,10 +328,12 @@ module mkL1CapChaserPrefetcher#(
     Fifo#(PrefetcherTlbReqNum, PrefetcherTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
     
     // Init registers 
-    Reg#(Bool) bramInited <- mkReg(False);
+    Reg#(Bool) ptrTableInited <- mkReg(False);
+    Reg#(Bool) trainingTableInited <- mkReg(False);
     Reg#(Bool) tlbReqFreeQInited <- mkReg(False);
     Reg#(PrefetcherTlbReqIdx) tlbReqFreeQInitCount <- mkReg(0);
-    Reg#(Bit#(TMax#(ptrTableIdxBits, trainingTableIdxBits))) bramInitCount <- mkReg(0);
+    Reg#(Bit#(TAdd#(ptrTableIdxBits, ptrTableWayBits))) ptrTableInitCount <- mkReg(0);
+    Reg#(Bit#(trainingTableIdxBits)) trainingTableInitCount <- mkReg(0);
 
     // Decay counter register
     Reg#(Bit#(TLog#(trainingDecayCycles))) trainingDecayCounter <- mkReg(0);
@@ -362,7 +375,7 @@ module mkL1CapChaserPrefetcher#(
 
     // Whether we have inited
     function Bool inited;
-        return bramInited && tlbReqFreeQInited;
+        return ptrTableInited && trainingTableInited && tlbReqFreeQInited;
     endfunction
 
     // Function to get the next observed cap in queue
@@ -376,18 +389,24 @@ module mkL1CapChaserPrefetcher#(
 
     /* Init the prefetcher */
     // All occur after a training table read (except for init)
-    (* mutually_exclusive = "doBramInit, processObservedCapLookup, decayTrainingTableResp, processTtLookup" *)
-    // All occur after a pointer table read (except for init)
-    (* mutually_exclusive = "doBramInit, processObservedCapLookup, processPtUpDowngrade" *)
-    rule doBramInit(!bramInited);
-        trainingTable.wrReq(truncate(bramInitCount), Invalid);
-        ptrTable.wrReq(truncate(bramInitCount), Invalid);
-        if (bramInitCount == ~0) begin
-            bramInited <= True;
+    (* mutually_exclusive = "doTrainingTableInit, processObservedCapLookup, decayTrainingTableResp, processTtLookup" *)
+    rule doTrainingTableInit(!trainingTableInited);
+        trainingTable.wrReq(trainingTableInitCount, Invalid);
+        if (trainingTableInitCount == ~0) begin
+            trainingTableInited <= True;
             // Also seed the Lfsr here
             trainingDecayLfsr.seed('h11);
         end
-        bramInitCount <= bramInitCount + 1;
+        trainingTableInitCount <= trainingTableInitCount + 1;
+    endrule
+    // All occur after a pointer table read (except for init)
+    (* mutually_exclusive = "doPtrTableInit, processObservedCapLookup, processPtUpDowngrade" *)
+    rule doPtrTableInit(!ptrTableInited);
+        ptrTable.wrReq(truncateLSB(ptrTableInitCount), truncate(ptrTableInitCount), Invalid);
+        if (ptrTableInitCount == ~0) begin
+            ptrTableInited <= True;
+        end
+        ptrTableInitCount <= ptrTableInitCount + 1;
     endrule
     (* mutually_exclusive = "doTlbReqFreeQInit, processTlbResp" *)
     rule doTlbReqFreeQInit(!tlbReqFreeQInited);
@@ -493,7 +512,7 @@ module mkL1CapChaserPrefetcher#(
         trainingTable.rdReq(truncate(observedCap.trainingTableIdxTag));
         // Also read from the pointer table, so we can maybe perform a prefetch
         if (observedCLine.prefetch) begin
-            ptrTable.rdReq(truncate(observedCap.ptrTableIdxTag));
+            ptrTable.rdReq(truncate(observedCap.ptrTableIdxTag), truncateLSB(observedCap.ptrTableIdxTag));
         end
         // Queue up the observed cap ready for the read responses
         observedCapRespQ.enq(observedCap);
@@ -511,7 +530,6 @@ module mkL1CapChaserPrefetcher#(
         let observedCap = observedCapRespQ.first;
         trainingTableIdxT tIdx = truncate(observedCap.trainingTableIdxTag);
         trainingTableTagT tTag = truncateLSB(observedCap.trainingTableIdxTag);
-        ptrTableTagT pTag = truncateLSB(observedCap.ptrTableIdxTag);
         observedCapRespQ.deq;
 
         // This rule should not fire when there is another read response from either table cause by another rule
@@ -549,7 +567,7 @@ module mkL1CapChaserPrefetcher#(
         // and we have some chance of prefetching.
         Bool createFilter = filterPrefetch;
         if (observedCLine.prefetch) begin
-            if (ptrTable.rdResp matches tagged Valid .entry &&& entry.tag == pTag && !filterPrefetch && entry.nSeen != 0) begin
+            if (ptrTable.rdResp matches tagged Valid {.way, tagged Valid .entry} &&& !filterPrefetch && entry.nSeen != 0) begin
                 // Check the pointer table and fill in the prefetch offset.
                 // If we see two capabilities of the same size, then we're probably seeing a chain of the same datastructure,
                 // so access the capability at the same offset as we just used.
@@ -681,7 +699,7 @@ module mkL1CapChaserPrefetcher#(
     rule doPtLookupForUpDowngrade(inited && !isValid(nextObservedCapIdx));
         let upDowngrade = ptUpDowngradeQ.first;
         ptUpDowngradeQ.deq;
-        ptrTable.rdReq(truncate(upDowngrade.ptrTableIdxTag));
+        ptrTable.rdReq(truncate(upDowngrade.ptrTableIdxTag), truncateLSB(upDowngrade.ptrTableIdxTag));
         ptUpDowngradeRespQ.enq(upDowngrade);
     endrule
 
@@ -694,38 +712,38 @@ module mkL1CapChaserPrefetcher#(
         doAssert(!observedCapRespQ.notEmpty, "processPtUpDowngrade fired while observedCapRespQ is non empty");
 
         // If the PT lookup hit, update the counters and potentially the confidence
-        if (ptrTable.rdResp matches tagged Valid .entry) begin
+        if (ptrTable.rdResp matches tagged Valid {.way, tagged Valid .entry}) begin
             let nSeen = entry.nSeen + 1;
-            let nFetched = entry.nFetched + (upDowngrade.upgrade ? 1 : 0); 
-            // Right-shift nFetched when saturated and inform the LL cache
-            if (entry.nSeen == ~0) begin
-                nFetched = (entry.nFetched >> 1) + (upDowngrade.upgrade ? 1 : 0);
-                if (valueOf(l1OnlyMode)==0) begin
-                    broadcastPrepQ.enq(CapChaserL1BroadcastPrep {
-                        ptrTableIdxTag: upDowngrade.ptrTableIdxTag,
-                        nFetched: nFetched,
-                        bestOffset: upDowngrade.accessOffset
-                    });
-                end
-            end 
+            // Shift nFetched if we just looped the counter back to 0
+            let nFetched = (entry.nSeen == ~0 ? (entry.nFetched >> 1) : entry.nFetched) + (upDowngrade.upgrade ? 1 : 0); 
+            // Inform the LL cache if we have just saturated the counter
+            if (nSeen == ~0 && valueOf(l1OnlyMode)==0) begin
+                broadcastPrepQ.enq(CapChaserL1BroadcastPrep {
+                    ptrTableIdxTag: upDowngrade.ptrTableIdxTag,
+                    ptrTableWay: way,
+                    nFetched: nFetched,
+                    bestOffset: upDowngrade.accessOffset
+                });
+            end
             // Delete the entry if we no longer have any confidence.
             if (nFetched == 0) begin
-                ptrTable.wrReq(truncate(upDowngrade.ptrTableIdxTag), Invalid);
+                ptrTable.wrReq(truncate(upDowngrade.ptrTableIdxTag), way, Invalid);
                 if (verbose) $display("%t CapChaser L1 removing pt entry: ptIdxTag: 0x%h", 
                     $time, 
                     upDowngrade.ptrTableIdxTag
                 );
             end else begin 
                 let bestOffset = (upDowngrade.upgrade ? upDowngrade.accessOffset : entry.bestOffset);
-                ptrTable.wrReq(truncate(upDowngrade.ptrTableIdxTag), Valid(CapChaserL1PtEntry {
+                ptrTable.wrReq(truncate(upDowngrade.ptrTableIdxTag), way, Valid(CapChaserL1PtEntry {
                     tag: truncateLSB(upDowngrade.ptrTableIdxTag),
                     nSeen: nSeen,
                     nFetched: nFetched,
                     bestOffset: bestOffset
                 }));
-                if (verbose) $display("%t CapChaser L1 updating confidence: ptIdxTag: 0x%h, upgrade: %b, nseen: %d, nfetched: %d, bestOffset: %d", 
+                if (verbose) $display("%t CapChaser L1 updating confidence: ptIdxTag: 0x%h, ptWay: %d, upgrade: %b, nseen: %d, nfetched: %d, bestOffset: %d", 
                     $time, 
                     upDowngrade.ptrTableIdxTag,
+                    way,
                     upDowngrade.upgrade,
                     {1'b1, nSeen},
                     nFetched,
@@ -733,16 +751,17 @@ module mkL1CapChaserPrefetcher#(
                 );
             end
         end else if (upDowngrade.upgrade) begin 
-            ptrTable.wrReq(truncate(upDowngrade.ptrTableIdxTag), Valid(CapChaserL1PtEntry {
+            ptrTable.wrReq(truncate(upDowngrade.ptrTableIdxTag), ptrTable.rdRepl, Valid(CapChaserL1PtEntry {
                 tag: truncateLSB(upDowngrade.ptrTableIdxTag),
                 nSeen: 1,
                 nFetched: 1,
                 bestOffset: upDowngrade.accessOffset
             }));
             // Print that we're inserting a new pointer table entry
-            if (verbose) $display("%t CapChaser L1 inserting new pt entry: ptIdxTag: 0x%h", 
+            if (verbose) $display("%t CapChaser L1 inserting new pt entry: ptIdxTag: 0x%h, ptWay: %d", 
                 $time, 
-                upDowngrade.ptrTableIdxTag
+                upDowngrade.ptrTableIdxTag,
+                ptrTable.rdRepl
             );
         end
         ptrTable.deqRdResp;
@@ -756,14 +775,18 @@ module mkL1CapChaserPrefetcher#(
         broadcastPrepQ.deq;
         let confidence = readDivtable4x4to7({broadcastPrep.nFetched, 4'b1111});
         broadcastQ.enq(CapChaserTrainingData (CapChaserTrainingDataT {
-            ptIdxTag: broadcastPrep.ptrTableIdxTag,
+            ptrTableIdx: truncate(broadcastPrep.ptrTableIdxTag),
+            ptrTableTag: truncateLSB(broadcastPrep.ptrTableIdxTag),
+            ptrTableWay: broadcastPrep.ptrTableWay,
             confidence: confidence,
             bestOffset: broadcastPrep.bestOffset
         }));
-        if (verbose) $display("%t CapChaser L1 prepared broadcast: ptIdxTag: 0x%h, confidence: %b",
+        if (verbose) $display("%t CapChaser L1 prepared broadcast: ptIdxTag: 0x%h, ptWay: %d, confidence: %b, bestOffset: %d",
             $time,
             broadcastPrep.ptrTableIdxTag,
-            confidence
+            broadcastPrep.ptrTableWay,
+            confidence,
+            broadcastPrep.bestOffset
         );
     endrule
 
@@ -774,6 +797,7 @@ module mkL1CapChaserPrefetcher#(
     method Action reportAccess(Addr addr, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
         if (inited &&
             !isPrefetch && 
+            boundsLength >= 16 && 
             boundsLength <= fromInteger(valueOf(maxCapSizeToTrack))
         ) begin
             let tit = getTrainingTableIdxTag(boundsLength, boundsVirtBase);
@@ -784,14 +808,14 @@ module mkL1CapChaserPrefetcher#(
                     trainingTableIdxTag: tit,
                     accessOffset: truncate(boundsOffset >> 4)
                 });
+                if (verbose) $display("%t CapChaser L1 reportAccess vbase: 0x%h, offset: 0x%h, length: 0x%h, ttIdxTag: 0x%h",
+                    $time,
+                    boundsVirtBase,
+                    boundsOffset,
+                    boundsLength,
+                    tit
+                );
             end
-            if (verbose) $display("%t CapChaser L1 reportAccess vbase: 0x%h, offset: 0x%h, length: 0x%h, ttIdxTag: 0x%h",
-                $time,
-                boundsVirtBase,
-                boundsOffset,
-                boundsLength,
-                tit
-            );
         end
     endmethod
 
@@ -808,7 +832,8 @@ module mkL1CapChaserPrefetcher#(
         if (inited &&
             (valueOf(l1OnlyMode) != 0 || !wasNextLevel) && 
             memOp == Ld && 
-            boundsLength <= fromInteger(valueOf(maxCapSizeToTrack)) && 
+            boundsLength >= 16 && 
+            boundsLength <= fromInteger(valueOf(maxCapSizeToTrack)) &&
             getLineAddr(addr) != lastLineLoaded
         ) begin
             lastLineLoaded <= getLineAddr(addr);
@@ -909,9 +934,12 @@ module mkLLCapChaserPrefetcher#(
     Parameter#(ptrTableSize) __
 )(CheriPrefetcher) provisos (
     // We only have a pointer table in the L2 cache
+    NumAlias#(ptrTableWays, 2),
+    NumAlias#(ptrTableSets, TDiv#(ptrTableSize, ptrTableWays)),
     NumAlias#(ptrTableTagBits, 12),
-    NumAlias#(ptrTableIdxBits, TLog#(ptrTableSize)),
+    NumAlias#(ptrTableIdxBits, TLog#(ptrTableSets)),
     NumAlias#(ptrTableIdxTagBits, TAdd#(ptrTableIdxBits, ptrTableTagBits)),
+    NumAlias#(ptrTableWayBits, TLog#(ptrTableWays)),
     Add#(a__, AddrSz, TMul#(TDiv#(AddrSz, ptrTableIdxTagBits), ptrTableIdxTagBits)),
     Add#(1, b__, TDiv#(AddrSz, ptrTableIdxTagBits)),
 
@@ -922,6 +950,7 @@ module mkLLCapChaserPrefetcher#(
     Alias#(ptrTableIdxT, Bit#(ptrTableIdxBits)),
     Alias#(ptrTableTagT, Bit#(ptrTableTagBits)),
     Alias#(ptrTableIdxTagT, Bit#(ptrTableIdxTagBits)),
+    Alias#(ptrTableWayT, Bit#(ptrTableWayBits)),
 
     // Bits required to represent offsets
     NumAlias#(lgMaxCapSizeToTrack, TLog#(maxCapSizeToTrack)),
@@ -949,12 +978,19 @@ module mkLLCapChaserPrefetcher#(
 
     // Beause of PrefetcherBroadcastData having fixed sizes
     Log#(maxCapSizeToTrack, 8),
-    Log#(ptrTableSize, 8)
+    Log#(ptrTableSets, 7)
 );
     Bool verbose = True;
 
     // Pointer table
-    RWBramCore#(ptrTableIdxT, ptrTableEntryT) ptrTable <- mkRWBramCoreForwarded();
+    function Bool isPtrTableMatch(ptrTableEntryT entry, ptrTableTagT tag);
+        return (entry matches tagged Valid .e ? e.tag == tag : False); 
+    endfunction
+    function Bool isPtrTableReplaceCandidate(ptrTableEntryT entry);
+        return !isValid(entry);
+    endfunction
+    RWSetAssocBramCore#(ptrTableIdxT, ptrTableWayT, ptrTableEntryT, ptrTableTagT) ptrTable 
+        <- mkRWSetAssocBramCore(isPtrTableMatch, isPtrTableReplaceCandidate);
 
     // Queues for observed capabilities
     Fifo#(8, observedCLineT) observedCLineQ <- mkOverflowBypassFifo;
@@ -973,10 +1009,10 @@ module mkLLCapChaserPrefetcher#(
     Fifo#(PrefetcherTlbReqNum, PrefetcherTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
     
     // Init registers 
-    Reg#(Bool) bramInited <- mkReg(False);
+    Reg#(Bool) ptrTableInited <- mkReg(False);
     Reg#(Bool) tlbReqFreeQInited <- mkReg(False);
     Reg#(PrefetcherTlbReqIdx) tlbReqFreeQInitCount <- mkReg(0);
-    Reg#(Bit#(ptrTableIdxBits)) bramInitCount <- mkReg(0);
+    Reg#(Bit#(TAdd#(ptrTableIdxBits, ptrTableWayBits))) ptrTableInitCount <- mkReg(0);
 
     // We don't need to remember the last accessed capability in the L2: we're not doing any training.
     Reg#(LineAddr) lastLineLoaded <- mkRegU;
@@ -995,7 +1031,7 @@ module mkLLCapChaserPrefetcher#(
 
     // Whether we have inited
     function Bool inited;
-        return bramInited && tlbReqFreeQInited;
+        return ptrTableInited && tlbReqFreeQInited;
     endfunction
 
     // Function to get the next observed cap in queue
@@ -1008,13 +1044,13 @@ module mkLLCapChaserPrefetcher#(
     endfunction
 
     /* Init the prefetcher */
-    (* mutually_exclusive = "doBramInit, processObservedCapLookup" *)
-    rule doBramInit(!bramInited);
-        ptrTable.wrReq(bramInitCount, Invalid);
-        if (bramInitCount == ~0) begin
-            bramInited <= True;
+    (* mutually_exclusive = "doPtrTableInit, processObservedCapLookup" *)
+    rule doPtrTableInit(!ptrTableInited);
+        ptrTable.wrReq(truncateLSB(ptrTableInitCount), truncate(ptrTableInitCount), Invalid);
+        if (ptrTableInitCount == ~0) begin
+            ptrTableInited <= True;
         end
-        bramInitCount <= bramInitCount + 1;
+        ptrTableInitCount <= ptrTableInitCount + 1;
     endrule
     (* mutually_exclusive = "doTlbReqFreeQInit, processTlbResp" *)
     rule doTlbReqFreeQInit(!tlbReqFreeQInited);
@@ -1032,7 +1068,7 @@ module mkLLCapChaserPrefetcher#(
         unprocessedObservedCap[idx] <= False;
         // Unconditionally read from the pointer table: we already filtered out requests we don't want
         // to prefetch from.
-        ptrTable.rdReq(truncate(observedCap.ptrTableIdxTag));
+        ptrTable.rdReq(truncate(observedCap.ptrTableIdxTag), truncateLSB(observedCap.ptrTableIdxTag));
         observedCapRespQ.enq(observedCap);
     endrule
 
@@ -1046,10 +1082,9 @@ module mkLLCapChaserPrefetcher#(
     rule processObservedCapLookup;
         let observedCLine = observedCLineQ.first;
         let observedCap = observedCapRespQ.first;
-        ptrTableTagT pTag = truncateLSB(observedCap.ptrTableIdxTag);
         observedCapRespQ.deq;
 
-        if (ptrTable.rdResp matches tagged Valid .entry &&& entry.tag == pTag && entry.confidence != 0) begin
+        if (ptrTable.rdResp matches tagged Valid {.way, tagged Valid .entry} &&& entry.confidence != 0) begin
             CapPipe prefetchCap = (observedCap.sizeMatch ? observedCap.cap : setOffset(observedCap.cap, extend(entry.bestOffset << 4)).value);
             candidateQ.enq(CapChaserLLCandidatePrefetch{
                 cap: prefetchCap,
@@ -1144,6 +1179,7 @@ module mkLLCapChaserPrefetcher#(
     method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
         if (inited && 
             memOp == Ld && 
+            boundsLength >= 16 && 
             boundsLength <= fromInteger(valueOf(maxCapSizeToTrack)) && 
             getLineAddr(addr) != lastLineLoaded
         ) begin
@@ -1201,21 +1237,26 @@ module mkLLCapChaserPrefetcher#(
     method Action sendBroadcastData(PrefetcherBroadcastData data);
         // Ignore if we're not inited
         if (data matches tagged CapChaserTrainingData .ptrTableEntry &&& inited) begin
-            ptrTableIdxTagT ptIdxTag = ptrTableEntry.ptIdxTag;
             if (ptrTableEntry.confidence != 0) begin
-                ptrTable.wrReq(truncate(ptIdxTag), Valid (CapChaserLLPtEntry {
-                    tag: truncateLSB(ptIdxTag),
+                ptrTable.wrReq(ptrTableEntry.ptrTableIdx, ptrTableEntry.ptrTableWay, Valid (CapChaserLLPtEntry {
+                    tag: ptrTableEntry.ptrTableTag,
                     confidence: ptrTableEntry.confidence,
                     bestOffset: ptrTableEntry.bestOffset
                 }));
-                if (verbose) $display("%t CapChaser LL updating pt entry: ptIdxTag: 0x%h, confidence: %b",
+                if (verbose) $display("%t CapChaser LL updating pt entry: ptIdxTag: 0x%h, ptWay: %d, confidence: %b, bestOffset: %d",
                     $time,
-                    ptIdxTag,
-                    ptrTableEntry.confidence
+                    {ptrTableEntry.ptrTableTag, ptrTableEntry.ptrTableIdx},
+                    ptrTableEntry.ptrTableWay,
+                    ptrTableEntry.confidence,
+                    ptrTableEntry.bestOffset
                 );
             end else begin
-                ptrTable.wrReq(truncate(ptIdxTag), Invalid);
-                if (verbose) $display("%t CapChaser LL erasing pt entry: ptIdxTag: 0x%h", $time, ptIdxTag);
+                ptrTable.wrReq(ptrTableEntry.ptrTableIdx, ptrTableEntry.ptrTableWay, Invalid);
+                if (verbose) $display("%t CapChaser LL erasing pt entry: ptIdxTag: 0x%h, ptWay", 
+                    $time, 
+                    {ptrTableEntry.ptrTableTag, ptrTableEntry.ptrTableIdx},
+                    ptrTableEntry.ptrTableWay
+                );
             end
         end
     endmethod
@@ -1315,7 +1356,7 @@ module mkAllInCapPrefetcher2#(
     endmethod
 
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr if (
-        getLineAddr(nextPrefetchAddr_ongoing) <= stopLineAddr
+        getLineAddr(nextPrefetchAddr_ongoing) < stopLineAddr
     );
         if (verbose) $display("%t AllInCap getNextPrefetchAddr: addr: 0x%h, cap: ",
             $time, 
