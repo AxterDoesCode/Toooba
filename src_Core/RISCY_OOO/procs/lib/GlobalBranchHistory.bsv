@@ -1,5 +1,3 @@
-// Simple global history
-// No speculative recovery or anything
 import BrPred::*;
 import BranchParams::*;
 import Vector::*;
