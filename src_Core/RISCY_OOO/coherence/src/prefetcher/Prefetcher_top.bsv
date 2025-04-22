@@ -721,7 +721,23 @@ module mkL1DPrefetcher#(TlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(32) trainingTableSize <- mkParameter;
         Parameter#(1) l1OnlyMode <- mkParameter;
         Parameter#(16) trainingTableDecayCycles <- mkParameter;
-        let m2 = mkCheriPCPrefetcherAdapterFromCheri(mkL1CapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, l1OnlyMode, trainingTableDecayCycles));
+        Parameter#(0) useFiltering <- mkParameter;
+        let m2 = mkCheriPCPrefetcherAdapterFromCheri(mkL1CapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, l1OnlyMode, trainingTableDecayCycles, useFiltering));
+
+        let m <- mkCheriPCPrefetcherDoubler(m1, m2);
+    `elsif DATA_PREFETCHER_CAP_CHASER_FILTER
+        Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
+        Parameter#(0) onDemandHit <- mkParameter;
+        Parameter#(0) onPrefetchHit <- mkParameter;
+        let m1 = mkCheriPCPrefetcherAdapterFromCheri(mkAllInCapPrefetcher2(maxCapSizeToPrefetch, onDemandHit, onPrefetchHit));
+
+        Parameter#(256) maxCapSizeToTrack <- mkParameter;
+        Parameter#(256) ptrTableSize <- mkParameter; 
+        Parameter#(32) trainingTableSize <- mkParameter;
+        Parameter#(1) l1OnlyMode <- mkParameter;
+        Parameter#(16) trainingTableDecayCycles <- mkParameter;
+        Parameter#(1) useFiltering <- mkParameter;
+        let m2 = mkCheriPCPrefetcherAdapterFromCheri(mkL1CapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, l1OnlyMode, trainingTableDecayCycles, useFiltering));
 
         let m <- mkCheriPCPrefetcherDoubler(m1, m2);
     `elsif DATA_PREFETCHER_CAP_CHASER_SPLIT
@@ -735,7 +751,8 @@ module mkL1DPrefetcher#(TlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(32) trainingTableSize <- mkParameter;
         Parameter#(0) l1OnlyMode <- mkParameter;
         Parameter#(16) trainingTableDecayCycles <- mkParameter;
-        let m2 = mkCheriPCPrefetcherAdapterFromCheri(mkL1CapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, l1OnlyMode, trainingTableDecayCycles));
+        Parameter#(0) useFiltering <- mkParameter;
+        let m2 = mkCheriPCPrefetcherAdapterFromCheri(mkL1CapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, l1OnlyMode, trainingTableDecayCycles, useFiltering));
 
         let m <- mkCheriPCPrefetcherDoubler(m1, m2);
     `elsif DATA_PREFETCHER_SPP
