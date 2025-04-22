@@ -92,3 +92,75 @@ module mkRWSetAssocBramCore#(
         nextWay <= nextWay + 1;
     endmethod
 endmodule
+
+
+
+module mkRWSetAssocBramCoreForwarded#(
+    function Bool isMatch(dataT data, tagT tag),
+    function Bool isReplaceCandidate(dataT data)
+)(RWSetAssocBramCore#(addrT, wayT, dataT, tagT)) provisos(
+    Bits#(addrT, addrSz), Eq#(addrT),
+    Bits#(wayT, waySz), Arith#(wayT), PrimIndex#(wayT, a__),
+    Bits#(dataT, dataSz), 
+    Bits#(tagT, tagSz),
+    NumAlias#(wayNum, TExp#(waySz))
+);
+
+    Vector#(wayNum, BRAM_DUAL_PORT#(addrT, dataT)) brams <- replicateM(mkBRAMCore2(valueOf(TExp#(addrSz)), False));
+    
+    // The next way to use for replacement
+    Reg#(wayT) nextWay <- mkConfigRegU;
+    
+    // 1 elem pipeline fifo to add guard for read req/resp
+    // must be 1 elem to make sure rdResp is not corrupted
+    // BRAMCore should not change output if no req is made
+    Fifo#(1, Tuple2#(addrT, tagT)) rdReqQ <- mkPipelineFifo;
+    Reg#(Tuple3#(addrT, wayT, dataT)) wrReqReg <- mkConfigRegU;
+
+    function dataT getWayRdResp(addrT addr, Integer way);
+        let {a, w, d} = wrReqReg;
+        return (addr == a && fromInteger(way) == w ? d : brams[way].b.read);
+    endfunction
+
+    method Action wrReq(addrT a, wayT w, dataT d);
+        wrReqReg <= tuple3(a, w, d);
+        brams[w].a.put(True, a, d);
+    endmethod
+
+    method Action rdReq(addrT a, tagT t);
+        rdReqQ.enq(tuple2(a, t));
+        for (Integer i = 0; i < valueOf(wayNum); i=i+1) begin
+            brams[i].b.put(False, a, ?);
+        end
+    endmethod
+
+    method Maybe#(Tuple2#(wayT, dataT)) rdResp if(rdReqQ.notEmpty);
+        let {addr, tag} = rdReqQ.first;
+        Maybe#(Tuple2#(wayT, dataT)) wayAndData = Invalid;
+        for (Integer i = 0; i < valueOf(wayNum); i=i+1) begin
+            let data = getWayRdResp(addr, i);
+            if (isMatch(data, tag)) begin
+                wayAndData = Valid(tuple2(fromInteger(i), data));
+            end
+        end
+        return wayAndData;
+    endmethod
+
+    method wayT rdRepl if(rdReqQ.notEmpty);
+        let {addr, tag} = rdReqQ.first;
+        wayT way = nextWay;
+        for (Integer i = 0; i < valueOf(wayNum); i=i+1) begin
+            if (isReplaceCandidate(getWayRdResp(addr, i))) begin
+                way = fromInteger(i);
+            end
+        end
+        return way;
+    endmethod
+
+    method rdRespValid = rdReqQ.notEmpty;
+
+    method Action deqRdResp;
+        rdReqQ.deq;
+        nextWay <= nextWay + 1;
+    endmethod
+endmodule
