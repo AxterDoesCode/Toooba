@@ -368,9 +368,13 @@ module mkL1CapChaserPrefetcher#(
         return fixpoint[6:5] != 0; // >= 12.5%
     endfunction
 
-    // An estimate for whether we should filter out future prefetches based on the value of nSeen
-    function Bool shouldAddFilter(Bit#(ptrTableConfBits) nFetched);
-        return nFetched <= 2; // With 4 confidence bits, this corresponds to 25% confidence or lower
+    // A rough estimate for whether we should filter out future prefetches based on the value of nFetched
+    // We don't know the fixed point confidence at this point
+    function Bool shouldAddFilter(PrefetchAuxData auxData, Bit#(ptrTableConfBits) nFetched);
+        // If we have started chaining, then don't add a filter
+        // Otherwise, if the confidence is at least 50%, then add a filter
+        // i.e. we expect to have some chaining
+        return (observedCLine.auxData matches tagged CapChaserAuxData ? False : nFetched >= 7); 
     endfunction
 
     // Whether we have inited
@@ -565,7 +569,7 @@ module mkL1CapChaserPrefetcher#(
         // If the cache line is to be prefetched on, check if we hit the pointer table.
         // Also check that we hit (i.e. tag matches), we are not filtered out by the training table, 
         // and we have some chance of prefetching.
-        Bool createFilter = filterPrefetch;
+        Bool createFilter = False;
         if (observedCLine.prefetch) begin
             if (ptrTable.rdResp matches tagged Valid {.way, tagged Valid .entry} &&& !filterPrefetch && entry.nSeen != 0) begin
                 // Check the pointer table and fill in the prefetch offset.
@@ -575,7 +579,7 @@ module mkL1CapChaserPrefetcher#(
                 // we know that there's a capability.
                 CapPipe prefetchCap = (observedCap.sizeMatch ? observedCap.cap : setOffset(observedCap.cap, extend(entry.bestOffset << 4)).value);
                 // We might want to filter out prefetching this cap in the future
-                createFilter = shouldAddFilter(entry.nFetched);
+                createFilter = shouldAddFilter(observedCLine.auxData, entry.nFetched); 
                 // Simply add as a candidate prefetch
                 // We can't really do the division on this clock cycle
                 candidateQ.enq(CapChaserL1CandidatePrefetch{
