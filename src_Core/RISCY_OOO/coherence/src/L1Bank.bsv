@@ -1113,18 +1113,18 @@ endfunction
                         cRqDrop;
                     end else begin
                         cRqQueue;
-                        if (prefetchVerbose)
-                            $display("%t L1D cRq queued: mshr: %d, addr: 0x%h, succTo: ",
-                                cur_cycle,
-                                n,
-                                procRq.addr,
-                                fshow(cRqQueuedEOC),
-                                ", reqCs: ",
-                                fshow(procRq.toState),
-                                ", op: ",
-                                fshow(procRq.op)
-                            );
                     end
+                    if (prefetchVerbose)
+                        $display("%t L1D cRq queued: mshr: %d, addr: 0x%h, succTo: ",
+                            cur_cycle,
+                            n,
+                            procRq.addr,
+                            fshow(cRqQueuedEOC),
+                            ", reqCs: ",
+                            fshow(procRq.toState),
+                            ", op: ",
+                            fshow(procRq.op)
+                        );
                 end
             end
             else begin
