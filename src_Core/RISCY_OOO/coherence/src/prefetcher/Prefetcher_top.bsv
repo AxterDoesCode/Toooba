@@ -716,7 +716,7 @@ module mkL1DPrefetcher#(TlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(0) onPrefetchHit <- mkParameter;
         let m1 = mkCheriPCPrefetcherAdapterFromCheri(mkAllInCapPrefetcher2(maxCapSizeToPrefetch, onDemandHit, onPrefetchHit));
 
-        Parameter#(256) maxCapSizeToTrack <- mkParameter;
+        Parameter#(512) maxCapSizeToTrack <- mkParameter;
         Parameter#(256) ptrTableSize <- mkParameter; 
         Parameter#(32) trainingTableSize <- mkParameter;
         Parameter#(1) l1OnlyMode <- mkParameter;
@@ -731,7 +731,7 @@ module mkL1DPrefetcher#(TlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(0) onPrefetchHit <- mkParameter;
         let m1 = mkCheriPCPrefetcherAdapterFromCheri(mkAllInCapPrefetcher2(maxCapSizeToPrefetch, onDemandHit, onPrefetchHit));
 
-        Parameter#(256) maxCapSizeToTrack <- mkParameter;
+        Parameter#(512) maxCapSizeToTrack <- mkParameter;
         Parameter#(256) ptrTableSize <- mkParameter; 
         Parameter#(32) trainingTableSize <- mkParameter;
         Parameter#(1) l1OnlyMode <- mkParameter;
@@ -746,7 +746,7 @@ module mkL1DPrefetcher#(TlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(0) onPrefetchHit <- mkParameter;
         let m1 = mkCheriPCPrefetcherAdapterFromCheri(mkAllInCapPrefetcher2(maxCapSizeToPrefetch, onDemandHit, onPrefetchHit));
 
-        Parameter#(256) maxCapSizeToTrack <- mkParameter;
+        Parameter#(512) maxCapSizeToTrack <- mkParameter;
         Parameter#(256) ptrTableSize <- mkParameter; 
         Parameter#(32) trainingTableSize <- mkParameter;
         Parameter#(0) l1OnlyMode <- mkParameter;
@@ -819,22 +819,27 @@ module mkLLDPrefetcher#(TlbToPrefetcher toTlb)(CheriPrefetcher);
         Parameter#(0) onlyExactCap <- mkParameter;
         let m <- mkCapPtrPrefetcherNonPC(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
     `elsif DATA_PREFETCHER_CAP_CHASER_ALLINBASELINE
-        Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
+        Parameter#(512) maxCapSizeToPrefetch <- mkParameter;
         Parameter#(0) onDemandHit <- mkParameter;
         Parameter#(0) onPrefetchHit <- mkParameter;
         let m <- mkAllInCapPrefetcher2(maxCapSizeToPrefetch, onDemandHit, onPrefetchHit);
     `elsif DATA_PREFETCHER_CAP_CHASER
-        Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
+        Parameter#(512) maxCapSizeToPrefetch <- mkParameter;
+        Parameter#(0) onDemandHit <- mkParameter;
+        Parameter#(0) onPrefetchHit <- mkParameter;
+        let m <- mkAllInCapPrefetcher2(maxCapSizeToPrefetch, onDemandHit, onPrefetchHit);
+    `elsif DATA_PREFETCHER_CAP_CHASER_FILTER
+        Parameter#(512) maxCapSizeToPrefetch <- mkParameter;
         Parameter#(0) onDemandHit <- mkParameter;
         Parameter#(0) onPrefetchHit <- mkParameter;
         let m <- mkAllInCapPrefetcher2(maxCapSizeToPrefetch, onDemandHit, onPrefetchHit);
     `elsif DATA_PREFETCHER_CAP_CHASER_SPLIT
-        Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
+        Parameter#(512) maxCapSizeToPrefetch <- mkParameter;
         Parameter#(0) onDemandHit <- mkParameter;
         Parameter#(0) onPrefetchHit <- mkParameter;
         let m1 = mkAllInCapPrefetcher2(maxCapSizeToPrefetch, onDemandHit, onPrefetchHit);
 
-        Parameter#(256) maxCapSizeToTrack <- mkParameter;
+        Parameter#(512) maxCapSizeToTrack <- mkParameter;
         Parameter#(256) ptrTableSize <- mkParameter;
         let m2 = mkLLCapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize);
 

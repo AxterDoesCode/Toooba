@@ -53,7 +53,7 @@ typedef struct {
     Bit#(12) ptrTableTag;
     Bit#(1) ptrTableWay;
     Bit#(7) confidence;
-    Bit#(4) bestOffset; // maximum 256-byte tracked cap size  
+    Bit#(5) bestOffset; // maximum 512-byte tracked cap size  
 } CapChaserTrainingDataT deriving (Bits, Eq, FShow);
 
 /* Data to go alongside a prefetch request. Will return to the prefetcher

@@ -120,6 +120,7 @@ typedef struct {
     Bit#(ptIdxTagBits) ptrTableIdxTag;
     Bit#(ttIdxTagBits) trainingTableIdxTag;
     Bool sizeMatch;
+    Bool demanded;
 } CapChaserL1ObservedCap#(
     numeric type ptIdxTagBits,
     numeric type ttIdxTagBits,
@@ -129,7 +130,7 @@ typedef struct {
 typedef struct {
     Vector#(4, Maybe#(CapChaserL1ObservedCap#(ptIdxTagBits, ttIdxTagBits, capOffsetBits))) caps;
     Bool train;
-    Bool prefetch;
+    Bool missed;
     PrefetchAuxData auxData;
 } CapChaserL1ObservedCLine#(
     numeric type ptIdxTagBits,
@@ -144,6 +145,7 @@ typedef struct {
     CapPipe cap;
     Bit#(ptIdxTagBits) ptrTableIdxTag;
     Bool sizeMatch;
+    Bool demanded;
 } CapChaserLLObservedCap#(
     numeric type ptIdxTagBits
 ) deriving (Bits, Eq, FShow);
@@ -158,6 +160,7 @@ typedef struct {
 /* For undecided prefetches in the L1 after looking up in the pointer table */
 typedef struct {
     CapPipe cap;
+    Bool missedL1;
     Bit#(confBits) nSeen;
     Bit#(confBits) nFetched;
     PrefetchAuxData auxData;
@@ -280,7 +283,7 @@ module mkL1CapChaserPrefetcher#(
 
     // Because CapChaserTrainingDataT has fixed size for ptIdxTag :(
     Log#(ptrTableSize, 8),
-    Log#(maxCapSizeToTrack, 8)
+    Log#(maxCapSizeToTrack, 9)
 );
     Bool verbose = True;
 
@@ -325,6 +328,7 @@ module mkL1CapChaserPrefetcher#(
 
     // Registers for pending TLB requests
     Vector#(PrefetcherTlbReqNum, Reg#(Bool)) pendConfidenceReady <- replicateM(mkRegU);
+    Vector#(PrefetcherTlbReqNum, Reg#(Bool)) pendMissedL1 <- replicateM(mkRegU);
     Vector#(PrefetcherTlbReqNum, Reg#(Bit#(fixPointConfBits))) pendConfidence <- replicateM(mkRegU);
     Vector#(PrefetcherTlbReqNum, Reg#(PrefetchAuxData)) pendAuxData <- replicateM(mkRegU);
     Fifo#(PrefetcherTlbReqNum, PrefetcherTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
@@ -385,9 +389,16 @@ module mkL1CapChaserPrefetcher#(
     endfunction
 
     // Function to get the next observed cap in queue
+    function Bool isDemanded(Maybe#(observedCapT) cap);
+        return (cap matches tagged Valid .c ? c.demanded : False);
+    endfunction
     function nextObservedCapIdx;
         if (observedCLineQ.notEmpty) begin
-            return findIndex(id, zipWith(\&& , map(isValid, observedCLineQ.first.caps), unprocessedObservedCap));
+            if (findIndex(id, zipWith(\&& , map(isDemanded, observedCLineQ.first.caps), unprocessedObservedCap)) matches tagged Valid .idx) begin
+                return Valid(idx);
+            end else begin
+                return findIndex(id, zipWith(\&& , map(isValid, observedCLineQ.first.caps), unprocessedObservedCap));
+            end
         end else begin
             return Invalid;
         end
@@ -517,9 +528,7 @@ module mkL1CapChaserPrefetcher#(
         // - We use the training table as a filter table (therefore do the read regardless of observedCLine.train).
         trainingTable.rdReq(truncate(observedCap.trainingTableIdxTag));
         // Also read from the pointer table, so we can maybe perform a prefetch
-        if (observedCLine.prefetch) begin
-            ptrTable.rdReq(truncate(observedCap.ptrTableIdxTag), truncateLSB(observedCap.ptrTableIdxTag));
-        end
+        ptrTable.rdReq(truncate(observedCap.ptrTableIdxTag), truncateLSB(observedCap.ptrTableIdxTag));
         // Queue up the observed cap ready for the read responses
         observedCapRespQ.enq(observedCap);
     endrule
@@ -563,7 +572,8 @@ module mkL1CapChaserPrefetcher#(
             end
             // Filter out the prefetch if we have an exact match in the training table, and that entry is either
             // already prefetched (i.e. we've already chased it) or has been observed (we're late).
-            filterPrefetch = entry.tag == tTag && entry.filter;
+            // Don't apply this filter to a demanded cache line. The filter bit won't be set if valueOf(useFiltering)==0.
+            filterPrefetch = entry.tag == tTag && entry.filter && !observedCap.demanded;
             untrainedHit = entry.tag == tTag && !entry.trained;
         end
         trainingTable.deqRdResp;
@@ -572,27 +582,26 @@ module mkL1CapChaserPrefetcher#(
         // Also check that we hit (i.e. tag matches), we are not filtered out by the training table, 
         // and we have some chance of prefetching.
         Bool createFilter = False;
-        if (observedCLine.prefetch) begin
-            if (ptrTable.rdResp matches tagged Valid {.way, tagged Valid .entry} &&& !filterPrefetch && entry.nSeen != 0) begin
-                // Check the pointer table and fill in the prefetch offset.
-                // If we see two capabilities of the same size, then we're probably seeing a chain of the same datastructure,
-                // so access the capability at the same offset as we just used.
-                // If it's a different size, we'll either use the offset we found in memory, or one where
-                // we know that there's a capability.
-                CapPipe prefetchCap = (observedCap.sizeMatch ? observedCap.cap : setOffset(observedCap.cap, extend(entry.bestOffset << 4)).value);
-                // We might want to filter out prefetching this cap in the future
-                createFilter = shouldAddFilter(observedCLine.auxData, entry.nFetched); 
-                // Simply add as a candidate prefetch
-                // We can't really do the division on this clock cycle
-                candidateQ.enq(CapChaserL1CandidatePrefetch{
-                    cap: prefetchCap,
-                    nSeen: {1'b1, entry.nSeen},
-                    nFetched: entry.nFetched,
-                    auxData: observedCLine.auxData
-                });
-            end
-            ptrTable.deqRdResp;
+        if (ptrTable.rdResp matches tagged Valid {.way, tagged Valid .entry} &&& !filterPrefetch && entry.nSeen != 0) begin
+            // Check the pointer table and fill in the prefetch offset.
+            // If we see two capabilities of the same size, then we're probably seeing a chain of the same datastructure,
+            // so access the capability at the same offset as we just used.
+            // If it's a different size, we'll either use the offset we found in memory, or one where
+            // we know that there's a capability.
+            CapPipe prefetchCap = (observedCap.sizeMatch ? observedCap.cap : setOffset(observedCap.cap, extend(entry.bestOffset << 4)).value);
+            // We might want to filter out prefetching this cap in the future
+            createFilter = shouldAddFilter(observedCLine.auxData, entry.nFetched); 
+            // Simply add as a candidate prefetch
+            // We can't really do the division on this clock cycle
+            candidateQ.enq(CapChaserL1CandidatePrefetch{
+                cap: prefetchCap,
+                missedL1: observedCLine.missed,
+                nSeen: {1'b1, entry.nSeen},
+                nFetched: (observedCap.demanded ? ~0 : entry.nFetched),
+                auxData: observedCLine.auxData
+            });
         end
+        ptrTable.deqRdResp;
 
         // Write to the training table
         // Remember whether we intended to issue a prefetch so we can use the training table as a filter
@@ -604,7 +613,7 @@ module mkL1CapChaserPrefetcher#(
         }));
 
         // Print that we observed a capability and are trying to prefetch
-        if (verbose) $display("%t CapChaser L1 observed cap vbase: 0x%h, offset: 0x%h, length: 0x%h, ptIdxTag: 0x%h, ttIdxTag: 0x%h, train: %b, prefetch: %b, filter: %b, createFilter: %b, sizeMatch: %b",
+        if (verbose) $display("%t CapChaser L1 observed cap vbase: 0x%h, offset: 0x%h, length: 0x%h, ptIdxTag: 0x%h, ttIdxTag: 0x%h, train: %b, missed: %b, filter: %b, createFilter: %b, sizeMatch: %b, demanded: %b",
             $time,
             getBase(observedCap.cap),
             getOffset(observedCap.cap),
@@ -612,10 +621,11 @@ module mkL1CapChaserPrefetcher#(
             observedCap.ptrTableIdxTag,
             observedCap.trainingTableIdxTag,
             observedCLine.train,
-            observedCLine.prefetch,
+            observedCLine.missed,
             filterPrefetch,
             createFilter,
-            observedCap.sizeMatch
+            observedCap.sizeMatch,
+            observedCap.demanded
         );
     endrule
 
@@ -639,6 +649,7 @@ module mkL1CapChaserPrefetcher#(
             pendConfidenceReady[tlbReqIdx] <= True;
         end
         pendConfidence[tlbReqIdx] <= readDivtable4x4to7({candidate.nFetched, candidate.nSeen});
+        pendMissedL1[tlbReqIdx] <= candidate.missedL1;
         pendAuxData[tlbReqIdx] <= candidate.auxData;
 
         // Send the TLB request
@@ -672,11 +683,24 @@ module mkL1CapChaserPrefetcher#(
         let resp = toTlb.prefetcherResp;
         let tlbReqIdx = resp.id;
         toTlb.deqPrefetcherResp;
-        if (!resp.haveException && resp.permsCheckPass && resp.paddr != 0 && isL2LevelConfidence(pendConfidence[tlbReqIdx])) begin
+
+        // Get the confidence level
+        let l1Confidence = isL1LevelConfidence(pendConfidence[tlbReqIdx]);
+        let l2Confidence = isL2LevelConfidence(pendConfidence[tlbReqIdx]);
+
+        if (// Check TLB permissions 
+            !resp.haveException && 
+            resp.permsCheckPass && 
+            resp.paddr != 0 && 
+            // We need to have at least L2 confidence level
+            l2Confidence &&
+            // If we are in split mode, and we missed the L1, then only issue if we have L1-level confidence
+            (valueOf(l1OnlyMode)!=0 || !pendMissedL1[tlbReqIdx] || l1Confidence)
+        ) begin
             prefetchQ.enq(PendingPrefetch {
                 addr: resp.paddr,
                 cap: resp.cap,
-                nextLevel: isL1LevelConfidence(pendConfidence[tlbReqIdx]),
+                nextLevel: !l1Confidence,
                 auxData: CapChaserAuxData (CapChaserAuxDataT {
                     confidence: pendConfidence[tlbReqIdx]
                 `ifdef CAP_CHASER_COUNT_DEPTH
@@ -849,8 +873,8 @@ module mkL1CapChaserPrefetcher#(
             // Only train on non-CapChaser loads into the cache (includes demand loads and loads from other prefetchers).
             // We compound the confidence of chained loads, so we don't want to incorporate it into our baseline confidence.
             observedCLine.train = !(prefetchAuxData matches tagged CapChaserAuxData .* ? True : False);
-            // Always prefetch if in L1 only mode, otherwise only prefetch if this is a cache hit
-            observedCLine.prefetch = valueOf(l1OnlyMode)!=0 || !wasMiss;
+            // Remember if we missed: don't prefetch to L2 if in split mode.
+            observedCLine.missed = wasMiss;
             observedCLine.auxData = prefetchAuxData;
             for (Integer i = 0; i < 4; i = i + 1) begin
                 // Get the i'th capability (might not exist) from the cache line
@@ -871,6 +895,9 @@ module mkL1CapChaserPrefetcher#(
                 // we know that there's a capability.
                 Bool sizeMatch = extend(boundsLength) == getLength(cap);
                 CapPipe prefetchCap = (sizeMatch ? setOffset(cap, extend(atOffset)).value : cap);
+                // Get whether this exact capability has been demanded.
+                // It will then be prioritised by the prefetcher (and be given high confidence).
+                Bool demanded = !wasPrefetch && (addr[5:3] == fromInteger(i*2));
                 // We are interested in this capability if
                 // - It is tagged (obviously), and
                 // - It's size is within maxCapSizeToTrack, and
@@ -885,25 +912,26 @@ module mkL1CapChaserPrefetcher#(
                         cap: prefetchCap,
                         ptrTableIdxTag: pit,
                         trainingTableIdxTag: tit,
-                        sizeMatch: sizeMatch
+                        sizeMatch: sizeMatch,
+                        demanded: demanded
                     });
                 end else begin
                     observedCLine.caps[i] = Invalid;
                 end
             end
             // Print that we saw a capability
-            if (verbose) $display("%t CapChaser L1 reportCacheDataArrival wasPrefetch: %b, vbase: 0x%h, offset: 0x%h, length: 0x%h, train: %b, prefetch: %b, observedCLine: ",
+            if (verbose) $display("%t CapChaser L1 reportCacheDataArrival wasMiss: %b, wasPrefetch: %b, vbase: 0x%h, offset: 0x%h, length: 0x%h, train: %b, observedCLine: ",
                 $time,
+                wasMiss,
                 wasPrefetch,
                 boundsVirtBase,
                 boundsOffset,
                 boundsLength,
                 observedCLine.train,
-                observedCLine.prefetch,
                 fshow(observedCLine)
             );
             // Send off the observed caps for training and prefetching, if there are any
-            if ((observedCLine.train || observedCLine.prefetch) && any(isValid, observedCLine.caps)) begin
+            if (any(isValid, observedCLine.caps)) begin
                 observedCLineQ.enq(observedCLine);
             end
         end
@@ -984,7 +1012,7 @@ module mkLLCapChaserPrefetcher#(
     Add#(k__, TSub#(TLog#(maxCapSizeToTrack), 4), 64),
 
     // Beause of PrefetcherBroadcastData having fixed sizes
-    Log#(maxCapSizeToTrack, 8),
+    Log#(maxCapSizeToTrack, 9),
     Log#(ptrTableSets, 7)
 );
     Bool verbose = True;
@@ -1042,9 +1070,16 @@ module mkLLCapChaserPrefetcher#(
     endfunction
 
     // Function to get the next observed cap in queue
+    function Bool isDemanded(Maybe#(observedCapT) cap);
+        return (cap matches tagged Valid .c ? c.demanded : False);
+    endfunction
     function nextObservedCapIdx;
         if (observedCLineQ.notEmpty) begin
-            return findIndex(id, zipWith(\&& , map(isValid, observedCLineQ.first.caps), unprocessedObservedCap));
+            if (findIndex(id, zipWith(\&& , map(isDemanded, observedCLineQ.first.caps), unprocessedObservedCap)) matches tagged Valid .idx) begin
+                return Valid(idx);
+            end else begin
+                return findIndex(id, zipWith(\&& , map(isValid, observedCLineQ.first.caps), unprocessedObservedCap));
+            end
         end else begin
             return Invalid;
         end
@@ -1095,20 +1130,21 @@ module mkLLCapChaserPrefetcher#(
             CapPipe prefetchCap = (observedCap.sizeMatch ? observedCap.cap : setOffset(observedCap.cap, extend(entry.bestOffset << 4)).value);
             candidateQ.enq(CapChaserLLCandidatePrefetch{
                 cap: prefetchCap,
-                confidence: entry.confidence,
+                confidence: (observedCap.demanded ? ~0 : entry.confidence),
                 auxData: observedCLine.auxData
             });
         end
         ptrTable.deqRdResp;
 
         // Print that we observed a capability and are trying to prefetch
-        if (verbose) $display("%t CapChaser LL observed cap vbase: 0x%h, offset: 0x%h, length: 0x%h, ptIdxTag: 0x%h, sizeMatch: %b",
+        if (verbose) $display("%t CapChaser LL observed cap vbase: 0x%h, offset: 0x%h, length: 0x%h, ptIdxTag: 0x%h, sizeMatch: %b, demanded: %b",
             $time,
             getBase(observedCap.cap),
             getOffset(observedCap.cap),
             getLength(observedCap.cap),
             observedCap.ptrTableIdxTag,
-            observedCap.sizeMatch
+            observedCap.sizeMatch,
+            observedCap.demanded
         );
     endrule
 
@@ -1200,6 +1236,7 @@ module mkLLCapChaserPrefetcher#(
                 ptrTableIdxTagT pit = getPtrTableIdxTag(extend(atOffset), boundsLength);
                 Bool sizeMatch = extend(boundsLength) == getLength(cap);
                 CapPipe prefetchCap = (sizeMatch ? setOffset(cap, extend(atOffset)).value : cap);
+                Bool demanded = !wasPrefetch && (addr[5:3] == fromInteger(i*2));
                 if (d.tag && 
                     getLength(cap) <= fromInteger(valueOf(maxCapSizeToTrack)) && 
                     extend(boundsVirtBase) != getBase(cap) && 
@@ -1208,7 +1245,8 @@ module mkLLCapChaserPrefetcher#(
                     observedCLine.caps[i] = Valid (CapChaserLLObservedCap {
                         cap: prefetchCap,
                         ptrTableIdxTag: pit,
-                        sizeMatch: sizeMatch
+                        sizeMatch: sizeMatch,
+                        demanded: demanded
                     });
                 end else begin
                     observedCLine.caps[i] = Invalid;
@@ -1290,8 +1328,8 @@ module mkAllInCapPrefetcher2#(
 );
     Bool verbose = True;
 
-    Reg#(LineAddr) origLineAddr <- mkRegU;
-    Reg#(LineAddr) stopLineAddr <- mkReg(0);
+    Reg#(LineAddr) origLineAddr <- mkConfigRegU;
+    Reg#(LineAddr) stopLineAddr <- mkConfigReg(0);
     // Use EHRs so that a new prefetch overrules an ongoing prefetch
     Ehr#(2, Addr) nextPrefetchAddr <- mkEhr(0);
     Reg#(Addr) nextPrefetchAddr_ongoing = nextPrefetchAddr[0];
@@ -1299,6 +1337,7 @@ module mkAllInCapPrefetcher2#(
     Ehr#(2, CapPipe) prefetchCap <- mkEhr(?);
     Reg#(CapPipe) prefetchCap_ongoing = prefetchCap[0];
     Reg#(CapPipe) prefetchCap_new = prefetchCap[1];
+    Reg#(PrefetchAuxData) auxData <- mkConfigRegU;
     
     Reg#(Addr) prevBaseAddr1 <- mkRegU;
     Reg#(Addr) prevBaseAddr2 <- mkRegU;
@@ -1345,6 +1384,8 @@ module mkAllInCapPrefetcher2#(
             nextPrefetchAddr_new <= boundsBase + skipAmount;
             stopLineAddr <= getLineAddr(boundsTop);
             origLineAddr <= getLineAddr(addr);
+            // Keep any aux data from CapChaser to avoid infinite prefetch chaining
+            auxData <= (prefetchAuxData matches tagged CapChaserAuxData .* ? prefetchAuxData : NoPrefetchAuxData);
 
             // Create a capability for the prefetches
             CapPipe cap = almightyCap;
@@ -1383,7 +1424,7 @@ module mkAllInCapPrefetcher2#(
             addr: nextPrefetchAddr_ongoing,
             cap: prefetchCap_ongoing,
             nextLevel: False,
-            auxData: NoPrefetchAuxData
+            auxData: auxData
         };
     endmethod
 
