@@ -344,6 +344,9 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
                 branchRedirectCount <= branchRedirectCount +1;
                 $display("Staged Tage, redirectCount = %d, cycle = %d\n", branchRedirectCount, cur_cycle);
             end
+            else begin
+                $display("Redirect ALU %x", x.controlFlow.pc);
+            end
             doAssert(isValid(x.spec_tag), "mispredicted branch must have spec tag");
             inIfc.redirect(x.controlFlow.nextPc, validValue(x.spec_tag), x.tag, exeToFin.spec_bits);
             // must be a branch, train branch predictor

@@ -966,6 +966,12 @@ module mkFetchStage(FetchStage);
     (* fire_when_enabled, no_implicit_conditions *)
     rule doSpecRecover(isValid(decodeSpecRecover.wget) || isValid(aluSpecRecover.wget));
         SpecRecoverInfo update = fromMaybe(validValue(decodeSpecRecover.wget), aluSpecRecover.wget);
+        
+        if(isValid(aluSpecRecover.wget))
+            $display("TAGETEST Redirect ALU Cycle:%d\n", cur_cycle);
+        else
+            $display("TAGETEST Redirect Decode Cycle:%d\n", cur_cycle);
+
         dirPred.specRecover(update.specInfo, update.taken, update.nonBranch);
     endrule
 
