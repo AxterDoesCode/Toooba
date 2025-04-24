@@ -7,6 +7,7 @@ import sys
 
 inWidth = int(sys.argv[1])
 outWidth = int(sys.argv[2])
+maxValue = int(sys.argv[3], 0) if len(sys.argv) > 3 else (2**outWidth-1)
 
 with open(f"div_table_{inWidth}x{inWidth}to{outWidth}.bsvi", "w") as fout:
     fout.write ("// ***** This file was generated from a script *****\n")
@@ -31,7 +32,7 @@ with open(f"div_table_{inWidth}x{inWidth}to{outWidth}.bsvi", "w") as fout:
                 div = float(dividend) / float(divisor)
             div = div * (2**outWidth)
             div = round(div)
-            div = min(div, (2**outWidth-1))
+            div = min(div, maxValue)
             divstr = '{0:07b}'.format(div)
             print(dividend, divisor, divstr)
             #f.write("1111111\n")   
