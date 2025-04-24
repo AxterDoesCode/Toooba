@@ -1021,7 +1021,7 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
     Fifo#(1, Vector#(4, potentialPrefetchT)) ptLookupQueueReading <- mkPipelineFifo;
     Reg#(Vector#(4, Bool)) ptLookupUsedEntry <- mkReg(replicate(False));
 
-    Fifo#(32, PendingPrefetch) tlbLookupQueue <- mkOverflowPipelineFifo;
+    Fifo#(32, CapPipe) tlbLookupQueue <- mkOverflowPipelineFifo;
     Fifo#(16, PendingPrefetch) prefetchQueue <- mkOverflowBypassFifo;
     Reg#(Bit#(8)) randomCounter <- mkConfigReg(0);
     Reg#(LineAddr) lastLookupLineAddr <- mkReg(0);
@@ -1107,7 +1107,7 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
     endrule
 
     rule doPtReadForUpgrade;
-        if (`VERBOSE) $display("%t Prefetcher doPtReadForUpgrade", $time);
+        //if (`VERBOSE) $display("%t Prefetcher doPtReadForUpgrade", $time);
         let {pit, boundsOffset} = ptUpgradeQueue.first;
         ptUpgradeQueue.deq;
         ptUpgradeQueueReading.enq(tuple2(pit, boundsOffset));
@@ -1141,7 +1141,7 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
 
     (* descending_urgency = "doPtReadForUpgrade, doPtReadForLookup" *)
     rule doPtReadForLookup;
-        $display("%t doPtReadForLookup", $time);
+        //$display("%t doPtReadForLookup", $time);
         let pitVec = ptLookupQueue.first;
         ptLookupQueue.deq;
         ptLookupQueueReading.enq(pitVec);
@@ -1169,7 +1169,7 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
     endfunction
 
     rule deqPtRdResp if (!canDoAnyPrefetch);
-        $display("%t deqPtRdResp", $time, fshow(ptLookupQueueReading.first), fshow(pt.rdResp), fshow (ptLookupUsedEntry));
+        //$display("%t deqPtRdResp", $time, fshow(ptLookupQueueReading.first), fshow(pt.rdResp), fshow (ptLookupUsedEntry));
         pt.deqRdResp;
         ptLookupQueueReading.deq;
         ptLookupUsedEntry <= replicate(False);
@@ -1180,7 +1180,7 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
         //downgrade pte with some chance
         let ppVec = ptLookupQueueReading.first;
         let pteVec = pt.rdResp;
-        if (`VERBOSE) $display("%t Prefetcher processPtReadForLookup ", $time, fshow(ptLookupUsedEntry), fshow(pteVec));
+        //if (`VERBOSE) $display("%t Prefetcher processPtReadForLookup ", $time, fshow(ptLookupUsedEntry), fshow(pteVec));
         let prefetchIdx = findIndex(canPrefetch, zip4(ptLookupUsedEntry, pteVec, map(tpl_1, ppVec), map(tpl_3, ppVec)));
         if (prefetchIdx matches tagged Valid .idx) begin
             let pte = pteVec[idx];
@@ -1189,17 +1189,12 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
             //Addr offset = 0;
             let cap = setOffset(tpl_2(ppVec[idx]), offset).value;
             if (`VERBOSE) $display("%t Prefetcher processPtReadForLookup canprefetch pit %h table tag %h read tag %h target vaddr %h offset %h", $time, pit, pte.tag, ptrTableTagT'{truncateLSB(pit)}, getAddr(cap), offset);
-            tlbLookupQueue.enq(PendingPrefetch {
-                addr: ?,
-                cap: cap,
-                nextLevel: False,
-                auxData: NoPrefetchAuxData
-            });
+            tlbLookupQueue.enq(cap);
             ptLookupUsedEntry[idx] <= True;
             if (randomCounter == 0) begin
                 pte.state = downgrade(pte.state);
                 pt.wrReq(truncate(pit), pte);
-                if (`VERBOSE) $display("%t Prefetcher processPtReadForLookup %h downgrading to ", $time, pit, fshow(pte.state));
+                //if (`VERBOSE) $display("%t Prefetcher processPtReadForLookup %h downgrading to ", $time, pit, fshow(pte.state));
             end
             EventsPrefetcher evt = unpack(0);
             evt.evt_1 = 1;
@@ -1212,26 +1207,31 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
         end
     endrule
         
-        /*
     rule doTlbLookup;
         let cap = tlbLookupQueue.first;
         tlbLookupQueue.deq;
-        toTlb.prefetcherReq(cap);
+        toTlb.prefetcherReq(PrefetcherReqToTlb {
+            cap: cap,
+            id: ? // stateless
+        });
     endrule
 
     rule getTlbResp;
         let resp = toTlb.prefetcherResp;
         toTlb.deqPrefetcherResp;
         if (`VERBOSE) $display("%t Prefetcher got TLB response: ", $time, fshow(resp));
-        if (!resp.haveException && resp.prefetch.addr != 0) begin
-            prefetchQueue.enq(resp.prefetch);
+        if (!resp.haveException && resp.paddr != 0) begin
+            prefetchQueue.enq(PendingPrefetch {
+                addr: resp.paddr,
+                cap: resp.cap,
+                nextLevel: False,
+                auxData: NoPrefetchAuxData
+            });
             // EventsPrefetcher evt = unpack(0);
             // evt.evt_3 = 1;
             // perf_events[3] <= evt;
         end
-    endrule
-    */
-    
+    endrule    
 
     method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
         //Lookup addr in training table, if get a hit, update ptrTable
@@ -1318,7 +1318,7 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
     endmethod
 
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
-        if (`VERBOSE) $display("%t Prefetcher getNextPrefetchAddr %h", $time, prefetchQueue.first);
+        //if (`VERBOSE) $display("%t Prefetcher getNextPrefetchAddr %h", $time, prefetchQueue.first);
         prefetchQueue.deq;
         return prefetchQueue.first;
     endmethod
