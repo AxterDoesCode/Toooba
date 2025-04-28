@@ -215,11 +215,11 @@ module mkL1CapChaserPrefetcher#(
     NumAlias#(ptrTableSets, TDiv#(ptrTableSize, ptrTableWays)),
     // The tables are indexed by hashes, so access is already inexact.
     // Choose how much tag to store to tradeoff storage vs accuracy.
-    NumAlias#(ptrTableTagBits, 12),
+    NumAlias#(ptrTableTagBits, 4),
     NumAlias#(ptrTableIdxBits, TLog#(ptrTableSets)),
     NumAlias#(ptrTableIdxTagBits, TAdd#(ptrTableIdxBits, ptrTableTagBits)),
     NumAlias#(ptrTableWayBits, TLog#(ptrTableWays)),
-    NumAlias#(trainingTableTagBits, 12),
+    NumAlias#(trainingTableTagBits, 4),
     NumAlias#(trainingTableIdxBits, TLog#(trainingTableSize)),
     NumAlias#(trainingTableIdxTagBits, TAdd#(trainingTableIdxBits, trainingTableTagBits)),
     // The following provisos are needed for hashing to work
@@ -354,7 +354,7 @@ module mkL1CapChaserPrefetcher#(
 
     // Hashing functions to produce the index/tags 
     function ptrTableIdxTagT getPtrTableIdxTag(Addr boundsOffset, Addr boundsLength);
-        return hash((boundsOffset >> 4) ^ (boundsLength >> 4) ^ (boundsLength << 4));
+        return hash((boundsOffset >> 4) ^ (boundsLength >> 4) ^ boundsLength);
     endfunction
     function trainingTableIdxTagT getTrainingTableIdxTag(Addr boundsLength, Addr boundsVirtBase);
         let bvb = boundsVirtBase >> 4;
@@ -363,7 +363,7 @@ module mkL1CapChaserPrefetcher#(
         // If there is lower-granuality consistent alignment then the training table will be underutilised (this is really not ideal)
         // If there is high-granuality consistent alignment (16-byte) then there will be some aliasing (this is fine really)
         Addr hashBvb = {bvb[1:0], truncateLSB(bvb)};
-        return hash(hashBvb ^ (boundsLength >> 4) ^ (boundsLength << 4));
+        return hash(hashBvb ^ (boundsLength >> 4) ^ boundsLength);
     endfunction
     
     // Confidence-checking functions
@@ -971,7 +971,7 @@ module mkLLCapChaserPrefetcher#(
     // We only have a pointer table in the L2 cache
     NumAlias#(ptrTableWays, 2),
     NumAlias#(ptrTableSets, TDiv#(ptrTableSize, ptrTableWays)),
-    NumAlias#(ptrTableTagBits, 12),
+    NumAlias#(ptrTableTagBits, 4),
     NumAlias#(ptrTableIdxBits, TLog#(ptrTableSets)),
     NumAlias#(ptrTableIdxTagBits, TAdd#(ptrTableIdxBits, ptrTableTagBits)),
     NumAlias#(ptrTableWayBits, TLog#(ptrTableWays)),

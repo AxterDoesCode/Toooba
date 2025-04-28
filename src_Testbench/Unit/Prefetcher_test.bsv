@@ -1047,7 +1047,7 @@ endmodule
 
 module mkPrefetcherVectorTest(Empty);
     Parameter#(2) lines <- mkParameter;
-    PrefetcherVector#(3) p <- mkPrefetcherVector(mkNextLineOnMissPrefetcher(lines));
+    PrefetcherVector#(3) p <- mkCheriPrefetcherVector(mkNextLineOnMissPrefetcher(lines));
     mkAutoFSM(
         seq
             action p.reportAccess(1, 'h90000000, MISS); endaction

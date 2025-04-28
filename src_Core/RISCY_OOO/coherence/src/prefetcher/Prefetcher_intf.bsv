@@ -50,7 +50,7 @@ typedef struct {
 /* Cap chaser training data. Essentially just a CapChaserLLPtEntry */
 typedef struct {
     Bit#(7) ptrTableIdx;
-    Bit#(12) ptrTableTag;
+    Bit#(4) ptrTableTag;
     Bit#(1) ptrTableWay;
     Bit#(7) confidence;
     Bit#(5) bestOffset; // maximum 512-byte tracked cap size  
