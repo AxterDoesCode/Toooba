@@ -41,7 +41,7 @@ typedef 11 PCIndexSz;
 typedef Bit#(PCIndexSz) PCIndex;
 
 // We group several sat counters/local hists together in order to flush faster
-typedef 9 TabIndexSz;
+typedef 10 TabIndexSz;
 typedef Bit#(TabIndexSz) TabIndex;
 
 // vector of local hists
