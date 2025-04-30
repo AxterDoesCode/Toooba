@@ -497,6 +497,11 @@ module mkFetchStage(FetchStage);
         end
 
         Vector#(SupSizeX2, DirPredSpecInfo) recoverInfo = dirPred.getSpec(mask);
+
+        for(Integer i = 0; i < valueOf(SupSizeX2) && fromInteger(i) <= posLastSupX2; i = i + 1) begin
+            $display("TAGETEST %x, ooIndex: %d, Fast predictions: %b %d\n",  pc + fromInteger(2*i) , recoverInfo[i] ,pack(fastPredictions[i].train), fastPredictions[i].taken);
+
+        end
         
         `ifdef DEBUG_TAGETEST
         $display("FETCH1 %x, Cycle: %d last inst: %d branch count: %d", pc, cur_cycle, posLastSupX2, count);
@@ -855,6 +860,7 @@ module mkFetchStage(FetchStage);
                      $display("DECODE NAP TRAIN %x\n", last_x16_pc);
                      `endif
                      if(decode_result.dInst.iType != Br) begin
+                        $display("Decode redirect non branch: %x\n", last_x16_pc);
                         trainNAP = Valid (TrainNAP {pc: last_x16_pc, nextPc: decode_pred_next_pc, branch: False});
                         recover = tagged Valid tuple3(dir_spec, False, True);
                      end
@@ -960,6 +966,12 @@ module mkFetchStage(FetchStage);
     (* fire_when_enabled, no_implicit_conditions *)
     rule doSpecRecover(isValid(decodeSpecRecover.wget) || isValid(aluSpecRecover.wget));
         SpecRecoverInfo update = fromMaybe(validValue(decodeSpecRecover.wget), aluSpecRecover.wget);
+        
+        if(isValid(aluSpecRecover.wget))
+            $display("TAGETEST Redirect ALU Cycle:%d\n", cur_cycle);
+        else
+            $display("TAGETEST Redirect Decode Cycle:%d\n", cur_cycle);
+
         dirPred.specRecover(update.specInfo, update.taken, update.nonBranch);
     endrule
 

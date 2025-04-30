@@ -32,7 +32,7 @@ module mkTageTest(DirPredictor#(TageTrainInfo#(`NUM_TABLES), TageSpecInfo, TageT
     Reg#(Bool) starting <- mkReg(True);
     Tage#(7) tage <- mkTage;
 
-    `ifdef DEBUG_TAGETEST
+    `ifdef DEBUG_TAGE
     Reg#(UInt#(64)) predCount <- mkReg(0);
     Reg#(UInt#(64)) misPredCount <- mkReg(0);
     `endif
@@ -42,7 +42,7 @@ module mkTageTest(DirPredictor#(TageTrainInfo#(`NUM_TABLES), TageSpecInfo, TageT
     `endif
 
     method Action update(Bool taken, TageTrainInfo#(`NUM_TABLES) train, Bool mispred);
-        `ifdef DEBUG_TAGETEST
+        `ifdef DEBUG_TAGE
         if(train.confirmed) begin // Take account of this
             predCount <= predCount+1;
             if(mispred)

@@ -306,7 +306,7 @@ module mkTage(Tage#(numTables)) provisos(
         Maybe#(TableIndex#(numTables)) ret = tagged Invalid;
         
         if(train.provider_info matches tagged Valid .inf &&& inf.provider_table == fromInteger(valueOf(numTables)-1)) begin
-            `ifdef DEBUG_TAGETEST
+            `ifdef DEBUG_TAGE
                 $display("Do Nothing\n");
             `endif
         end
@@ -322,7 +322,7 @@ module mkTage(Tage#(numTables)) provisos(
             Bit#(numTables) tabsReplaceable = (train.replaceableEntries >> start) << start;
             if(tabsReplaceable == 0) begin
                 // Decrement all counters as in original TAGE, worried about the circuitry there
-                `ifdef DEBUG_TAGETEST
+                `ifdef DEBUG_TAGE
                     $display("TAGETEST DECREMENT ENTRIES FOR %x %b %d\n",train.pc, train.replaceableEntries, start);
                 `endif
                 for(Integer i = 0; i < valueOf(numTables); i = i + 1) begin    
@@ -359,7 +359,7 @@ module mkTage(Tage#(numTables)) provisos(
                     end
                 end
 
-                `ifdef DEBUG_TAGETEST
+                `ifdef DEBUG_TAGE
                     Bit#(20) index = 0;
                     Bit#(`MAX_TAGGED) tag = 0;
                     let tab = taggedTablesVector[ind];
@@ -393,7 +393,7 @@ module mkTage(Tage#(numTables)) provisos(
             `CASE_ALL_TABLES(providerTable, (*/ t.updateEntry(info.index, entry, taken, u); /*))
 
             // ALT_ON_NA
-            `ifdef DEBUG_TAGETEST
+            `ifdef DEBUG_TAGE
                 if(train.alt_table matches tagged Valid .alt_t) begin
                 $display("TAGETEST UPDATE ALT PRED TABLE %d\n", alt_t);
                 end
@@ -429,7 +429,7 @@ module mkTage(Tage#(numTables)) provisos(
             //ooBuff.specAssignConfirmed(num);
 
             if(num != 0) begin
-                `ifdef DEBUG_TAGETEST   
+                `ifdef DEBUG_TAGE   
                 $display("TAGETEST Update history, cycle %d\n", cur_cycle);
                 $display("TAGETEST Global %b\n", global.history);
                 `endif
@@ -456,8 +456,9 @@ module mkTage(Tage#(numTables)) provisos(
             if(!specUpdate.nonBranch)
                 global.updateRecoveredHistory(pack(specUpdate.taken));
 
-            `ifdef DEBUG_TAGETEST   
+            `ifdef DEBUG_TAGE   
                 $display("TAGETEST Recovery by %d Misprediction on %d, cycle %d %d\n", numBits, specUpdate.specInfo.ooIndex, cur_cycle, specUpdate.nonBranch);
+                $display("TAGETEST (Recover) Global %b\n", global.history);
             `endif
             for (Integer i = 0; i < valueOf(numTables); i = i +1) begin
                 let tab = taggedTablesVector[i];
@@ -505,7 +506,7 @@ module mkTage(Tage#(numTables)) provisos(
                 )
             end
             
-            `ifdef DEBUG_TAGETEST
+            `ifdef DEBUG_TAGE
             $display("TAGETEST Pred1 on %x\n", in.pc);
             `endif
 
@@ -539,11 +540,11 @@ module mkTage(Tage#(numTables)) provisos(
         rule predStageTwo(pred1ToPred2[i] matches tagged Valid .in);
             match {.ret, .pc} = in.res.result;
             
-            `ifdef DEBUG_TAGETEST
+            `ifdef DEBUG_TAGE
             $display("TAGETEST Pred2 on %x\n", pc);
             `endif
 
-            `ifdef DEBUG_TAGETEST
+            `ifdef DEBUG_TAGE
                 $display("TAGETEST LFSR %d\n", lfsr.value);
                 $display("TAGETEST ALT_ON_NA %d\n", alt_on_na);
             `endif
@@ -579,7 +580,7 @@ module mkTage(Tage#(numTables)) provisos(
                 Bool prediction = takenFromCounter(pred_entry.predictionCounter);
                 ret.provider_prediction = prediction;
 
-                `ifdef DEBUG_TAGETEST
+                `ifdef DEBUG_TAGE
                     $display("TAGETEST TABLE INDEX %d %d %d\n",pred_index, pred_table_index, pred_entry.tag);
                 `endif
                 
@@ -588,7 +589,7 @@ module mkTage(Tage#(numTables)) provisos(
                 if (altpred matches tagged Valid {.alt_index, .alt_entry}) begin
                     ret.alt_table = tagged Valid alt_index;
 
-                    `ifdef DEBUG_TAGETEST
+                    `ifdef DEBUG_TAGE
                     $display("TAGETEST ALT ENTRY %d tag:%d\n", alt_index, alt_entry.tag);
                     `endif
                     
@@ -613,9 +614,7 @@ module mkTage(Tage#(numTables)) provisos(
                 end
             end
             else begin
-                `ifdef DEBUG_TAGETEST
-                    $display("TAGETEST USE BIMODAL\n");
-                `endif
+                
                 ret.alt_table = tagged Invalid;
                 ret.provider_info = tagged Invalid;
                 ret.use_alt = False;
@@ -623,9 +622,12 @@ module mkTage(Tage#(numTables)) provisos(
                 Bool prediction = unpack(pack(ret.bimodal_prediction.pred));
                 ret.provider_prediction = prediction;
                 ret.taken = prediction;
+                `ifdef DEBUG_TAGE
+                    $display("TAGETEST USE BIMODAL %d %d\n", prediction, ret.bimodal_prediction);
+                `endif
             end
 
-            `ifdef DEBUG_TAGETEST   
+            `ifdef DEBUG_TAGE   
                 $display("TAGETEST Prediction on: %x,%d, Taken: %d, cycle %d\n", ret.pc , i, ret.taken, cur_cycle);
             `endif
 
@@ -639,7 +641,7 @@ module mkTage(Tage#(numTables)) provisos(
                 decode_epoch: in.decode_epoch
             };
 
-            `ifdef DEBUG_TAGETEST
+            `ifdef DEBUG_TAGE
             $display("Pred3 on %x\n", result.pc);
             `endif
             
@@ -663,7 +665,7 @@ module mkTage(Tage#(numTables)) provisos(
             if(toEnq[i] matches tagged Valid .res) begin
                 if(resultFifo.enqS[i].canEnq) begin
                     resultFifo.enqS[i].enq(res);
-                    `ifdef DEBUG_TAGETEST
+                    `ifdef DEBUG_TAGE
                     $display("TAGETEST Enqueued on %x, port %d\n", res.result.pc, i);
                     `endif
                 end
@@ -728,7 +730,7 @@ module mkTage(Tage#(numTables)) provisos(
                 
                 currentPred[i] <= currentPred[i]+1;
 
-                `ifdef DEBUG_TAGETEST
+                `ifdef DEBUG_TAGE
                 $display("TAGETEST Pred called on %x, Taken: %d, Cycle:%d\n", result.pc, result.taken, cur_cycle);
                 `endif
 
@@ -743,14 +745,14 @@ module mkTage(Tage#(numTables)) provisos(
                 (* split *)
                 if(mispred) (* nosplit *) begin
                     // Retrieve allocation information for next update.
-                    `ifdef DEBUG_TAGETEST
+                    `ifdef DEBUG_TAGE
                     $display("TAGETEST Misprediction on %x, Actual: %d, Predicted:%d, cycle %d\n", train.pc, cur_cycle, taken, train.taken);
                     `endif
                     allocate(train, taken);
                     updateWithTrain(taken, train, mispred);
                 end
                 else (* nosplit *) begin
-                    `ifdef DEBUG_TAGETEST
+                    `ifdef DEBUG_TAGE
                     $display("TAGETEST correct prediction on %x, cycle %d\n", train.pc, cur_cycle);
                     `endif
                     updateWithTrain(taken, train, mispred);

@@ -659,6 +659,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
          let trap_updates <- csrf.trap(trap.trap, trap.pc, trap.addr, trap.orig_inst);
          redirectQ.enq(trap_updates.new_pc);
          specRecoverQ.enq(trap.spec_info);
+         $display("Redirect caused by trap on %x\n", trap.pc);
 
 `ifdef INCLUDE_TANDEM_VERIF
        fa_to_TV (way0, rg_serial_num,
@@ -695,6 +696,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         inIfc.killAll;
         redirectQ.enq(x.pc);
         specRecoverQ.enq(x.spec_info);
+        $display("Redirect caused by killed load on %x\n", x.pc);
         inIfc.incrementEpoch;
 
         // the killed Ld should have claimed phy reg, we should not commit it;
@@ -799,6 +801,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         end
         redirectQ.enq(next_pc);
         specRecoverQ.enq(x.spec_info);
+        $display("Redirect caused by system instruction on %x\n", x.pc);
 
 `ifdef INCLUDE_TANDEM_VERIF
         fa_to_TV (way0, rg_serial_num,
@@ -1118,7 +1121,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 
     rule pass_redirect;
         inIfc.redirectPc(redirectQ.first);
-        inIfc.recover_spec(specRecoverQ.first);
+        //inIfc.recover_spec(specRecoverQ.first);
         redirectQ.deq;
         specRecoverQ.deq;
     endrule
