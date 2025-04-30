@@ -1,4 +1,4 @@
-// Copyright (c) 2024 Karlis Susters 
+// Copyright (c) 2025 Louis Hobson 
 //
 // Permission is hereby granted, free of charge, to any person
 // obtaining a copy of this software and associated documentation
@@ -231,8 +231,6 @@ module mkL1CapChaserPrefetcher#(
     // 2-4 confidence bits are sensible
     // Regardless, needs to be less bits than the LFSR for RNG
     NumAlias#(ptrTableConfBits, 4),  
-    Add#(ptrTableConfBits, e__, 8), 
-    Add#(2, f__, ptrTableConfBits),
 
     // The number of bits for the fixed point confidence divide
     // You can't just change this number. It is hard coded in the division table
@@ -283,7 +281,8 @@ module mkL1CapChaserPrefetcher#(
 
     // Because CapChaserTrainingDataT has fixed size for ptIdxTag :(
     Log#(ptrTableSize, 8),
-    Log#(maxCapSizeToTrack, 9)
+    Log#(maxCapSizeToTrack, 9),
+    Add#(m__, 7, ptrTableIdxTagBits)
 );
     Bool verbose = True;
 
@@ -319,7 +318,7 @@ module mkL1CapChaserPrefetcher#(
     // candidateQ can't really be bypass: when dequeued, it sends a TLB request, which is a quite heavy operation. 
     // prefetchQ is probably fine to be bypass, however.
     Fifo#(8, candidatePrefetchT) candidateQ <- mkOverflowPipelineFifo;
-    Fifo#(1, PrefetcherTlbReqIdx) confidenceMultQ <- mkPipelineFifo;
+    Fifo#(1, LLCTlbReqIdx) confidenceMultQ <- mkPipelineFifo;
     Fifo#(16, PendingPrefetch) prefetchQ <- mkOverflowBypassFifo;
 
     // Queue for preparing and sending broadcasts
@@ -327,17 +326,17 @@ module mkL1CapChaserPrefetcher#(
     Fifo#(8, PrefetcherBroadcastData) broadcastQ <- mkOverflowPipelineFifo;
 
     // Registers for pending TLB requests
-    Vector#(PrefetcherTlbReqNum, Reg#(Bool)) pendConfidenceReady <- replicateM(mkRegU);
-    Vector#(PrefetcherTlbReqNum, Reg#(Bool)) pendMissedL1 <- replicateM(mkRegU);
-    Vector#(PrefetcherTlbReqNum, Reg#(Bit#(fixPointConfBits))) pendConfidence <- replicateM(mkRegU);
-    Vector#(PrefetcherTlbReqNum, Reg#(PrefetchAuxData)) pendAuxData <- replicateM(mkRegU);
-    Fifo#(PrefetcherTlbReqNum, PrefetcherTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
+    Vector#(LLCTlbReqNum, Reg#(Bool)) pendConfidenceReady <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(Bool)) pendMissedL1 <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(Bit#(fixPointConfBits))) pendConfidence <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(PrefetchAuxData)) pendAuxData <- replicateM(mkRegU);
+    Fifo#(LLCTlbReqNum, LLCTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
     
     // Init registers 
     Reg#(Bool) ptrTableInited <- mkConfigReg(False);
     Reg#(Bool) trainingTableInited <- mkConfigReg(False);
     Reg#(Bool) tlbReqFreeQInited <- mkConfigReg(False);
-    Reg#(PrefetcherTlbReqIdx) tlbReqFreeQInitCount <- mkReg(0);
+    Reg#(LLCTlbReqIdx) tlbReqFreeQInitCount <- mkReg(0);
     Reg#(Bit#(TAdd#(ptrTableIdxBits, ptrTableWayBits))) ptrTableInitCount <- mkReg(0);
     Reg#(Bit#(trainingTableIdxBits)) trainingTableInitCount <- mkReg(0);
 
@@ -1039,14 +1038,14 @@ module mkLLCapChaserPrefetcher#(
     // Registers for pending TLB requests
     // The confidence is ready a cycle after sending the TLB request, so we don't
     // need to flag whether it's ready or not.
-    Vector#(PrefetcherTlbReqNum, Reg#(Bit#(fixPointConfBits))) pendConfidence <- replicateM(mkRegU);
-    Vector#(PrefetcherTlbReqNum, Reg#(PrefetchAuxData)) pendAuxData <- replicateM(mkRegU);
-    Fifo#(PrefetcherTlbReqNum, PrefetcherTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
+    Vector#(LLCTlbReqNum, Reg#(Bit#(fixPointConfBits))) pendConfidence <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(PrefetchAuxData)) pendAuxData <- replicateM(mkRegU);
+    Fifo#(LLCTlbReqNum, LLCTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
     
     // Init registers 
     Reg#(Bool) ptrTableInited <- mkConfigReg(False);
     Reg#(Bool) tlbReqFreeQInited <- mkConfigReg(False);
-    Reg#(PrefetcherTlbReqIdx) tlbReqFreeQInitCount <- mkReg(0);
+    Reg#(LLCTlbReqIdx) tlbReqFreeQInitCount <- mkReg(0);
     Reg#(Bit#(TAdd#(ptrTableIdxBits, ptrTableWayBits))) ptrTableInitCount <- mkReg(0);
 
     // We don't need to remember the last accessed capability in the L2: we're not doing any training.
@@ -1054,9 +1053,8 @@ module mkLLCapChaserPrefetcher#(
 
     // Hashing function to produce the index/tag the pointer table
     // Needs to be the same as the L1, obviously
-    // Hashing functions to produce the index/tags 
     function ptrTableIdxTagT getPtrTableIdxTag(Addr boundsOffset, Addr boundsLength);
-        return hash((boundsOffset >> 4) ^ (boundsLength >> 4) ^ (boundsLength << 4));
+        return hash((boundsOffset >> 4) ^ (boundsLength >> 4) ^ boundsLength);
     endfunction
 
     // We only need to check L2 confidence here

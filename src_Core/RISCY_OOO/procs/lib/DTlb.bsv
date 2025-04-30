@@ -91,6 +91,7 @@ typedef struct {
 typedef struct {
     Vpn vpn;
     DTlbReqIdx id;
+    Bool isPrefetch;
 } DTlbRqToP deriving(Bits, Eq, FShow);
 
 typedef struct {
@@ -344,9 +345,6 @@ module mkDTlb#(
                              "; ", fshow(trans_addr));
                 end
             end 
-            else if(pRs.entry == TlbDisabled) begin
-                doAssert(True, "L2TLB should not be disabled if TLB sent a request");
-            end 
             else begin
                 // page fault
                 Exception fault = permCheck.excCode;
@@ -356,6 +354,9 @@ module mkDTlb#(
                 end
             end
         end
+        else if(pRs.entry == TlbDisabled) begin
+            doAssert(True, "L2TLB should not be disabled if TLB sent a request");
+        end 
         else begin
             // page fault
             Exception fault = r.write ? excStorePageFault : excLoadPageFault;
@@ -619,7 +620,8 @@ module mkDTlb#(
                     pendWait[idx] <= WaitParent;
                     rqToPQ.enq(DTlbRqToP {
                         vpn: vpn,
-                        id: idx
+                        id: idx,
+                        isPrefetch: isValid(pendPrefetchInst[idx])
                     });
                     if(verbose) begin
                         $display("[DTLB] req miss, send to parent: idx %d, ",

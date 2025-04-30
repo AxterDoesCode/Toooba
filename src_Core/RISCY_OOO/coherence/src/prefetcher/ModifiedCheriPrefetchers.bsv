@@ -1,4 +1,5 @@
 // Copyright (c) 2024 Karlis Susters 
+// Copyright (c) 2025 Louis Hobson
 //
 // Permission is hereby granted, free of charge, to any person
 // obtaining a copy of this software and associated documentation

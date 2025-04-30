@@ -51,19 +51,20 @@ typedef Bit#(TLog#(L2TlbReqNum)) L2TlbReqIdx;
 `ifndef PREFETCHER_TLB_REQ_NUM
     `define PREFETCHER_TLB_REQ_NUM 4
 `endif
-typedef `PREFETCHER_TLB_REQ_NUM PrefetcherTlbReqNum;
-typedef Bit#(TLog#(PrefetcherTlbReqNum)) PrefetcherTlbReqIdx;
-typedef Bit#(TAdd#(TLog#(PrefetcherTlbReqNum),TLog#(CoreNum))) CombinedLLCTlbReqIdx;
+typedef `PREFETCHER_TLB_REQ_NUM LLCTlbReqNum;
+typedef Bit#(TLog#(LLCTlbReqNum)) LLCTlbReqIdx;
+typedef Bit#(TLog#(CoreNum)) LLCTlbId;
+typedef Bit#(TAdd#(TLog#(LLCTlbReqNum),TLog#(CoreNum))) CombinedLLCTlbReqIdx;
 
 // prefetcher req/resp with L1 TLB
 typedef struct {
     CapPipe cap;
-    PrefetcherTlbReqIdx id;
+    LLCTlbReqIdx id;
 } PrefetcherReqToTlb deriving (Bits, Eq, FShow);
 typedef struct {
     Addr paddr;
     CapPipe cap;
-    PrefetcherTlbReqIdx id;
+    LLCTlbReqIdx id;
     Bool haveException;
     Bool permsCheckPass;
 } TlbRespToPrefetcher deriving (Bits, Eq, FShow);

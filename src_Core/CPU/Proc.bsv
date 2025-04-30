@@ -164,11 +164,19 @@ module mkProc (Proc_IFC);
    endrule
 
    // ================================================================
-   // LLC tlb to L2 tlb
+   // Prefetcher tlb to Core
 
-   Vector#(CoreNum, ParentToLLCTlb#(PrefetcherTlbReqIdx)) toLLCTlbs = ?;
+   Vector#(CoreNum, ParentToLLCTlb#(LLCTlbReqIdx)) toLLCTlbs = ?;
    for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
       toLLCTlbs[i] = core[i].toLLCTlb;
+      rule flushLLCTlb;
+         core[i].shouldFlushLLCTlb; // Creates an implicit condition 
+         llc.flushTlb(fromInteger(i));
+      endrule
+      rule updateLLCTlbVMInfo;
+         let vmInfo <- core[i].shouldUpdateLLCTlbVMInfo; // Creates an implicit condition 
+         llc.updateTlbVMInfo(fromInteger(i), vmInfo);
+      endrule
    end
    let llc_tlb_connect <- mkLLCTlbConnect(llc.to_tlb, toLLCTlbs);
    

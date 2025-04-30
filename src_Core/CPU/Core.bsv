@@ -176,8 +176,10 @@ interface Core;
     // coherent caches to LLC
     interface ChildCacheToParent#(L1Way, void) dCacheToParent;
     interface ChildCacheToParent#(L1Way, void) iCacheToParent;
-    // L2Tlb to LLC tlb
-    interface ParentToLLCTlb#(PrefetcherTlbReqIdx) toLLCTlb;
+    // Core to Prefetcher TLB in the LLC
+    interface ParentToLLCTlb#(LLCTlbReqIdx) toLLCTlb;
+    method Action shouldFlushLLCTlb;
+    method ActionValue#(VMInfo) shouldUpdateLLCTlbVMInfo;
     // DMA to LLC
     interface TlbMemClient tlbToMem;
     // MMIO
@@ -554,14 +556,16 @@ module mkCore#(CoreId coreId)(Core);
 
     // L2 TLB
     L2Tlb l2Tlb <- mkL2Tlb;
-    Fifo#(2, LLCTlbRqToP#(PrefetcherTlbReqIdx)) rqFromLLCTlbQ <- mkCFFifo;
-    Fifo#(2, LLCTlbRsFromP#(PrefetcherTlbReqIdx)) rsToLLCTlbQ <- mkCFFifo;
+    Fifo#(1, LLCTlbRqToP#(LLCTlbReqIdx)) rqFromLLCTlbQ <- mkCFFifo;
+    Fifo#(1, LLCTlbRsFromP#(LLCTlbReqIdx)) rsToLLCTlbQ <- mkCFFifo;
     mkTlbConnect(iTlb.toParent, dTlb.toParent, toFifoDeq(rqFromLLCTlbQ), toFifoEnq(rsToLLCTlbQ), l2Tlb.toChildren);
 
     // flags to flush
-    Reg#(Bool)  flush_tlbs <- mkReg(False);
-    Reg#(Bool)  update_vm_info <- mkReg(False);
-    Reg#(Bool)  flush_reservation <- mkReg(False);
+    Reg#(Bool) flush_tlbs <- mkReg(False);
+    Reg#(Bool) flush_llctlb <- mkReg(False);
+    Reg#(Bool) update_vm_info <- mkReg(False);
+    Reg#(Maybe#(VMInfo)) update_llctlb_vm_info <- mkReg(Invalid);
+    Reg#(Bool) flush_reservation <- mkReg(False);
 
 `ifdef SECURITY_OR_INCLUDE_GDB_CONTROL
     Reg#(Bool)  flush_caches <- mkReg(False);
@@ -678,6 +682,7 @@ module mkCore#(CoreId coreId)(Core);
         method setFlushTlbs;
            action
               flush_tlbs <= True;
+              flush_llctlb <= True;
               // $display ("%0d: %m.commitInput.setFlushTlbs", cur_cycle);
            endaction
         endmethod
@@ -814,6 +819,7 @@ module mkCore#(CoreId coreId)(Core);
             iTlb.updateVMInfo(vmI);
             dTlb.updateVMInfo(vmD);
             l2Tlb.updateVMInfo(vmI, vmD);
+            update_llctlb_vm_info <= Valid(vmD);
            // $display ("%0d: %m.rule prepareCachesAndTlbs: updating VMInfo", cur_cycle);
         end
     endrule
@@ -1572,9 +1578,21 @@ module mkCore#(CoreId coreId)(Core);
     interface iCacheToParent = iMem.to_parent;
 
     interface ParentToLLCTlb toLLCTlb;
-        interface rqFromLLCTlb = toFifoEnq(rqFromLLCTlbQ);
-        interface rsToLLCTlb = toFifoDeq(rsToLLCTlbQ);
+        interface Server lookup;
+            interface request = toPut(rqFromLLCTlbQ);
+            interface response = toGet(rsToLLCTlbQ);
+        endinterface
     endinterface
+
+    method Action shouldFlushLLCTlb if (flush_llctlb);
+        flush_llctlb <= False;
+    endmethod
+    method ActionValue#(VMInfo) shouldUpdateLLCTlbVMInfo if (
+        update_llctlb_vm_info matches tagged Valid .vmInfo
+    );
+        update_llctlb_vm_info <= Invalid; 
+        return vmInfo;
+    endmethod
 
     interface tlbToMem = l2Tlb.toMem;
 

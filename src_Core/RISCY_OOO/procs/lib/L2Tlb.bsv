@@ -88,11 +88,12 @@ endinterface
 typedef union tagged {
     void I;
     DTlbReqIdx D;
-    PrefetcherTlbReqIdx LLC;
+    LLCTlbReqIdx LLC;
 } TlbChild deriving(Bits, Eq, FShow);
 typedef struct {
     TlbChild child;
     Vpn vpn;
+    Bool isPrefetch;
 } L2TlbRqFromC deriving(Bits, Eq, FShow);
 
 typedef struct {
@@ -178,6 +179,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Vector#(L2TlbReqNum, Ehr#(2, Bool)) pendValid <- replicateM(mkEhr(False));
     Vector#(L2TlbReqNum, Reg#(L2TlbRqFromC)) pendReq <- replicateM(mkRegU);
     Vector#(L2TlbReqNum, Ehr#(2, L2TlbWait)) pendWait <- replicateM(mkEhr(None));
+    Vector#(L2TlbReqNum, Reg#(Bool)) pendIsPrefetch <- replicateM(mkRegU);
     Vector#(L2TlbReqNum, Reg#(PageWalkLevel)) pendWalkLevel <- replicateM(mkRegU);
     Vector#(L2TlbReqNum, Reg#(Addr)) pendWalkAddr <- replicateM(mkRegU);
 `ifdef SECURITY
@@ -340,6 +342,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         // record req
         pendValid_tlbReq[idx] <= True;
         pendReq[idx] <= r;
+        pendIsPrefetch[idx] <= r.isPrefetch;
         doAssert(!pendValid_tlbReq[idx], "entry must be invalid");
         doAssert(pendWait_tlbReq[idx] == None, "cannot be waiting");
         if(verbose) $display("L2TLB new req: ", fshow(r), "; ", fshow(idx));
@@ -441,8 +444,8 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             perf_events[1] <= ev;
 `endif
         end
-        else begin
-            // miss, deq resp
+        else if (!pendIsPrefetch[idx]) begin
+            // miss on non-prefetch, deq resp
             tlb4KB.deqResp(Invalid);
             // check translation cache
             transCache.req(cRq.vpn, vm_info.asid);
@@ -464,6 +467,16 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             ev.evt_TLB_MISS = 1;
             perf_events[0] <= ev;
 `endif
+        end else begin
+            // miss on prefetch
+            tlb4KB.deqResp(Invalid);
+            // resp to child
+            rsToCQ.enq(L2TlbRsToC {
+                child: cRq.child,
+                entry: TlbFault
+            });
+            // req is done
+            pendValid_tlbResp[idx] <= False;
         end
     endrule
 

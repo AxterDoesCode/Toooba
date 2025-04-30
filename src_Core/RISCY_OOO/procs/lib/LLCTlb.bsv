@@ -1,18 +1,5 @@
 
-// Copyright (c) 2017 Massachusetts Institute of Technology
-//
-//-
-// RVFI_DII + CHERI modifications:
-//     Copyright (c) 2020 Jonathan Woodruff
-//     All rights reserved.
-//
-//     This software was developed by SRI International and the University of
-//     Cambridge Computer Laboratory (Department of Computer Science and
-//     Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
-//     DARPA SSITH research programme.
-//
-//     This work was supported by NCSC programme grant 4212611/RFA 15971 ("SafeBet").
-//-
+// Copyright (c) 2025 Louis Hobson
 //
 // Permission is hereby granted, free of charge, to any person
 // obtaining a copy of this software and associated documentation
@@ -35,18 +22,34 @@
 // SOFTWARE.
 
 `include "ProcConfig.bsv"
+import ClientServer::*;
 import DefaultValue::*;
+import GetPut::*;
 import Types::*;
 import ProcTypes::*;
 import TlbTypes::*;
+import Performance::*;
+import FullAssocTlb::*;
+import ConfigReg::*;
 import Fifos::*;
+import FIFO::*;
+import CHERICC_Fat::*;
+import Cntrs::*;
+import SafeCounter::*;
 import CacheUtils::*;
+import LatencyTimer::*;
+import HasSpecBits::*;
 import Vector::*;
 import Ehr::*;
-import CCTypes::*;
-import CHERICC_Fat::*;
-import CHERICap::*;
 import Prefetcher_intf::*;
+import CHERICap::*;
+import CHERICC_Fat::*;
+`ifdef PERFORMANCE_MONITORING
+import PerformanceMonitor::*;
+import CCTypes::*;
+import BlueUtils::*;
+import StatCounters::*;
+`endif
 
 export LLCTlbRqToP(..);
 export LLCTlbRsFromP(..);
@@ -54,6 +57,8 @@ export LLCTlbToParent(..);
 export ParentToLLCTlb(..);
 export LLCTlb(..);
 export mkLLCTlb;
+
+typedef `LLC_TLB_SIZE LLCTlbSize;
 
 typedef struct {
     Vpn vpn;
@@ -66,91 +71,381 @@ typedef struct {
 } LLCTlbRsFromP#(type idxT) deriving(Bits, Eq, FShow);
 
 interface LLCTlbToParent#(type idxT);
-    interface FifoDeq#(LLCTlbRqToP#(idxT)) rqToP;
-    interface FifoEnq#(LLCTlbRsFromP#(idxT)) rsFromP;
+    interface Client#(LLCTlbRqToP#(idxT), LLCTlbRsFromP#(idxT)) lookup;
 endinterface
 
 interface ParentToLLCTlb#(type idxT);
-    interface FifoEnq#(LLCTlbRqToP#(idxT)) rqFromLLCTlb;
-    interface FifoDeq#(LLCTlbRsFromP#(idxT)) rsToLLCTlb;
+    interface Server#(LLCTlbRqToP#(idxT), LLCTlbRsFromP#(idxT)) lookup;
 endinterface
 
 interface LLCTlb;
+    method Bool flush_done;
+    method Action flush;
+    method Action updateVMInfo(VMInfo vm);
+    method Bool noPendingReq;
+
     // req/resp
     interface TlbToPrefetcher toPrefetcher;
 
     // req/resp with L2 TLB
-    interface LLCTlbToParent#(PrefetcherTlbReqIdx) toParent;
+    interface LLCTlbToParent#(LLCTlbReqIdx) toParent;
 endinterface
 
-(* synthesize *)
+typedef FullAssocTlb#(LLCTlbSize) LLCTlbArray;
+module mkLLCTlbArray(LLCTlbArray);
+    let m <- mkFullAssocTlb(True); // randomness in replacement
+    return m;
+endmodule
+
+// a pending tlb req may be in following states
+typedef union tagged {
+    void None;
+    void WaitParent;
+    LLCTlbReqIdx WaitPeer;
+} LLCTlbWait deriving(Bits, Eq, FShow);
+
 module mkLLCTlb(LLCTlb);
+    Bool verbose = True;
 
-    Vector#(PrefetcherTlbReqNum, Ehr#(2, Bool)) pendValid <- replicateM(mkEhr(False));
-    Vector#(PrefetcherTlbReqNum, Reg#(PrefetcherReqToTlb)) pendReq <- replicateM(mkRegU);
+    // TLB array
+    LLCTlbArray tlb <- mkLLCTlbArray;
+
+    // processor init flushing by setting this flag
+    Reg#(Bool) needFlush <- mkReg(False);
+
+    // current processor VM information
+    Reg#(VMInfo) vm_info <- mkReg(defaultValue);
+
+    // pending reqs
+    // pendWait should be meaningful even when entry is invalid. pendWait =
+    // WaitParent True means this entry is waiting for parent TLB resp;
+    // pendWait = WaitPeer means this entry is waiting for a resp initiated by
+    // another req. Thus, pendWait must be None when entry is invalid.
+    Vector#(LLCTlbReqNum, Ehr#(2, Bool)) pendValid <- replicateM(mkEhr(False));
+    Vector#(LLCTlbReqNum, Reg#(LLCTlbWait)) pendWait <- replicateM(mkReg(None));
+    Vector#(LLCTlbReqNum, Reg#(PrefetcherReqToTlb)) pendInst <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(TlbResp)) pendResp <- replicateM(mkRegU);
+
+    RWire#(void) updatingVMInfo <- mkRWire;
+
+    let pendValid_noMiss = getVEhrPort(pendValid, 0);
     let pendValid_resp = getVEhrPort(pendValid, 0); // write
-    let pendValid_req = getVEhrPort(pendValid, 1);  // write
-    let pendValid_pRs = getVEhrPort(pendValid, 1);  // assert
+    let pendValid_doPRs = getVEhrPort(pendValid, 1); // assert
+    let pendValid_req = getVEhrPort(pendValid, 1); // write
 
-    Fifo#(PrefetcherTlbReqNum, LLCTlbRqToP#(PrefetcherTlbReqIdx)) rqToPQ <- mkCFFifo;
-    Fifo#(1, LLCTlbRsFromP#(PrefetcherTlbReqIdx)) rsFromPQ <- mkCFFifo;
-    Fifo#(PrefetcherTlbReqNum, TlbRespToPrefetcher) rsToPrefetcherQ <- mkCFFifo;
+    // free list of pend entries, to cut off path from procResp to procReq
+    Fifo#(LLCTlbReqNum, LLCTlbReqIdx) freeQ <- mkCFFifo;
+    Reg#(Bool) freeQInited <- mkReg(False);
+    Reg#(LLCTlbReqIdx) freeQInitIdx <- mkReg(0);
 
-    rule doPRs;
+    // request queue from prefetcher
+    Fifo#(4, PrefetcherReqToTlb) rqFromPrefetcher <- mkBypassFifo;
+
+    // req & resp with parent TLB
+    Fifo#(LLCTlbReqNum, LLCTlbRqToP#(LLCTlbReqIdx)) rqToPQ <- mkCFFifo; // large enough so won't block on enq
+    Fifo#(2, LLCTlbRsFromP#(LLCTlbReqIdx)) rsFromPQ <- mkCFFifo;
+    
+    // When a resp comes, we first process for the initiating req, then process
+    // other reqs that in WaitPeer.
+    Reg#(Maybe#(LLCTlbReqIdx)) respForOtherReq <- mkReg(Invalid);
+
+    // do flush: start when all misses resolve
+    Bool noMiss = all(\== (False) , readVReg(pendValid_noMiss));
+
+    rule doFlush(needFlush && noMiss);
+        if(verbose) $display ("%t LLCTlb doFlush", $time);
+        tlb.flush;
+        needFlush <= False;
+    endrule
+
+    // get resp from parent TLB
+    // At high level, this rule is always exclusive with doFlush, though
+    // we don't bother to make compiler understand this...
+    rule doPRs(rsFromPQ.notEmpty);
         let pRs = rsFromPQ.first;
-        rsFromPQ.deq;
-        doAssert(pendValid_pRs[pRs.id], "LLC TLB pRs for invalid id");
+        // the current req being served is either the initiating req or other
+        // req pending on the same resp
+        let idx = fromMaybe(pRs.id, respForOtherReq);
+        let vaddr = getAddr(pendInst[idx].cap);
 
         if(pRs.entry matches tagged ValidTlbEntry .en) begin
-            rsToPrefetcherQ.enq(TlbRespToPrefetcher {
-                paddr: translate(getAddr(pendReq[pRs.id].cap), en.ppn, en.level),
-                cap: pendReq[pRs.id].cap,
-                id: pRs.id,
-                haveException: False,
-                permsCheckPass: (en.pteType.readable && en.pteUpperType.cap_readable)
-            });
-        end 
+            // check permission
+            if (verbose)
+                $display("[LLCTlb] doPRs: vm_info: ", fshow(vm_info),
+                         "      en     : ", fshow(en),
+                         "      vaddr  : ", fshow(vaddr)
+                         );
+            let permCheck = hasVMPermission(
+                vm_info,
+                en.pteType,
+                en.pteUpperType,
+                en.ppn,
+                en.level,
+                DataLoad,
+                False, // cap store?
+                True
+            ); // potential cap load?
+            if (permCheck.allowed) begin
+                // fill TLB, and record resp
+                tlb.addEntry(en);
+                let trans_addr = translate(vaddr, en.ppn, en.level);
+                pendResp[idx] <= tuple3(trans_addr, Invalid, permCheck.allowCap);
+                if(verbose) begin
+                    $display("[LLCTlb] refill: idx %d; vaddr: %h", idx, vaddr,
+                             "; ", fshow(trans_addr));
+                end
+            end 
+            else begin
+                // page fault
+                pendResp[idx] <= tuple3(?, Valid (permCheck.excCode), False);
+                if(verbose) begin
+                    $display("[LLCTlb] refill no permission: idx %d; vaddr: %h", idx, vaddr);
+                end
+            end
+        end
         else if(pRs.entry == TlbDisabled) begin
-            rsToPrefetcherQ.enq(TlbRespToPrefetcher {
-                paddr: getAddr(pendReq[pRs.id].cap),
-                cap: pendReq[pRs.id].cap,
-                id: pRs.id,
-                haveException: False,
-                permsCheckPass: True
-            });
+            doAssert(True, "L2TLB should not be disabled if TLB sent a request");
+        end 
+        else begin
+            // page fault
+            pendResp[idx] <= tuple3(?, Valid (excLoadPageFault), False);
+            if(verbose) $display("[LLCTlbTLB] refill page fault: idx %d; vaddr: %h", idx, vaddr);
+        end
+
+        // get parent resp, miss resolved, reset wait bit
+        pendWait[idx] <= None;
+
+        doAssert(pendValid_doPRs[idx], "entry must be valid");
+        if(isValid(respForOtherReq)) begin
+            doAssert(pendWait[idx] == WaitPeer (pRs.id), "entry must be waiting for resp");
         end
         else begin
-            rsToPrefetcherQ.enq(TlbRespToPrefetcher {
-                paddr: ?,
-                cap: pendReq[pRs.id].cap,
-                id: pRs.id,
-                haveException: True,
-                permsCheckPass: False
-            });
+            doAssert(pendWait[idx] == WaitParent, "entry must be waiting for resp");
+        end
+
+        // find another req waiting for this resp
+        function Bool waitForResp(LLCTlbReqIdx i);
+            // we can ignore pendValid here, because not-None pendWait implies
+            // pendValid is true
+            return pendWait[i] == WaitPeer (pRs.id) && i != idx;
+        endfunction
+        Vector#(LLCTlbReqNum, LLCTlbReqIdx) idxVec = genWith(fromInteger);
+        if(find(waitForResp, idxVec) matches tagged Valid .i) begin
+            // still have req waiting for this resp, keep processing
+            respForOtherReq <= Valid (i);
+            doAssert(pendValid_doPRs[i], "waiting entry must be valid");
+        end
+        else begin
+            // all req done, deq the pRs
+            respForOtherReq <= Invalid;
+            rsFromPQ.deq;
         end
     endrule
 
+    // init freeQ
+    rule doInitFreeQ(!freeQInited);
+        freeQ.enq(freeQInitIdx);
+        freeQInitIdx <= freeQInitIdx + 1;
+        if(freeQInitIdx == fromInteger(valueof(LLCTlbReqNum) - 1)) begin
+            freeQInited <= True;
+            if(verbose) $display ("%t LLCTlb doInitFreeQ done", $time);
+        end
+    endrule
+
+    function Maybe#(LLCTlbReqIdx) validRespIdx;
+        function Bool validResp(LLCTlbReqIdx i);
+            return pendValid_resp[i] && pendWait[i] == None;
+        endfunction
+        Vector#(LLCTlbReqNum, LLCTlbReqIdx) idxVec = genWith(fromInteger);
+        return find(validResp, idxVec);
+    endfunction
+
+    rule handleReq if (
+        !needFlush && 
+        !rsFromPQ.notEmpty && 
+        rqToPQ.notFull && 
+        freeQInited
+    ); 
+        if(verbose) $display ("%t LLCTlb handleReq", $time);
+        // allocate MSHR entry
+        freeQ.deq;
+        LLCTlbReqIdx idx = freeQ.first;
+        doAssert(!pendValid_req[idx], "free entry cannot be valid");
+        doAssert(pendWait[idx] == None, "entry cannot wait for parent resp");
+        pendValid_req[idx] <= True;
+
+        let req = rqFromPrefetcher.first;
+        rqFromPrefetcher.deq;
+
+        pendInst[idx] <= req;
+        let vaddr = getAddr(req.cap);
+        
+`ifdef SECURITY
+        // Security check
+        // Forbid any data load shared outside of the protection domain
+        // if shared load are not allowed
+        // No need to special case M mode with special vm_info value because we
+        // assume that we allow shared load all the time when in M mode.
+        // (Because we are always non speculative in M mode)
+        if (!vm_info.sanctum_authShared && outOfProtectionDomain(vm_info, vaddr))begin
+            pendWait[idx] <= None;
+            pendResp[idx] <= tuple3(?, Valid (excLoadAccessFault), False);
+        end
+`else
+        // No security check
+        if (False) begin
+            noAction;
+        end
+`endif
+        else if (vm_info.sv39) begin
+            let vpn = getVpn(vaddr);
+            let trans_result = tlb.translate(vpn, vm_info.asid);
+            if (!validVirtualAddress(vaddr)) begin
+                // page fault
+                Exception fault = excLoadPageFault;
+                pendWait[idx] <= None;
+                pendResp[idx] <= tuple3(?, Valid (fault), False);
+                if(verbose) $display("[LLCTlb] req invalid virtual address: idx %d; vaddr: %h", idx, vaddr);
+            end 
+            else if (trans_result.hit) begin
+                // TLB hit
+                let entry = trans_result.entry;
+                // check permission
+                if(verbose) $display("prefetcherReq: vm_info: ", fshow(vm_info),
+                     "         en     : ", fshow(entry),
+                     "         vaddr  : ", fshow(vaddr)
+                     );
+                let permCheck = hasVMPermission(
+                    vm_info,
+                    entry.pteType,
+                    entry.pteUpperType,
+                    entry.ppn,
+                    entry.level,
+                    DataLoad,
+                    False, // cap store?
+                    True // potential cap load?
+                ); 
+                if (verbose) $display("Permission check output 2: ", fshow(permCheck));
+                if (permCheck.allowed) begin
+                    // update TLB replacement info
+                    tlb.updateRepByHit(trans_result.index);
+                    // translate addr
+                    Addr trans_addr = translate(vaddr, entry.ppn, entry.level);
+                    pendWait[idx] <= None;
+                    pendResp[idx] <= tuple3(trans_addr, Invalid, permCheck.allowCap);
+                    if(verbose) begin
+                        $display("[LLCTlb] req (hit): idx %d; vaddr: ", idx, vaddr,
+                                 "; ", fshow(trans_result));
+                    end
+                end
+                else begin
+                    // page fault
+                    pendWait[idx] <= None;
+                    pendResp[idx] <= tuple3(?, Valid (permCheck.excCode), False);
+                    if(verbose) $display("[LLCTlb] req no permission: idx %d; vaddr: %h", idx,vaddr);
+                end
+            end
+            else begin
+                // TLB miss, req to parent TLB only if there is no existing req
+                // for the same VPN already waiting for parent TLB resp
+                function Bool reqSamePage(LLCTlbReqIdx i);
+                    // we can ignore pendValid here, because not-None pendWait implies
+                    // pendValid is true
+                    let vaddr_i = getAddr(pendInst[i].cap);
+                    return pendWait[i] == WaitParent && getVpn(vaddr) == getVpn(vaddr_i);
+                endfunction
+                Vector#(LLCTlbReqNum, LLCTlbReqIdx) idxVec = genWith(fromInteger);
+                if(find(reqSamePage, idxVec) matches tagged Valid .i) begin
+                    // peer entry has already requested, so don't send duplicate req
+                    pendWait[idx] <= WaitPeer (i);
+                    doAssert(pendValid_req[i], "peer entry must be valid");
+                    if(verbose) begin
+                        $display("[LLCTlb] req miss, pend on peer: idx %d, ",
+                                 idx, "; vaddr: %h", vaddr, "; ", fshow(i));
+                    end
+                end
+                else begin
+                    // this is the first req for this VPN
+                    pendWait[idx] <= WaitParent;
+                    rqToPQ.enq(LLCTlbRqToP {
+                        vpn: vpn,
+                        id: idx
+                    });
+                    if(verbose) begin
+                        $display("[LLCTlb] req miss, send to parent: idx %d, vaddr: %h",
+                                 idx, vaddr);
+                    end
+                end
+            end
+        end
+        else begin
+            // bare mode
+            pendWait[idx] <= None;
+            pendResp[idx] <= tuple3(vaddr, Invalid, True);
+            if(verbose) $display("LLCTlb %m req (bare): vaddr: %h", vaddr);
+        end
+    endrule
+    
+    method Action flush if(!needFlush);
+        needFlush <= True;
+        if(verbose) $display("%t LLCTlb flush", $time);
+        // this won't interrupt current processing, since
+        // (1) miss process will continue even if needFlush=True
+        // (2) flush truly starts when there is no pending req
+    endmethod
+
+    method Bool flush_done = !needFlush;
+
+    method Action updateVMInfo(VMInfo vm);
+        if(verbose) $display("%t LLCTlb updateVMInfo", $time);
+        vm_info <= vm;
+    endmethod
+
+    method Bool noPendingReq = noMiss;
+
     interface TlbToPrefetcher toPrefetcher;
-        method Action prefetcherReq(PrefetcherReqToTlb req);
-            pendReq[req.id] <= req;
-            doAssert(pendValid_req[req.id] == False, "overlapping ids in LLC Tlb req");
-            pendValid_req[req.id] <= True;
-            rqToPQ.enq(LLCTlbRqToP {vpn: getVpn(getAddr(req.cap)), id: req.id});
+        method Action prefetcherReq(PrefetcherReqToTlb req) if(
+            !needFlush && 
+            !rsFromPQ.notEmpty && 
+            rqToPQ.notFull && 
+            freeQInited && 
+            freeQ.notEmpty
+        );
+            if(verbose) $display ("%t LLCTlb prefetcherReq ", $time, fshow(req));
+            rqFromPrefetcher.enq(req);
         endmethod
 
-        method Action deqPrefetcherResp;
-            rsToPrefetcherQ.deq;
-            pendValid_resp[rsToPrefetcherQ.first.id] <= False;
+        method Action deqPrefetcherResp if(
+            validRespIdx matches tagged Valid .idx &&&
+            freeQInited
+        );
+            if(verbose) $display ("%t LLCTlb deqPrefetcherReq ", $time, fshow(idx));
+            pendValid_resp[idx] <= False;
+            freeQ.enq(idx);
         endmethod
 
-        method TlbRespToPrefetcher prefetcherResp;
-            return rsToPrefetcherQ.first;
+        method TlbRespToPrefetcher prefetcherResp if(
+            validRespIdx matches tagged Valid .idx &&& 
+            freeQInited
+        );
+            let resp = pendResp[idx];
+            let req = pendInst[idx];
+            return TlbRespToPrefetcher {
+                paddr: tpl_1(resp),
+                cap: req.cap,
+                id: req.id,
+                haveException: isValid(tpl_2(resp)),
+                permsCheckPass: tpl_3(resp)
+            };
         endmethod
     endinterface
 
     interface LLCTlbToParent toParent;
-        interface rqToP = toFifoDeq(rqToPQ);
-        interface rsFromP = toFifoEnq(rsFromPQ);
+        interface Client lookup;
+            interface request = toGet(rqToPQ);
+            interface response = toPut(rsFromPQ);
+        endinterface
     endinterface
+
 
 endmodule

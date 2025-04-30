@@ -57,6 +57,7 @@ import RandomReplace::*;
 import Prefetcher_intf::*;
 import Prefetcher_top::*;
 import ProcTypes::*;
+import ClientServer::*;
 `ifdef PERFORMANCE_MONITORING
 import PerformanceMonitor::*;
 import StatCounters::*;
@@ -117,12 +118,17 @@ interface LLBank#(
     interface MemFifoClient#(LdMemRqId#(Bit#(TLog#(cRqNum))), void) to_mem;
     interface LLCTlbToParent#(CombinedLLCTlbReqIdx) to_tlb;
     // Training data from L1 prefetchers
-    method Action sendDataPrefetcherBroadcastData(Tuple2#(PrefetcherBroadcastData, Bit#(TLog#(CoreNum))) data);
+    method Action sendDataPrefetcherBroadcastData(Tuple2#(PrefetcherBroadcastData, LLCTlbId) data);
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
     interface Get#(LLCRqStuck#(childNum, cRqIdT, dmaRqIdT)) cRqStuck;
     // performance
     method Action setPerfStatus(Bool stats);
     method Data getPerfData(LLCPerfType t);
+
+    // Prefetcher TLB interface
+    method Action flushTlb(LLCTlbId idx);
+    method Action updateTlbVMInfo(LLCTlbId idx, VMInfo vm);
+
 `ifdef PERFORMANCE_MONITORING
     method EventsLL events;
 `endif
@@ -192,8 +198,8 @@ module mkLLBank#(
     Alias#(cRqSlotT, LLCRqSlot#(wayT, tagT, Vector#(childNum, DirPend))), // cRq MSHR slot
     Alias#(llCmdT, LLCmd#(childT, cRqIndexT)),
     Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, dirT, cacheOwnerT, PrefetchInfo, RandRepInfo, Line, void, llCmdT)),
-    Alias#(rqToTlbT, LLCTlbRqToP#(CombinedLLCTlbReqIdx)),
-    Alias#(rsFromTlbT, LLCTlbRsFromP#(CombinedLLCTlbReqIdx)),
+    Alias#(rqToL2TlbT, LLCTlbRqToP#(CombinedLLCTlbReqIdx)),
+    Alias#(rsFromL2TlbT, LLCTlbRsFromP#(CombinedLLCTlbReqIdx)),
     // requirements
     Bits#(cRqIdT, _cRqIdSz),
     Bits#(dmaRqIdT, _dmaRqIdSz),
@@ -254,26 +260,39 @@ module mkLLBank#(
 
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
     Vector#(cRqNum, Reg#(PrefetchAuxData)) cRqPrefetchAuxData <- replicateM(mkReg(?));
+
     // Create TLBs for data prefetchers
-    Vector#(CoreNum, LLCTlb) dataPrefetcherTlbs <- replicateM(mkLLCTlb);
+    Vector#(CoreNum, LLCTlb) dataLLCTlbs <- replicateM(mkLLCTlb);
     function module#(CheriPrefetcher) mkmkLLDPrefetcher(LLCTlb tlb);
         return mkLLDPrefetcher(tlb.toPrefetcher);
     endfunction
-    PrefetcherVector#(CoreNum) dataPrefetchers <- mkPrefetcherVector(map(mkmkLLDPrefetcher, dataPrefetcherTlbs));
-    PrefetcherVector#(CoreNum) instrPrefetchers <- mkPrefetcherVector(vec(mkCheriPrefetcherAdapter(mkLLIPrefetcher)));
-    Fifo#(32, cRqFromCT) overflowPrefetchQueue <- mkOverflowBypassFifo;
 
-    // XBar for TLBs
-    Fifo#(2, rqToTlbT) rqToTlbQ <- mkCFFifo;
-    Fifo#(2, rsFromTlbT) rsFromTlbQ <- mkCFFifo;
-    function XBarDstInfo#(Bit#(0), rqToTlbT) getTlbRqDstInfo(Bit#(TLog#(CoreNum)) idx, LLCTlbRqToP#(PrefetcherTlbReqIdx) rq);
+    // XBar for TLB requests to parent TLB
+    RWire#(rqToL2TlbT) rqToL2TlbWire <- mkRWire;
+    function XBarDstInfo#(Bit#(0), rqToL2TlbT) getTlbRqDstInfo(LLCTlbId idx, LLCTlbRqToP#(LLCTlbReqIdx) rq);
         return XBarDstInfo {idx: 0, data: LLCTlbRqToP {
             vpn: rq.vpn,
             id: {rq.id, extend(idx)}
         }};
     endfunction
-    function Get#(LLCTlbRqToP#(PrefetcherTlbReqIdx)) tlbRqGet(LLCTlb tlb) = toGet(tlb.toParent.rqToP);
-    mkXBar(getTlbRqDstInfo, map(tlbRqGet, dataPrefetcherTlbs), vec(toPut(rqToTlbQ)));
+    function Get#(LLCTlbRqToP#(LLCTlbReqIdx)) tlbRqGet(LLCTlb tlb) = tlb.toParent.lookup.request;
+    mkXBar(getTlbRqDstInfo, map(tlbRqGet, dataLLCTlbs), vec(toPut(rqToL2TlbWire)));
+
+    // Function for responses from parent TLBs
+    function Action doForwardL2TlbResp(LLCTlbRsFromP#(CombinedLLCTlbReqIdx) rs);
+    action
+        LLCTlbId id = truncate(rs.id);
+        dataLLCTlbs[id].toParent.lookup.response.put(LLCTlbRsFromP {
+            entry: rs.entry,
+            id: truncateLSB(rs.id)
+        });
+    endaction
+    endfunction
+
+    // Create prefetchers
+    PrefetcherVector#(CoreNum) dataPrefetchers <- mkCheriPrefetcherVector(map(mkmkLLDPrefetcher, dataLLCTlbs));
+    PrefetcherVector#(CoreNum) instrPrefetchers <- mkCheriPrefetcherVector(vec(mkCheriPrefetcherAdapter(mkLLIPrefetcher)));
+    Fifo#(16, cRqFromCT) overflowPrefetchQueue <- mkOverflowPipelineFifo;
 
     Reg#(Bit#(64)) crqMshrEnqs <- mkConfigReg(0);
     Reg#(Bit#(64)) crqMshrDeqs <- mkConfigReg(0);
@@ -325,17 +344,6 @@ action
 `endif
 endaction
 endfunction
-
-    rule doForwardTlbResp;
-        let rs = rsFromTlbQ.first;
-        rsFromTlbQ.deq;
-        Bit#(TLog#(CoreNum)) idx = truncate(rs.id);
-        dataPrefetcherTlbs[idx].toParent.rsFromP.enq(LLCTlbRsFromP {
-            entry: rs.entry,
-            id: truncateLSB(rs.id)
-        });
-    endrule
-
 
     rule checkIfMshrFull;
         if (cRqMshr.isFull)  begin
@@ -1909,8 +1917,10 @@ endfunction
     endinterface
 
     interface LLCTlbToParent to_tlb;
-        interface rqToP = toFifoDeq(rqToTlbQ);
-        interface rsFromP = toFifoEnq(rsFromTlbQ);
+        interface Client lookup;
+            interface request = toGet(rqToL2TlbWire);
+            interface response = toPut(doForwardL2TlbResp);
+        endinterface
     endinterface
 
     interface MemFifoClient to_mem;
@@ -1934,8 +1944,15 @@ endfunction
         endmethod
     endinterface
 
-    method Action sendDataPrefetcherBroadcastData(Tuple2#(PrefetcherBroadcastData, Bit#(TLog#(CoreNum))) data);
+    method Action sendDataPrefetcherBroadcastData(Tuple2#(PrefetcherBroadcastData, LLCTlbId) data);
         dataPrefetchers.sendBroadcastData(tpl_2(data), tpl_1(data));
+    endmethod
+
+    method Action flushTlb(LLCTlbId idx);
+        dataLLCTlbs[idx].flush;
+    endmethod
+    method Action updateTlbVMInfo(LLCTlbId idx, VMInfo vm);
+        dataLLCTlbs[idx].updateVMInfo(vm);
     endmethod
 
     method Action setPerfStatus(Bool stats);
