@@ -115,7 +115,7 @@
 `ifdef CACHE_TEST
 
     // L1
-    `define LOG_L1_LINES 6 // 2KB
+    `define LOG_L1_LINES 6 // 4KB
     `define LOG_L1_WAYS 1 // 2 ways
 
     // LLC

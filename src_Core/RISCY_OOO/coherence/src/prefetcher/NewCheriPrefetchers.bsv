@@ -39,6 +39,7 @@ import LFSR::*;
 import PerformanceMonitor::*;
 import Ehr::*;
 import ConfigReg::*;
+import DReg::*;
 
 `include "div_table_4x4to7.bsvi"
 
@@ -131,7 +132,7 @@ typedef struct {
     Vector#(4, Maybe#(CapChaserL1ObservedCap#(ptIdxTagBits, ttIdxTagBits, capOffsetBits))) caps;
     Bool train;
     Bool missed;
-    PrefetchAuxData auxData;
+    Maybe#(CapChaserAuxDataT) auxData;
 } CapChaserL1ObservedCLine#(
     numeric type ptIdxTagBits,
     numeric type ttIdxTagBits,
@@ -152,7 +153,7 @@ typedef struct {
 
 typedef struct {
     Vector#(4, Maybe#(CapChaserLLObservedCap#(ptIdxTagBits))) caps;
-    PrefetchAuxData auxData;
+    Maybe#(CapChaserAuxDataT) auxData;
 } CapChaserLLObservedCLine#(
     numeric type ptIdxTagBits
 ) deriving (Bits, Eq, FShow);
@@ -163,7 +164,7 @@ typedef struct {
     Bool missedL1;
     Bit#(confBits) nSeen;
     Bit#(confBits) nFetched;
-    PrefetchAuxData auxData;
+    Maybe#(CapChaserAuxDataT) auxData;
 } CapChaserL1CandidatePrefetch#(
     numeric type confBits
 ) deriving (Bits, Eq, FShow);
@@ -187,7 +188,7 @@ typedef struct {
 typedef struct {
     CapPipe cap;
     Bit#(fixPointConfBits) confidence;
-    PrefetchAuxData auxData;
+    Maybe#(CapChaserAuxDataT) auxData;
 } CapChaserLLCandidatePrefetch#(
     numeric type fixPointConfBits
 ) deriving (Bits, Eq, FShow);
@@ -219,7 +220,7 @@ module mkL1CapChaserPrefetcher#(
     NumAlias#(ptrTableIdxBits, TLog#(ptrTableSets)),
     NumAlias#(ptrTableIdxTagBits, TAdd#(ptrTableIdxBits, ptrTableTagBits)),
     NumAlias#(ptrTableWayBits, TLog#(ptrTableWays)),
-    NumAlias#(trainingTableTagBits, 4),
+    NumAlias#(trainingTableTagBits, 8),
     NumAlias#(trainingTableIdxBits, TLog#(trainingTableSize)),
     NumAlias#(trainingTableIdxTagBits, TAdd#(trainingTableIdxBits, trainingTableTagBits)),
     // The following provisos are needed for hashing to work
@@ -263,6 +264,9 @@ module mkL1CapChaserPrefetcher#(
 
     // UpDowngrade type
     Alias#(ptUpDowngradeT, CapChaserL1PtUpDowngrade#(ptrTableIdxTagBits, capOffsetBits)),
+
+    // Type for aux data
+    Alias#(auxDataT, Maybe#(CapChaserAuxDataT)),
 
     // Training decay counter reset value
     NumAlias#(trainingDecayReset, TSub#(trainingDecayCycles, 1)),
@@ -310,8 +314,8 @@ module mkL1CapChaserPrefetcher#(
 
     // Queues for observed capabilities
     // observedCLineQ can probably get away with being bypass..? It's also on the critical path for prefetching.
-    Fifo#(8, observedCLineT) observedCLineQ <- mkOverflowBypassFifo;
-    Fifo#(1, observedCapT) observedCapRespQ <- mkPipelineFifo;
+    Fifo#(4, observedCLineT) observedCLineQ <- mkOverflowBypassFifo;
+    Fifo#(1, UInt#(2)) observedCapRespQ <- mkPipelineFifo;
     Reg#(Vector#(4, Bool)) unprocessedObservedCap <- mkReg(replicate(True));
 
     // Tlb lookup and prefetch queues
@@ -329,7 +333,7 @@ module mkL1CapChaserPrefetcher#(
     Vector#(LLCTlbReqNum, Reg#(Bool)) pendConfidenceReady <- replicateM(mkRegU);
     Vector#(LLCTlbReqNum, Reg#(Bool)) pendMissedL1 <- replicateM(mkRegU);
     Vector#(LLCTlbReqNum, Reg#(Bit#(fixPointConfBits))) pendConfidence <- replicateM(mkRegU);
-    Vector#(LLCTlbReqNum, Reg#(PrefetchAuxData)) pendAuxData <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(auxDataT)) pendAuxData <- replicateM(mkRegU);
     Fifo#(LLCTlbReqNum, LLCTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
     
     // Init registers 
@@ -349,7 +353,14 @@ module mkL1CapChaserPrefetcher#(
     // Remember the last accessed capability and last cache line seen loaded.
     // Don't add to queues when we see a repeat.
     Reg#(LineAddr) lastLineLoaded <- mkRegU;
+    Reg#(Bool) lastLineLoadedWasDemanded <- mkReg(False);
     Reg#(trainingTableIdxTagT) lastCapAccessed <- mkRegU;
+
+    // We will discard observed prefetches when they have a successor, because it probably means that
+    // they were late and we should instead use the demand access for prefetching.
+    // Remember whether we are expecting a successor
+    Reg#(Bool) expectingSuccessor <- mkDReg(False);
+
 
     // Hashing functions to produce the index/tags 
     function ptrTableIdxTagT getPtrTableIdxTag(Addr boundsOffset, Addr boundsLength);
@@ -375,11 +386,11 @@ module mkL1CapChaserPrefetcher#(
 
     // A rough estimate for whether we should filter out future prefetches based on the value of nFetched
     // We don't know the fixed point confidence at this point
-    function Bool shouldAddFilter(PrefetchAuxData auxData, Bit#(ptrTableConfBits) nFetched);
+    function Bool shouldAddFilter(auxDataT auxData, Bit#(ptrTableConfBits) nFetched);
         // If we have started chaining, then don't add a filter
         // Otherwise, if the confidence is at least 50%, then add a filter
         // i.e. we expect to have some chaining
-        return valueOf(useFiltering)!=0 && (auxData matches tagged CapChaserAuxData .* ? False : nFetched >= 7); 
+        return valueOf(useFiltering)!=0 && (isValid(auxData) ? False : nFetched >= 7); 
     endfunction
 
     // Whether we have inited
@@ -402,6 +413,8 @@ module mkL1CapChaserPrefetcher#(
             return Invalid;
         end
     endfunction
+
+
 
     /* Init the prefetcher */
     // All occur after a training table read (except for init)
@@ -529,7 +542,7 @@ module mkL1CapChaserPrefetcher#(
         // Also read from the pointer table, so we can maybe perform a prefetch
         ptrTable.rdReq(truncate(observedCap.ptrTableIdxTag), truncateLSB(observedCap.ptrTableIdxTag));
         // Queue up the observed cap ready for the read responses
-        observedCapRespQ.enq(observedCap);
+        observedCapRespQ.enq(idx);
     endrule
 
     /* Dequeue observed CLine when there are none left */
@@ -540,8 +553,9 @@ module mkL1CapChaserPrefetcher#(
 
     /* Process the read response from observed capabilities */
     rule processObservedCapLookup;
+        let capIdx = observedCapRespQ.first;
         let observedCLine = observedCLineQ.first;
-        let observedCap = observedCapRespQ.first;
+        let observedCap = fromMaybe(?, observedCLine.caps[capIdx]);
         trainingTableIdxT tIdx = truncate(observedCap.trainingTableIdxTag);
         trainingTableTagT tTag = truncateLSB(observedCap.trainingTableIdxTag);
         observedCapRespQ.deq;
@@ -641,7 +655,7 @@ module mkL1CapChaserPrefetcher#(
         // i.e. we don't need to perform a multiplication.
         let tlbReqIdx = tlbReqFreeQ.first;
         tlbReqFreeQ.deq;
-        if (candidate.auxData matches tagged CapChaserAuxData .*) begin
+        if (isValid(candidate.auxData)) begin
             pendConfidenceReady[tlbReqIdx] <= False;
             confidenceMultQ.enq(tlbReqIdx);
         end else begin
@@ -669,7 +683,7 @@ module mkL1CapChaserPrefetcher#(
     rule doConfidenceMultiply;
         let tlbReqIdx = confidenceMultQ.first;    
         confidenceMultQ.deq;
-        if (pendAuxData[tlbReqIdx] matches tagged CapChaserAuxData .auxData) begin
+        if (pendAuxData[tlbReqIdx] matches tagged Valid .auxData) begin
             pendConfidence[tlbReqIdx] <= (pack(unsignedMul(unpack(pendConfidence[tlbReqIdx]) , unpack(auxData.confidence))))[13:7];
             pendConfidenceReady[tlbReqIdx] <= True;
         end else begin
@@ -703,7 +717,7 @@ module mkL1CapChaserPrefetcher#(
                 auxData: CapChaserAuxData (CapChaserAuxDataT {
                     confidence: pendConfidence[tlbReqIdx]
                 `ifdef CAP_CHASER_COUNT_DEPTH
-                  , depth: (pendAuxData[tlbReqIdx] matches tagged CapChaserAuxData .auxData ? auxData.depth + 1 : 0)
+                  , depth: (pendAuxData[tlbReqIdx] matches tagged Valid .auxData ? auxData.depth + 1 : 0)
                 `endif
                 })
             });
@@ -718,7 +732,7 @@ module mkL1CapChaserPrefetcher#(
             isL1LevelConfidence(pendConfidence[tlbReqIdx]),
             isL2LevelConfidence(pendConfidence[tlbReqIdx]),
         `ifdef CAP_CHASER_COUNT_DEPTH
-            ", depth: ", (pendAuxData[tlbReqIdx] matches tagged CapChaserAuxData .auxData ? auxData.depth + 1 : 0),
+            ", depth: ", (pendAuxData[tlbReqIdx] matches tagged Valid .auxData ? auxData.depth + 1 : 0),
         `endif
             ", cap: ", fshow(resp.cap)
         );
@@ -855,26 +869,40 @@ module mkL1CapChaserPrefetcher#(
      *   we want to use the confidence in the context of prefetch chaining, where we are
      *   no longer loading specific addresses, rather cache lines as a whole. Therefore, learn
      *   confidence about the whole line, ignoring the specific address used.
-     * - Lookup the capability in the pointer table.
-     *   We only want to do this on a hit, as the L2 will start prefetching on a miss.
+     * - Lookup each capability in the pointer table.
      */
-    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, Bool hasSuccessor, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+        // Always specify that we're expecting a successor
+        expectingSuccessor <= hasSuccessor;
+        // Now actually process the data arrival
         if (inited &&
             (valueOf(l1OnlyMode) != 0 || !wasNextLevel) && 
             memOp == Ld && 
             boundsLength >= 16 && 
             boundsLength <= fromInteger(valueOf(maxCapSizeToTrack)) &&
-            getLineAddr(addr) != lastLineLoaded
+            (getLineAddr(addr) != lastLineLoaded || (!wasPrefetch && !lastLineLoadedWasDemanded)) &&
+            // If this is a prefetch with a successor, it's _probably_ a late prefetch.
+            // Drop the prefetch and wait for the demand hit on the next cycle.
+            (!wasPrefetch || !hasSuccessor)
         ) begin
+            // Remember that we loaded this line
             lastLineLoaded <= getLineAddr(addr);
+            lastLineLoadedWasDemanded <= !wasPrefetch;
+            // Get relevant aux data
+            let auxData = case (prefetchAuxData) matches 
+                tagged CapChaserAuxData .d: Valid(d);
+                tagged CapChaserAllInAuxData .d: Valid(d);
+                default: Invalid;
+            endcase;
             // Fill observedCLine with the capabilities in this cache line
             observedCLineT observedCLine;
             // Only train on non-CapChaser loads into the cache (includes demand loads and loads from other prefetchers).
             // We compound the confidence of chained loads, so we don't want to incorporate it into our baseline confidence.
-            observedCLine.train = !(prefetchAuxData matches tagged CapChaserAuxData .* ? True : False);
+            observedCLine.train = !isValid(auxData);
             // Remember if we missed: don't prefetch to L2 if in split mode.
-            observedCLine.missed = wasMiss;
-            observedCLine.auxData = prefetchAuxData;
+            // We can consider ourselves as having missed if this is a successor request.
+            observedCLine.missed = wasMiss || expectingSuccessor;
+            observedCLine.auxData = auxData;
             for (Integer i = 0; i < 4; i = i + 1) begin
                 // Get the i'th capability (might not exist) from the cache line
                 MemTaggedData d = getTaggedDataAt(lineWithTags, fromInteger(i));
@@ -979,6 +1007,9 @@ module mkLLCapChaserPrefetcher#(
 
     // Need to have the same fixed point float confidence bits as the L1
     NumAlias#(fixPointConfBits, 7),
+
+    // Aux data type
+    Alias#(auxDataT, Maybe#(CapChaserAuxDataT)),
     
     // Index/tag types
     Alias#(ptrTableIdxT, Bit#(ptrTableIdxBits)),
@@ -1028,7 +1059,7 @@ module mkLLCapChaserPrefetcher#(
 
     // Queues for observed capabilities
     Fifo#(8, observedCLineT) observedCLineQ <- mkOverflowBypassFifo;
-    Fifo#(1, observedCapT) observedCapRespQ <- mkPipelineFifo;
+    Fifo#(1, UInt#(2)) observedCapRespQ <- mkPipelineFifo;
     Reg#(Vector#(4, Bool)) unprocessedObservedCap <- mkReg(replicate(True));
 
     // Tlb lookup and prefetch queues
@@ -1039,7 +1070,7 @@ module mkLLCapChaserPrefetcher#(
     // The confidence is ready a cycle after sending the TLB request, so we don't
     // need to flag whether it's ready or not.
     Vector#(LLCTlbReqNum, Reg#(Bit#(fixPointConfBits))) pendConfidence <- replicateM(mkRegU);
-    Vector#(LLCTlbReqNum, Reg#(PrefetchAuxData)) pendAuxData <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(auxDataT)) pendAuxData <- replicateM(mkRegU);
     Fifo#(LLCTlbReqNum, LLCTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
     
     // Init registers 
@@ -1050,6 +1081,7 @@ module mkLLCapChaserPrefetcher#(
 
     // We don't need to remember the last accessed capability in the L2: we're not doing any training.
     Reg#(LineAddr) lastLineLoaded <- mkRegU;
+    Reg#(Bool) lastLineLoadedWasDemanded <- mkReg(False);
 
     // Hashing function to produce the index/tag the pointer table
     // Needs to be the same as the L1, obviously
@@ -1109,7 +1141,7 @@ module mkLLCapChaserPrefetcher#(
         // Unconditionally read from the pointer table: we already filtered out requests we don't want
         // to prefetch from.
         ptrTable.rdReq(truncate(observedCap.ptrTableIdxTag), truncateLSB(observedCap.ptrTableIdxTag));
-        observedCapRespQ.enq(observedCap);
+        observedCapRespQ.enq(idx);
     endrule
 
     /* Dequeue observed CLine when there are none left */
@@ -1120,8 +1152,9 @@ module mkLLCapChaserPrefetcher#(
 
     /* Process the read response from observed capabilities */
     rule processObservedCapLookup;
+        let capIdx = observedCapRespQ.first;
         let observedCLine = observedCLineQ.first;
-        let observedCap = observedCapRespQ.first;
+        let observedCap = fromMaybe(?, observedCLine.caps[capIdx]);
         observedCapRespQ.deq;
 
         if (ptrTable.rdResp matches tagged Valid {.way, tagged Valid .entry} &&& entry.confidence != 0) begin
@@ -1156,7 +1189,7 @@ module mkLLCapChaserPrefetcher#(
         // We perform the multiplication here, as the division is already done.
         let tlbReqIdx = tlbReqFreeQ.first;
         tlbReqFreeQ.deq;
-        if (candidate.auxData matches tagged CapChaserAuxData .auxData) begin
+        if (candidate.auxData matches tagged Valid .auxData) begin
             pendConfidence[tlbReqIdx] <= (pack(unsignedMul(unpack(candidate.confidence) , unpack(auxData.confidence))))[13:7];
         end else begin
             pendConfidence[tlbReqIdx] <= candidate.confidence;
@@ -1190,7 +1223,7 @@ module mkLLCapChaserPrefetcher#(
                 auxData: CapChaserAuxData (CapChaserAuxDataT {
                     confidence: pendConfidence[tlbReqIdx]
                 `ifdef CAP_CHASER_COUNT_DEPTH
-                  , depth: (pendAuxData[tlbReqIdx] matches tagged CapChaserAuxData .auxData ? auxData.depth + 1 : 0)
+                  , depth: (pendAuxData[tlbReqIdx] matches tagged Valid .auxData ? auxData.depth + 1 : 0)
                 `endif
                 })
             });
@@ -1204,7 +1237,7 @@ module mkLLCapChaserPrefetcher#(
             pendConfidence[tlbReqIdx],
             isL2LevelConfidence(pendConfidence[tlbReqIdx]),
         `ifdef CAP_CHASER_COUNT_DEPTH
-            ", depth: ", (pendAuxData[tlbReqIdx] matches tagged CapChaserAuxData .auxData ? auxData.depth + 1 : 0),
+            ", depth: ", (pendAuxData[tlbReqIdx] matches tagged Valid .auxData ? auxData.depth + 1 : 0),
         `endif
             ", cap: ", fshow(resp.cap)
         );
@@ -1217,16 +1250,25 @@ module mkLLCapChaserPrefetcher#(
     /* Upon data arrival, we do prefetching the same as in the L1 prefetcher. 
      * We don't, however, need to do any training.
      */
-    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, Bool hasSuccessor, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
         if (inited && 
             memOp == Ld && 
             boundsLength >= 16 && 
             boundsLength <= fromInteger(valueOf(maxCapSizeToTrack)) && 
-            getLineAddr(addr) != lastLineLoaded
+            (getLineAddr(addr) != lastLineLoaded || (!wasPrefetch && !lastLineLoadedWasDemanded)) &&
+            // If this is a prefetch with a successor, it's _probably_ a late prefetch.
+            // Drop the prefetch and wait for the demand hit on the next cycle.
+            (!wasPrefetch || !hasSuccessor)
         ) begin
             lastLineLoaded <= getLineAddr(addr);
+            lastLineLoadedWasDemanded <= !wasPrefetch;
+            let auxData = case (prefetchAuxData) matches 
+                tagged CapChaserAuxData .d: Valid(d);
+                tagged CapChaserAllInAuxData .d: Valid(d);
+                default: Invalid;
+            endcase;
             observedCLineT observedCLine;
-            observedCLine.auxData = prefetchAuxData;
+            observedCLine.auxData = auxData;
             for (Integer i = 0; i < 4; i = i + 1) begin
                 MemTaggedData d = getTaggedDataAt(lineWithTags, fromInteger(i));
                 CapPipe cap = fromMem(unpack(pack(d)));
@@ -1315,10 +1357,11 @@ endmodule
 
 
 
-module mkAllInCapPrefetcher2#(
+module mkCapChaserAllInPrefetcher#(
         Parameter#(maxCapSizeToPrefetch) _,
         Parameter#(onDemandHit) __,
-        Parameter#(onPrefetchHit) ___
+        Parameter#(onDemandMiss) ___,
+        Parameter#(onPrefetchHit) ____
 )(CheriPrefetcher) provisos (
     /* Assume 4KB pages */
     NumAlias#(pageIndexBits, 6),
@@ -1340,14 +1383,49 @@ module mkAllInCapPrefetcher2#(
     Reg#(Addr) prevBaseAddr1 <- mkRegU;
     Reg#(Addr) prevBaseAddr2 <- mkRegU;
 
+    Fifo#(4, PendingPrefetch) prefetchQ <- mkOverflowBypassFifo;
+
+    // Activating on a prefetch hit requires 50% confidence at least
+    function Bool activateOnPrefetchHit(PrefetchAuxData auxData);
+        return (auxData matches tagged CapChaserAuxData .d ? d.confidence[6:5] == 2'b11 : False);
+    endfunction
+
+    rule produceNextPrefetch(getLineAddr(nextPrefetchAddr_ongoing) < stopLineAddr);
+        if (verbose) $display("%t AllInCap produceNextPrefetch: addr: 0x%h, cap: ",
+            $time, 
+            nextPrefetchAddr_ongoing,
+            fshow(prefetchCap_ongoing)
+        );
+        // The amount to skip by for the next prefetch
+        Addr skipAmount = 64;
+        if (getLineAddr(nextPrefetchAddr_ongoing) + 1 == origLineAddr) begin
+            skipAmount = 128;
+        end
+        // Increase by the skip amount
+        nextPrefetchAddr_ongoing <= nextPrefetchAddr_ongoing + skipAmount;
+        prefetchCap_ongoing <= incOffset(prefetchCap_ongoing, skipAmount).value;
+        // Issue a prefetch
+        prefetchQ.enq(PendingPrefetch {
+            addr: nextPrefetchAddr_ongoing,
+            cap: prefetchCap_ongoing,
+            nextLevel: False,
+            auxData: auxData
+        });
+    endrule
+
     method Action reportAccess(Addr addr, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
         if (
-            // Prefetch on any miss, or a hit depending on configuration
-            (hitMiss == MISS || (isPrefetch ? valueOf(onPrefetchHit)!=0 : valueOf(onDemandHit)!=0)) &&
+            // Prefetch on hit/miss to a demand/prefetch access depending on configuration
+            (isPrefetch
+                ? (hitMiss == HIT ? (valueOf(onPrefetchHit)!=0 && activateOnPrefetchHit(prefetchAuxData)) : True)
+                : (hitMiss == HIT ? valueOf(onDemandHit)!=0 : valueOf(onDemandMiss)!=0)
+            ) &&
             // Only prefetch on loads with appropriate bounds
             memOp == Ld && boundsLength != 0 && boundsLength <= fromInteger(valueof(maxCapSizeToPrefetch)) &&
             // Not an access for the current, most recent, or previous prefetch
-            boundsVirtBase != prevBaseAddr1 && boundsVirtBase != prevBaseAddr2
+            boundsVirtBase != prevBaseAddr1 && boundsVirtBase != prevBaseAddr2 &&
+            // Did not originate from this prefetcher
+            !(prefetchAuxData matches tagged CapChaserAllInAuxData .* ? True : prefetchAuxData == CapChaserAllInEmpty)
         ) begin
             if (verbose) $display("%t AllInCap reportAccess: addr: 0x%h, hit: %b, isPrefetch: %b, boundsBase: 0x%h, boundsOffset: 0x%h, boundsLength: 0x%h",
                 $time, 
@@ -1378,12 +1456,7 @@ module mkAllInCapPrefetcher2#(
             if (getLineAddr(boundsBase) == getLineAddr(addr)) begin
                 skipAmount = 64;
             end
-            // Set prefetch registers
-            nextPrefetchAddr_new <= boundsBase + skipAmount;
-            stopLineAddr <= getLineAddr(boundsTop);
-            origLineAddr <= getLineAddr(addr);
-            // Keep any aux data from CapChaser to avoid infinite prefetch chaining
-            auxData <= (prefetchAuxData matches tagged CapChaserAuxData .* ? prefetchAuxData : NoPrefetchAuxData);
+            // Set prefetch registers    method ActionValue#(PendingPrefetch) getNextPrefetchAddr if (
 
             // Create a capability for the prefetches
             CapPipe cap = almightyCap;
@@ -1398,32 +1471,12 @@ module mkAllInCapPrefetcher2#(
         end
     endmethod
 
-    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, Bool hasSuccessor, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
     endmethod
 
-    method ActionValue#(PendingPrefetch) getNextPrefetchAddr if (
-        getLineAddr(nextPrefetchAddr_ongoing) < stopLineAddr
-    );
-        if (verbose) $display("%t AllInCap getNextPrefetchAddr: addr: 0x%h, cap: ",
-            $time, 
-            nextPrefetchAddr_ongoing,
-            fshow(prefetchCap_ongoing)
-        );
-        // The amount to skip by for the next prefetch
-        Addr skipAmount = 64;
-        if (getLineAddr(nextPrefetchAddr_ongoing) + 1 == origLineAddr) begin
-            skipAmount = 128;
-        end
-        // Increase by the skip amount
-        nextPrefetchAddr_ongoing <= nextPrefetchAddr_ongoing + skipAmount;
-        prefetchCap_ongoing <= incOffset(prefetchCap_ongoing, skipAmount).value;
-        // Issue a prefetch
-        return PendingPrefetch {
-            addr: nextPrefetchAddr_ongoing,
-            cap: prefetchCap_ongoing,
-            nextLevel: False,
-            auxData: auxData
-        };
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
+        prefetchQ.deq;
+        return prefetchQ.first;
     endmethod
 
     method ActionValue#(PrefetcherBroadcastData) getBroadcastData if (False);

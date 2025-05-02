@@ -61,7 +61,9 @@ typedef struct {
  */
 typedef union tagged {
     void NoPrefetchAuxData;
+    void CapChaserAllInEmpty;
     CapChaserAuxDataT CapChaserAuxData;
+    CapChaserAuxDataT CapChaserAllInAuxData;
 } PrefetchAuxData deriving (Bits, Eq, FShow);
 
 /* Data to be sent between prefetchers for training purposes.
@@ -100,9 +102,11 @@ endinterface
 interface CheriPrefetcher;
     (* always_ready *)
     method Action reportAccess(Addr addr, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
-    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    (* always_ready *)
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, Bool hasSuccessor, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr();
     method ActionValue#(PrefetcherBroadcastData) getBroadcastData;
+    (* always_ready *)
     method Action sendBroadcastData(PrefetcherBroadcastData data);
 `ifdef PERFORMANCE_MONITORING
     method EventsPrefetcher events();
@@ -112,9 +116,11 @@ endinterface
 interface CheriPCPrefetcher;
     (* always_ready *)
     method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
-    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, PCHash pcHash, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    (* always_ready *)
+    method Action reportCacheDataArrival(CLine lineWithTags, Addr addr, PCHash pcHash, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, Bool hasSuccessor, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr();
     method ActionValue#(PrefetcherBroadcastData) getBroadcastData;
+    (* always_ready *)
     method Action sendBroadcastData(PrefetcherBroadcastData data);
 `ifdef PERFORMANCE_MONITORING
     method EventsPrefetcher events();
@@ -122,10 +128,13 @@ interface CheriPCPrefetcher;
 endinterface
 
 interface PrefetcherVector#(numeric type size);
+    (* always_ready *)
     method ActionValue#(Tuple2#(PendingPrefetch, Bit#(TLog#(size)))) getNextPrefetchAddr;
+    (* always_ready *)
     method Action reportAccess(Bit#(TLog#(size)) idx, Addr addr, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
-    method Action reportCacheDataArrival(Bit#(TLog#(size)) idx, CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
+    method Action reportCacheDataArrival(Bit#(TLog#(size)) idx, CLine lineWithTags, Addr addr, MemOp memOp, Bool wasMiss, Bool wasPrefetch, Bool wasNextLevel, Bool hasSuccessor, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
     method ActionValue#(Tuple2#(PrefetcherBroadcastData, Bit#(TLog#(size)))) getBroadcastData;
+    (* always_ready *)
     method Action sendBroadcastData(Bit#(TLog#(size)) idx, PrefetcherBroadcastData data);
 `ifdef PERFORMANCE_MONITORING //Currently configured to return events from the 0th prefetcher
     method EventsPrefetcher events();

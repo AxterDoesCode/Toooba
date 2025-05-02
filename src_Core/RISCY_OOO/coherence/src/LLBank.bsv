@@ -1148,15 +1148,15 @@ endfunction
     endaction
     endfunction
 
-    function Action prefetcherReportCacheDataArrival(cRqT cRq, CLine lineWithTags, Bool wasMiss, Bool wasPrefetch, PrefetchAuxData prefetchAuxData);
+    function Action prefetcherReportCacheDataArrival(cRqT cRq, CLine lineWithTags, Bool wasMiss, Bool wasPrefetch, Bool hasSuccessor, PrefetchAuxData prefetchAuxData);
     action
         if (cRq.child[0] == 1) begin
             instrPrefetchers.reportCacheDataArrival(
-                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, False, prefetchAuxData, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
+                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, False, hasSuccessor, prefetchAuxData, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
             );
         end else begin
             dataPrefetchers.reportCacheDataArrival(
-                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, False, prefetchAuxData, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
+                truncateLSB(cRq.child), lineWithTags, cRq.addr, cRq.op, wasMiss, wasPrefetch, False, hasSuccessor, prefetchAuxData, cRq.boundsOffset, cRq.boundsLength, cRq.boundsVirtBase, cRq.capPerms
             );
         end
     endaction
@@ -1255,7 +1255,7 @@ endfunction
             line: ram.line // use line in ram
         }, True); // hit, so update rep info
         prefetcherReportAccess(cRq, HIT, cRqIsPrefetch[n], cRqPrefetchAuxData[n]);
-        prefetcherReportCacheDataArrival(cRq, ram.line, wasMiss, cRqIsPrefetch[n], cRqPrefetchAuxData[n]);
+        prefetcherReportCacheDataArrival(cRq, ram.line, wasMiss, cRqIsPrefetch[n], isValid(succ), cRqPrefetchAuxData[n]);
     endaction
     endfunction
 

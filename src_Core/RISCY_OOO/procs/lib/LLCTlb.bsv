@@ -105,7 +105,7 @@ typedef union tagged {
 } LLCTlbWait deriving(Bits, Eq, FShow);
 
 module mkLLCTlb(LLCTlb);
-    Bool verbose = True;
+    Bool verbose = False;
 
     // TLB array
     LLCTlbArray tlb <- mkLLCTlbArray;

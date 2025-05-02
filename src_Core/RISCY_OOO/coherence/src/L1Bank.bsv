@@ -464,8 +464,9 @@ endfunction
     rule notifyPrefetcherOfLlcHit;
         let resp = llcDataArrivalQ.first;
         llcDataArrivalQ.deq;
-        prefetcher.reportCacheDataArrival(fromMaybe(?, resp.data), resp.addr, /*pcHash:*/ 0, Ld, /* count as miss */ False, /* This is a prefetch */ True,
-            /* From the next level cache */ True, resp.prefetchAuxData, resp.boundsOffset, resp.boundsLength, resp.boundsVirtBase, /*capPerms:*/ unpack(0)
+        prefetcher.reportCacheDataArrival(fromMaybe(?, resp.data), resp.addr, /* pcHash */ 0, Ld, /* count as miss */ False, 
+            /* This is a prefetch */ True, /* From the next level cache */ True, /* No successor (that we know about) */ False, 
+            resp.prefetchAuxData, resp.boundsOffset, resp.boundsLength, resp.boundsVirtBase, /*capPerms */ unpack(0)
         );
     endrule
 
@@ -815,7 +816,7 @@ endfunction
                 cRqMshr.manageQueue.resetEntry(nextInQueue);
             end
             prefetcher.reportAccess(req.addr, req.pcHash, HIT, req.op, cRqIsPrefetch[n], cRqPrefetchAuxData[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
-            prefetcher.reportCacheDataArrival(curLine, req.addr, req.pcHash, req.op, wasMiss, cRqIsPrefetch[n], False, cRqPrefetchAuxData[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
+            prefetcher.reportCacheDataArrival(curLine, req.addr, req.pcHash, req.op, wasMiss, cRqIsPrefetch[n], False, isValid(succ), cRqPrefetchAuxData[n], req.boundsOffset, req.boundsLength, req.boundsVirtBase, req.capPerms);
             if (verbose)
                 $display("%t L1 %m pipelineResp: Hit func: update ram: ", $time,
                     fshow(newLine), " ; ",
