@@ -27,7 +27,7 @@ RVFI ?= false
 # See the builds/*_RVFI_DII_*/ Makefiles.
 
 # default 1 core
-CORE_NUM ?= 1
+CORE_NUM ?= 2
 # TSO or WEAK
 TSO_MM ?= true
 TSO_MM ?= true
