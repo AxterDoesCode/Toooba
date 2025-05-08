@@ -216,9 +216,6 @@ module mkITlb(ITlb::ITlb);
                 end
             end
         end
-        else if(pRs.entry == TlbDisabled) begin
-            doAssert(True, "L2TLB should not be disabled if ITLB sent a request");
-        end 
         else begin
             // page fault
             hitQ.enq(tuple3(?, Valid (excInstPageFault), False));

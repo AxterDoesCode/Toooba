@@ -146,7 +146,7 @@ typedef union tagged {
 
 (* synthesize *)
 module mkL2Tlb(L2Tlb::L2Tlb);
-    Bool verbose = False;
+    Bool verbose = True;
    
     // set associative TLB for 4KB pages
     L2SetAssocTlb tlb4KB <- mkL2SetAssocTlb;
@@ -310,6 +310,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         EventsLL ev = unpack(0);
         ev.evt_TLB_FLUSH = 1;
         perf_events[2] <= ev;
+        if (verbose) $display("%t L2TLB start flush", $time);
 `endif
     endrule
 
@@ -319,6 +320,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         iFlushReq <= False;
         dFlushReq <= False;
         llcFlushReq <= False;
+        if (verbose) $display("%t L2TLB done flush", $time);
     endrule
 
     // tlb req rule is preempted by page walk rule, i.e., don't fire when page

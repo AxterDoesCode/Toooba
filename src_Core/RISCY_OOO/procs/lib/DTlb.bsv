@@ -354,9 +354,6 @@ module mkDTlb#(
                 end
             end
         end
-        else if(pRs.entry == TlbDisabled) begin
-            doAssert(True, "L2TLB should not be disabled if TLB sent a request");
-        end 
         else begin
             // page fault
             Exception fault = r.write ? excStorePageFault : excLoadPageFault;

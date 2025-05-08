@@ -110,7 +110,7 @@ typedef union tagged {
 } LLCTlbWait deriving(Bits, Eq, FShow);
 
 module mkLLCTlb(LLCTlb);
-    Bool verbose = False;
+    Bool verbose = True;
 
     // TLB array
     LLCTlbArray tlb <- mkLLCTlbArray;
@@ -230,9 +230,6 @@ module mkLLCTlb(LLCTlb);
                 end
             end
         end
-        else if(pRs.entry == TlbDisabled) begin
-            doAssert(True, "L2TLB should not be disabled if TLB sent a request");
-        end 
         else begin
             // page fault
             pendResp[idx] <= tuple3(?, Valid (excLoadPageFault), False);
