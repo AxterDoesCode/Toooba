@@ -116,7 +116,7 @@ interface LLBank#(
     interface ParentCacheToChild#(cRqIdT, Bit#(TLog#(childNum))) to_child;
     interface DmaServer#(dmaRqIdT) dma;
     interface MemFifoClient#(LdMemRqId#(Bit#(TLog#(cRqNum))), void) to_mem;
-    interface LLCTlbToParent#(CombinedLLCTlbReqIdx) to_tlb;
+    interface LLCTlbToParent#(CombinedLLCTlbReqIdx, LLCTlbId) to_tlb;
     // Training data from L1 prefetchers
     method Action sendDataPrefetcherBroadcastData(Tuple2#(PrefetcherBroadcastData, LLCTlbId) data);
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
@@ -270,22 +270,32 @@ module mkLLBank#(
     // XBar for TLB requests to parent TLB
     RWire#(rqToL2TlbT) rqToL2TlbWire <- mkRWire;
     function XBarDstInfo#(Bit#(0), rqToL2TlbT) getTlbRqDstInfo(LLCTlbId idx, LLCTlbRqToP#(LLCTlbReqIdx) rq);
-        return XBarDstInfo {idx: 0, data: LLCTlbRqToP {
-            vpn: rq.vpn,
-            id: {rq.id, extend(idx)}
-        }};
+        return XBarDstInfo { idx: 0, data: LLCTlbRqToP { vpn: rq.vpn, id: {rq.id, extend(idx)} } };
     endfunction
     function Get#(LLCTlbRqToP#(LLCTlbReqIdx)) tlbRqGet(LLCTlb tlb) = tlb.toParent.lookup.request;
     mkXBar(getTlbRqDstInfo, map(tlbRqGet, dataLLCTlbs), vec(toPut(rqToL2TlbWire)));
+
+    // We don't really need a crossbar for TLB flush requests
+    RWire#(LLCTlbId) flushRqToL2TlbWire <- mkRWire;
+    for (Integer i=0; i < valueOf(CoreNum); i=i+1) begin
+        rule doForwardL2TlbFlushRq;
+            let x <- dataLLCTlbs[i].toParent.flush.request.get;
+            flushRqToL2TlbWire.wset(fromInteger(i));
+        endrule
+    end
 
     // Function for responses from parent TLBs
     function Action doForwardL2TlbResp(LLCTlbRsFromP#(CombinedLLCTlbReqIdx) rs);
     action
         LLCTlbId id = truncate(rs.id);
-        dataLLCTlbs[id].toParent.lookup.response.put(LLCTlbRsFromP {
-            entry: rs.entry,
-            id: truncateLSB(rs.id)
-        });
+        dataLLCTlbs[id].toParent.lookup.response.put(LLCTlbRsFromP {entry: rs.entry, id: truncateLSB(rs.id)});
+    endaction
+    endfunction
+
+    // Function for flush responses from parent TLBs
+    function Action doForwardL2TlbFlushResp(LLCTlbId rs);
+    action
+        dataLLCTlbs[rs].toParent.flush.response.put(?);
     endaction
     endfunction
 
@@ -315,43 +325,65 @@ module mkLLBank#(
     Count#(Data) dmaStReqCnt <- mkCount(0);
 `endif
 `ifdef PERFORMANCE_MONITORING
-    Array #(Reg #(EventsLL)) perf_events <- mkDRegOR (5, unpack (0));
+    Array #(Reg #(EventsLL)) perf_events <- mkDRegOR (6, unpack (0));
 `endif
-function Action incrMissCnt(cRqT cRq, cRqIndexT idx, Bool isDma, Bool isInstructionAccess);
-action
-    let lat <- latTimer.done(idx);
+
+    function Action incrMissCnt(cRqT cRq, cRqIndexT idx, Bool isDma, Bool isInstructionAccess);
+    action
+        let lat <- latTimer.done(idx);
 `ifdef PERF_COUNT
-    if(doStats) begin
-        if(isDma) begin
-            dmaMemLdCnt.incr(1);
-            dmaMemLdLat.incr(zeroExtend(lat));
+        if(doStats) begin
+            if(isDma) begin
+                dmaMemLdCnt.incr(1);
+                dmaMemLdLat.incr(zeroExtend(lat));
+            end
+            else if (isInstructionAccess) begin
+                instructionLdCnt.incr(1);
+                instructionLdLat.incr(zeroExtend(lat));
+            end
+            else begin
+                normalMemLdCnt.incr(1);
+                normalMemLdLat.incr(zeroExtend(lat));
+            end
         end
-        else if (isInstructionAccess) begin
-            instructionLdCnt.incr(1);
-            instructionLdLat.incr(zeroExtend(lat));
-        end
-        else begin
-            normalMemLdCnt.incr(1);
-            normalMemLdLat.incr(zeroExtend(lat));
-        end
-    end
 `endif
 `ifdef PERFORMANCE_MONITORING
-    EventsLL events = unpack (0);
-    events.evt_LD_MISS_LAT = saturating_truncate(lat);
-    events.evt_LD_MISS = 1;
-    perf_events[1] <= events;
+        EventsLL events = unpack (0);
+        events.evt_LD_MISS_LAT = saturating_truncate(lat);
+        events.evt_LD_MISS = 1;
+        perf_events[1] <= events;
 `endif
-endaction
-endfunction
+    endaction
+    endfunction
 
+    function Action incrPrefectchCnt;
+    action
+`ifdef PERFORMANCE_MONITORING
+        EventsLL events = unpack (0);
+        events.evt_ST = 1;
+        perf_events[2] <= events;
+`endif
+    endaction
+    endfunction
+
+
+
+`ifdef PERFORMANCE_MONITORING
     rule checkIfMshrFull;
         if (cRqMshr.isFull)  begin
-            EventsLL events = unpack(0);
-            events.evt_LD = 1;
-            perf_events[2] <= events;
+            //EventsLL events = unpack(0);
+            //events.evt_LD = 1;
+            //perf_events[2] <= events;
         end
     endrule
+
+    function EventsLL foldLLCTlbPerfEvents(EventsLL e, LLCTlb llcTlb);
+        return unpack(pack(e) | pack(llcTlb.events));
+    endfunction
+    rule foldInLLCTlbPerfEvents;
+        perf_events[5] <= foldl(foldLLCTlbPerfEvents, unpack(0), dataLLCTlbs);
+    endrule
+`endif
     
 
 
@@ -482,6 +514,9 @@ endfunction
             }));
             cRqIsPrefetch[n] <= r.isPrefetchRq;
             cRqPrefetchAuxData[n] <= r.prefetchAuxData;
+            if (r.isPrefetchRq) begin
+                incrPrefectchCnt;
+            end
             // change round robin
             flipPriorNewCRqSrc;
             if (verbose)
@@ -538,6 +573,7 @@ endfunction
         }));
         cRqIsPrefetch[n] <= True;
         cRqPrefetchAuxData[n] <= r.prefetchAuxData;
+        incrPrefectchCnt;
 
         // change round robin
         //flipPriorNewCRqSrc;
@@ -560,7 +596,7 @@ endfunction
 
     // create new request from data prefetcher and send to pipeline
     // Rule only fires when no work from child and DMA
-    rule createDataPrefetchRq(newCRqSrc == Invalid);
+    rule createDataPrefetchRq(newCRqSrc == Invalid && crqMshrEnqs - crqMshrDeqs < 12);
         let x <- dataPrefetchers.getNextPrefetchAddr;
         match {.prefetch, .cacheIdx} = x;
         doAssert(!prefetch.nextLevel, "cannot issue a next-level prefetch in the LLCache");
@@ -590,6 +626,7 @@ endfunction
         }));
         cRqIsPrefetch[n] <= True;
         cRqPrefetchAuxData[n] <= prefetch.auxData;
+        incrPrefectchCnt;
         // change round robin
         flipPriorNewCRqSrc;
         if (verbose)
@@ -611,7 +648,7 @@ endfunction
 
     // create new request from instruction prefetcher and send to pipeline
     // Rule only fires when no work from child and DMA
-    rule createInstrPrefetchRq(newCRqSrc == Invalid);
+    rule createInstrPrefetchRq(newCRqSrc == Invalid && crqMshrEnqs - crqMshrDeqs < 12);
         let x <- instrPrefetchers.getNextPrefetchAddr;
         match {.prefetch, .cacheIdx} = x;
         //Request from L1D of cacheIdx-th core
@@ -640,6 +677,7 @@ endfunction
         }));
         cRqIsPrefetch[n] <= True;
         cRqPrefetchAuxData[n] <= prefetch.auxData;
+        //incrPrefectchCnt;
         // change round robin
         flipPriorNewCRqSrc;
        if (verbose)
@@ -1204,7 +1242,7 @@ endfunction
             if (verbose) $display("%t LL demand hit on prefetched cache line %h", $time, cRq.addr);
         `ifdef PERFORMANCE_MONITORING
             EventsLL evt = unpack(0);
-            evt.evt_ST = 1;
+            evt.evt_TLB_FLUSH = 1;
             perf_events[3] <= evt;
         `endif
         end
@@ -1920,6 +1958,10 @@ endfunction
         interface Client lookup;
             interface request = toGet(rqToL2TlbWire);
             interface response = toPut(doForwardL2TlbResp);
+        endinterface
+        interface Client flush;
+            interface request = toGet(flushRqToL2TlbWire);
+            interface response = toPut(doForwardL2TlbFlushResp);
         endinterface
     endinterface
 

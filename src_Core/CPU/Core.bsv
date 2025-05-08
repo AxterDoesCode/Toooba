@@ -177,7 +177,7 @@ interface Core;
     interface ChildCacheToParent#(L1Way, void) dCacheToParent;
     interface ChildCacheToParent#(L1Way, void) iCacheToParent;
     // Core to Prefetcher TLB in the LLC
-    interface ParentToLLCTlb#(LLCTlbReqIdx) toLLCTlb;
+    interface ParentToLLCTlb#(LLCTlbReqIdx, void) toLLCTlb;
     method Action shouldFlushLLCTlb;
     method ActionValue#(VMInfo) shouldUpdateLLCTlbVMInfo;
     // DMA to LLC
@@ -558,7 +558,17 @@ module mkCore#(CoreId coreId)(Core);
     L2Tlb l2Tlb <- mkL2Tlb;
     Fifo#(1, LLCTlbRqToP#(LLCTlbReqIdx)) rqFromLLCTlbQ <- mkCFFifo;
     Fifo#(1, LLCTlbRsFromP#(LLCTlbReqIdx)) rsToLLCTlbQ <- mkCFFifo;
-    mkTlbConnect(iTlb.toParent, dTlb.toParent, toFifoDeq(rqFromLLCTlbQ), toFifoEnq(rsToLLCTlbQ), l2Tlb.toChildren);
+    Fifo#(1, void) flushRqFromLLCTlbQ <- mkCFFifo;
+    Fifo#(1, void) flushRsToLLCTlbQ <- mkCFFifo;
+    mkTlbConnect(
+        iTlb.toParent, 
+        dTlb.toParent, 
+        toGet(rqFromLLCTlbQ), 
+        toPut(rsToLLCTlbQ), 
+        toGet(flushRqFromLLCTlbQ), 
+        toPut(flushRsToLLCTlbQ), 
+        l2Tlb.toChildren
+    );
 
     // flags to flush
     Reg#(Bool) flush_tlbs <- mkReg(False);
@@ -1205,10 +1215,21 @@ module mkCore#(CoreId coreId)(Core);
      EventsTGC tgc_evts = events_tgc_reg;
      EventsLL llmem_evts = unpack(pack(events_llc_reg) | pack(l2Tlb.events));
 
+     core_evts.evt_TRAP = dmem_evts.evt_AMO;
      core_evts.evt_JAL = dmem_evts.evt_AMO_MISS;
      core_evts.evt_JALR = dmem_evts.evt_AMO_MISS_LAT;
-     core_evts.evt_TRAP = llmem_evts.evt_LD;
+
+     core_evts.evt_REDIRECT = llmem_evts.evt_EVICT;
+     tgc_evts.evt_EVICT = llmem_evts.evt_TLB_FLUSH;
+     tgc_evts.evt_WRITE = llmem_evts.evt_ST;
+
      core_evts.evt_BRANCH = (rob.isFull_ehrPort0) ? 1 : 0;
+
+     tgc_evts.evt_READ = events_llc_reg.evt_TLB;
+     tgc_evts.evt_READ_MISS = events_llc_reg.evt_TLB_MISS;
+
+
+        /*
      tgc_evts.evt_READ = dmem_evts.evt_TLB_FLUSH;
      tgc_evts.evt_READ_MISS = dmem_evts.evt_ST_MISS_LAT;
      tgc_evts.evt_WRITE = dmem_evts.evt_AMO;
@@ -1217,6 +1238,7 @@ module mkCore#(CoreId coreId)(Core);
      dmem_evts.evt_TLB = llmem_evts.evt_EVICT;
      core_evts.evt_MEM_CAP_LOAD_TAG_SET = llmem_evts.evt_ST;
      imem_evts.evt_LD = llmem_evts.evt_ST;
+     */
      Maybe#(EventsTransExe) mab_trans_exe = tagged Invalid;
 
 
@@ -1581,6 +1603,10 @@ module mkCore#(CoreId coreId)(Core);
         interface Server lookup;
             interface request = toPut(rqFromLLCTlbQ);
             interface response = toGet(rsToLLCTlbQ);
+        endinterface
+        interface Server flush;
+            interface request = toPut(flushRqFromLLCTlbQ);
+            interface response = toGet(flushRsToLLCTlbQ);
         endinterface
     endinterface
 

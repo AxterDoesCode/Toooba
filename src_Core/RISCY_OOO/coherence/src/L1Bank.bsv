@@ -266,12 +266,8 @@ action
 `ifdef PERFORMANCE_MONITORING
     EventsL1D events = unpack (0);
     case(op)
-        Ld: begin 
-            //events.evt_LD = 1;
-        end
-        St: begin 
-            //events.evt_ST = 1;
-        end
+        Ld: events.evt_LD = 1;
+        St: events.evt_ST = 1;
         Lr, Sc, Amo: begin end//events.evt_AMO = 1;
     endcase
     perf_events[0] <= events;
@@ -309,7 +305,7 @@ action
             events.evt_LD_MISS = 1;
         end
         St: begin
-            //events.evt_ST_MISS_LAT = saturating_truncate(lat);
+            events.evt_ST_MISS_LAT = saturating_truncate(lat);
             events.evt_ST_MISS = 1;
         end
         Lr, Sc, Amo: begin
@@ -340,12 +336,12 @@ endfunction
         if (cRqMshr.isFull)  begin
             //events.evt_AMO_MISS = 1;
         end
-        events.evt_ST = prefetcher.events.evt_0;
-        events.evt_ST_MISS_LAT = prefetcher.events.evt_1;
-        events.evt_AMO = prefetcher.events.evt_2;
-        events.evt_EVICT = prefetcher.events.evt_3;
-        events.evt_TLB_FLUSH = prefetcher.events.evt_4;
-        perf_events[2] <= events;
+        //events.evt_ST = prefetcher.events.evt_0;
+        //events.evt_ST_MISS_LAT = prefetcher.events.evt_1;
+        //events.evt_AMO = prefetcher.events.evt_2;
+        //events.evt_EVICT = prefetcher.events.evt_3;
+        //events.evt_TLB_FLUSH = prefetcher.events.evt_4;
+        //perf_events[2] <= events;
     endrule
     
 
@@ -491,6 +487,9 @@ endfunction
             };
             rqToPQ.enq(cRqToP);
             if (verbose) $display("%t L1 %m sendPrefetchRqToP: ", $time, fshow(cRqToP));
+            EventsL1D events = unpack (0);
+            events.evt_AMO_MISS_LAT = 1;
+            perf_events[2] <= events;
         end else begin
             procRqT r = ProcRq {
                 id: ?, //Or maybe do 0 here
@@ -734,7 +733,7 @@ endfunction
             usedPrefetchCnt.incr(1);
         `endif
             EventsL1D events = unpack (0);
-            events.evt_LD = 1;
+            events.evt_AMO = 1;
             perf_events[4] <= events;
         end
         case(req.op) matches
@@ -1220,7 +1219,7 @@ endfunction
             end
             else begin
                 EventsL1D events = unpack (0);
-                events.evt_AMO_MISS_LAT = 1;
+                events.evt_AMO_MISS = 1;
                 perf_events[3] <= events;
             end
         end

@@ -314,7 +314,7 @@ module mkL1CapChaserPrefetcher#(
 
     // Queues for observed capabilities
     // observedCLineQ can probably get away with being bypass..? It's also on the critical path for prefetching.
-    Fifo#(4, observedCLineT) observedCLineQ <- mkOverflowBypassFifo;
+    Fifo#(8, observedCLineT) observedCLineQ <- mkOverflowBypassFifo;
     Fifo#(1, UInt#(2)) observedCapRespQ <- mkPipelineFifo;
     Reg#(Vector#(4, Bool)) unprocessedObservedCap <- mkReg(replicate(True));
 
@@ -381,16 +381,7 @@ module mkL1CapChaserPrefetcher#(
         return fixpoint[6:5] == 2'b11; // >= 75% 
     endfunction
     function Bool isL2LevelConfidence(Bit#(fixPointConfBits) fixpoint);
-        return fixpoint[6:5] != 0; // >= 12.5%
-    endfunction
-
-    // A rough estimate for whether we should filter out future prefetches based on the value of nFetched
-    // We don't know the fixed point confidence at this point
-    function Bool shouldAddFilter(auxDataT auxData, Bit#(ptrTableConfBits) nFetched);
-        // If we have started chaining, then don't add a filter
-        // Otherwise, if the confidence is at least 50%, then add a filter
-        // i.e. we expect to have some chaining
-        return valueOf(useFiltering)!=0 && (isValid(auxData) ? False : nFetched >= 7); 
+        return fixpoint[6:5] != 0; // >= 25%
     endfunction
 
     // Whether we have inited
@@ -413,7 +404,6 @@ module mkL1CapChaserPrefetcher#(
             return Invalid;
         end
     endfunction
-
 
 
     /* Init the prefetcher */
@@ -594,7 +584,6 @@ module mkL1CapChaserPrefetcher#(
         // If the cache line is to be prefetched on, check if we hit the pointer table.
         // Also check that we hit (i.e. tag matches), we are not filtered out by the training table, 
         // and we have some chance of prefetching.
-        Bool createFilter = False;
         if (ptrTable.rdResp matches tagged Valid {.way, tagged Valid .entry} &&& !filterPrefetch && entry.nSeen != 0) begin
             // Check the pointer table and fill in the prefetch offset.
             // If we see two capabilities of the same size, then we're probably seeing a chain of the same datastructure,
@@ -602,8 +591,6 @@ module mkL1CapChaserPrefetcher#(
             // If it's a different size, we'll either use the offset we found in memory, or one where
             // we know that there's a capability.
             CapPipe prefetchCap = (observedCap.sizeMatch ? observedCap.cap : setOffset(observedCap.cap, extend(entry.bestOffset << 4)).value);
-            // We might want to filter out prefetching this cap in the future
-            createFilter = shouldAddFilter(observedCLine.auxData, entry.nFetched); 
             // Simply add as a candidate prefetch
             // We can't really do the division on this clock cycle
             candidateQ.enq(CapChaserL1CandidatePrefetch{
@@ -617,16 +604,15 @@ module mkL1CapChaserPrefetcher#(
         ptrTable.deqRdResp;
 
         // Write to the training table
-        // Remember whether we intended to issue a prefetch so we can use the training table as a filter
         trainingTable.wrReq(tIdx, Valid (CapChaserL1TtEntry {
             tag: tTag,
             ptrTableIdxTag: observedCap.ptrTableIdxTag,
             trained: (untrainedHit ? False : !observedCLine.train),
-            filter: createFilter
+            filter: valueOf(useFiltering)!=0 && (filterPrefetch || observedCap.demanded)
         }));
 
         // Print that we observed a capability and are trying to prefetch
-        if (verbose) $display("%t CapChaser L1 observed cap vbase: 0x%h, offset: 0x%h, length: 0x%h, ptIdxTag: 0x%h, ttIdxTag: 0x%h, train: %b, missed: %b, filter: %b, createFilter: %b, sizeMatch: %b, demanded: %b",
+        if (verbose) $display("%t CapChaser L1 observed cap vbase: 0x%h, offset: 0x%h, length: 0x%h, ptIdxTag: 0x%h, ttIdxTag: 0x%h, train: %b, missed: %b, filter: %b, sizeMatch: %b, demanded: %b",
             $time,
             getBase(observedCap.cap),
             getOffset(observedCap.cap),
@@ -636,7 +622,6 @@ module mkL1CapChaserPrefetcher#(
             observedCLine.train,
             observedCLine.missed,
             filterPrefetch,
-            createFilter,
             observedCap.sizeMatch,
             observedCap.demanded
         );
@@ -1361,11 +1346,21 @@ module mkCapChaserAllInPrefetcher#(
         Parameter#(maxCapSizeToPrefetch) _,
         Parameter#(onDemandHit) __,
         Parameter#(onDemandMiss) ___,
-        Parameter#(onPrefetchHit) ____
+        Parameter#(onPrefetchHit) ____,
+        Parameter#(onPrefetchMiss) _____
 )(CheriPrefetcher) provisos (
     /* Assume 4KB pages */
-    NumAlias#(pageIndexBits, 6),
-    Alias#(pageAddressT, Bit#(TSub#(LineAddrSz, pageIndexBits)))
+    NumAlias#(pageIndexBits, 12),
+    Alias#(pageAddressT, Bit#(TSub#(AddrSz, pageIndexBits))),
+    Alias#(pageIndexT, Bit#(pageIndexBits)),
+
+    // For confidence calculation
+    NumAlias#(prefetchHitCheckBits, TSub#(TMax#(1, onPrefetchHit), 1)),
+    NumAlias#(prefetchMissCheckBits, TSub#(TMax#(1, onPrefetchMiss), 1)),
+
+    // Provisos for the above
+    Add#(prefetchHitCheckBits, a__, 7),
+    Add#(prefetchMissCheckBits, b__, 7)
 );
     Bool verbose = True;
 
@@ -1383,14 +1378,30 @@ module mkCapChaserAllInPrefetcher#(
     Reg#(Addr) prevBaseAddr1 <- mkRegU;
     Reg#(Addr) prevBaseAddr2 <- mkRegU;
 
-    Fifo#(4, PendingPrefetch) prefetchQ <- mkOverflowBypassFifo;
+    Fifo#(8, PendingPrefetch) prefetchQ <- mkOverflowBypassFifo;
 
-    // Activating on a prefetch hit requires 50% confidence at least
     function Bool activateOnPrefetchHit(PrefetchAuxData auxData);
-        return (auxData matches tagged CapChaserAuxData .d ? d.confidence[6:5] == 2'b11 : False);
+        if (valueOf(onPrefetchHit)==0) begin
+            return False;
+        end else if (auxData matches tagged CapChaserAuxData .d) begin
+            Bit#(prefetchHitCheckBits) check = truncateLSB(d.confidence);
+            return (valueOf(onPrefetchHit)==1) || (check == ~0);
+        end else begin
+            return False;
+        end
+    endfunction
+    function Bool activateOnPrefetchMiss(PrefetchAuxData auxData);
+        if (valueOf(onPrefetchMiss)==0) begin
+            return False;
+        end else if (auxData matches tagged CapChaserAuxData .d) begin
+            Bit#(prefetchMissCheckBits) check = truncateLSB(d.confidence);
+            return (valueOf(onPrefetchMiss)==1) || (check == ~0);
+        end else begin
+            return False;
+        end
     endfunction
 
-    rule produceNextPrefetch(getLineAddr(nextPrefetchAddr_ongoing) < stopLineAddr);
+    rule produceNextPrefetch(getLineAddr(nextPrefetchAddr_ongoing) <= stopLineAddr);
         if (verbose) $display("%t AllInCap produceNextPrefetch: addr: 0x%h, cap: ",
             $time, 
             nextPrefetchAddr_ongoing,
@@ -1417,7 +1428,7 @@ module mkCapChaserAllInPrefetcher#(
         if (
             // Prefetch on hit/miss to a demand/prefetch access depending on configuration
             (isPrefetch
-                ? (hitMiss == HIT ? (valueOf(onPrefetchHit)!=0 && activateOnPrefetchHit(prefetchAuxData)) : True)
+                ? (hitMiss == HIT ? activateOnPrefetchHit(prefetchAuxData) : activateOnPrefetchMiss(prefetchAuxData))
                 : (hitMiss == HIT ? valueOf(onDemandHit)!=0 : valueOf(onDemandMiss)!=0)
             ) &&
             // Only prefetch on loads with appropriate bounds
@@ -1439,30 +1450,38 @@ module mkCapChaserAllInPrefetcher#(
 
             // Get the physical bounds base and top
             Addr boundsBase = addr-boundsOffset;
-            Addr boundsTop = addr+boundsLength-boundsOffset-1;
+            Addr boundsTop = boundsBase+boundsLength-1;
             // Get base, access, and top page addresses
             pageAddressT basePage = truncateLSB(boundsBase);
             pageAddressT addrPage = truncateLSB(addr);
             pageAddressT topPage = truncateLSB(boundsTop);
             // If the access is in a different page to the base/top, clamp to only prefetch within this page
+            Addr offset = 0;
             if (basePage != addrPage) begin
+                pageIndexT pageIdx = truncate(addr);
+                offset = boundsOffset - extend(pageIdx);
                 boundsBase = Addr'{addrPage, 0};
             end
             if (topPage != addrPage) begin
-                boundsTop = Addr'{addrPage+1, 0};
+                boundsTop = Addr'{addrPage, ~0};
             end
             // If the access was for the first cache line of the capability, skip straight to the second
-            Addr skipAmount = 0;
             if (getLineAddr(boundsBase) == getLineAddr(addr)) begin
-                skipAmount = 64;
+                boundsBase = boundsBase + 64;
+                offset = offset + 64;
             end
-            // Set prefetch registers    method ActionValue#(PendingPrefetch) getNextPrefetchAddr if (
+            // Set prefetch registers
+            nextPrefetchAddr_new <= boundsBase;
+            stopLineAddr <= getLineAddr(boundsTop);
+            origLineAddr <= getLineAddr(addr);
+            // Keep any aux data from CapChaser to avoid infinite prefetch chaining
+            auxData <= (prefetchAuxData matches tagged CapChaserAuxData .auxData ? CapChaserAllInAuxData(auxData) : CapChaserAllInEmpty);
 
             // Create a capability for the prefetches
             CapPipe cap = almightyCap;
             let cap1 = setAddr(cap, boundsVirtBase);
             let cap2 = setBounds(cap1.value, boundsLength);
-            let cap3 = setOffset(cap2.value, skipAmount);
+            let cap3 = setOffset(cap2.value, offset);
             prefetchCap_new <= cap3.value;
 
             // Remember the last base address we prefetched on

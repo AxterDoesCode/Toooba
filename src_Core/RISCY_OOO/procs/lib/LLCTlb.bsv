@@ -70,12 +70,14 @@ typedef struct {
     idxT id;
 } LLCTlbRsFromP#(type idxT) deriving(Bits, Eq, FShow);
 
-interface LLCTlbToParent#(type idxT);
+interface LLCTlbToParent#(type idxT, type flushT);
     interface Client#(LLCTlbRqToP#(idxT), LLCTlbRsFromP#(idxT)) lookup;
+    interface Client#(flushT, flushT) flush;
 endinterface
 
-interface ParentToLLCTlb#(type idxT);
+interface ParentToLLCTlb#(type idxT, type flushT);
     interface Server#(LLCTlbRqToP#(idxT), LLCTlbRsFromP#(idxT)) lookup;
+    interface Server#(flushT, flushT) flush;
 endinterface
 
 interface LLCTlb;
@@ -88,7 +90,10 @@ interface LLCTlb;
     interface TlbToPrefetcher toPrefetcher;
 
     // req/resp with L2 TLB
-    interface LLCTlbToParent#(LLCTlbReqIdx) toParent;
+    interface LLCTlbToParent#(LLCTlbReqIdx, void) toParent;
+    `ifdef PERFORMANCE_MONITORING
+        method EventsLL events;
+    `endif
 endinterface
 
 typedef FullAssocTlb#(LLCTlbSize) LLCTlbArray;
@@ -112,6 +117,7 @@ module mkLLCTlb(LLCTlb);
 
     // processor init flushing by setting this flag
     Reg#(Bool) needFlush <- mkReg(False);
+    Reg#(Bool) waitFlushP <- mkReg(False);
 
     // current processor VM information
     Reg#(VMInfo) vm_info <- mkReg(defaultValue);
@@ -144,6 +150,10 @@ module mkLLCTlb(LLCTlb);
     // req & resp with parent TLB
     Fifo#(LLCTlbReqNum, LLCTlbRqToP#(LLCTlbReqIdx)) rqToPQ <- mkCFFifo; // large enough so won't block on enq
     Fifo#(2, LLCTlbRsFromP#(LLCTlbReqIdx)) rsFromPQ <- mkCFFifo;
+
+    // flush req/resp with parent TLB
+    Fifo#(1, void) flushRqToPQ <- mkCFFifo;
+    Fifo#(1, void) flushRsFromPQ <- mkCFFifo;
     
     // When a resp comes, we first process for the initiating req, then process
     // other reqs that in WaitPeer.
@@ -152,10 +162,27 @@ module mkLLCTlb(LLCTlb);
     // do flush: start when all misses resolve
     Bool noMiss = all(\== (False) , readVReg(pendValid_noMiss));
 
-    rule doFlush(needFlush && noMiss);
+    // LLC TLB performance events
+    `ifdef PERFORMANCE_MONITORING
+        Array#(Reg#(EventsLL)) perf_events <- mkDRegOR (3, unpack (0));
+    `endif
+
+    rule doFlush(needFlush && !waitFlushP && noMiss);
         if(verbose) $display ("%t LLCTlb doFlush", $time);
         tlb.flush;
+        flushRqToPQ.enq(?);
+        waitFlushP <= True;
+
+        EventsLL ev = unpack(0);
+        ev.evt_TLB_FLUSH = 1;
+        perf_events[2] <= ev;
+    endrule
+
+    rule doFinishFlush(needFlush && waitFlushP);
+        flushRsFromPQ.deq;
         needFlush <= False;
+        waitFlushP <= False;
+        if(verbose) $display("[LLCTlb] flush done");
     endrule
 
     // get resp from parent TLB
@@ -240,6 +267,11 @@ module mkLLCTlb(LLCTlb);
             respForOtherReq <= Invalid;
             rsFromPQ.deq;
         end
+
+        // Performance monitoring
+        EventsLL ev = unpack(0);
+        ev.evt_TLB_MISS = 1;
+        perf_events[0] <= ev;
     endrule
 
     // init freeQ
@@ -384,10 +416,16 @@ module mkLLCTlb(LLCTlb);
             pendResp[idx] <= tuple3(vaddr, Invalid, True);
             if(verbose) $display("LLCTlb %m req (bare): vaddr: %h", vaddr);
         end
+
+        // Performance monitoring
+        EventsLL ev = unpack(0);
+        ev.evt_TLB = 1;
+        perf_events[1] <= ev;
     endrule
     
     method Action flush if(!needFlush);
         needFlush <= True;
+        waitFlushP <= False;
         if(verbose) $display("%t LLCTlb flush", $time);
         // this won't interrupt current processing, since
         // (1) miss process will continue even if needFlush=True
@@ -445,7 +483,14 @@ module mkLLCTlb(LLCTlb);
             interface request = toGet(rqToPQ);
             interface response = toPut(rsFromPQ);
         endinterface
+        interface Client flush;
+            interface request = toGet(flushRqToPQ);
+            interface response = toPut(flushRsFromPQ);
+        endinterface
     endinterface
 
+    `ifdef PERFORMANCE_MONITORING
+        method EventsLL events = perf_events[0];
+    `endif
 
 endmodule

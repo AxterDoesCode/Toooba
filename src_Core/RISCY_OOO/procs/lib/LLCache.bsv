@@ -256,7 +256,7 @@ interface LLCache;
     interface ParentCacheToChild#(LLCRqId, LLChild) to_child;
     interface DmaServer#(LLCDmaReqId) dma;
     interface MemFifoClient#(LdMemRqId#(LLCRqMshrIdx), void) to_mem;
-    interface LLCTlbToParent#(CombinedLLCTlbReqIdx) to_tlb;
+    interface LLCTlbToParent#(CombinedLLCTlbReqIdx, LLCTlbId) to_tlb;
     method Action sendDataPrefetcherBroadcastData(Tuple2#(PrefetcherBroadcastData, Bit#(TLog#(CoreNum))) data);
     method Action flushTlb(LLCTlbId idx);
     method Action updateTlbVMInfo(LLCTlbId idx, VMInfo vm);

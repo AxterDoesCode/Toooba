@@ -61,6 +61,61 @@ import SignaturePathPrefetcher::*;
     `define DATA_PREFETCHER_IN_L1
 `endif
 
+`ifdef DATA_PREFETCHER_CAP_CHASER_ALLIN_H_ALWAYS_M_ALWAYS
+    `define DATA_PREFETCHER_CAP_CHASER_ALLIN
+    `define ALLIN_H 1
+    `define ALLIN_M 1
+`endif
+
+`ifdef DATA_PREFETCHER_CAP_CHASER_ALLIN_H_50_M_50
+    `define DATA_PREFETCHER_CAP_CHASER_ALLIN
+    `define ALLIN_H 2
+    `define ALLIN_M 2
+`endif
+`ifdef DATA_PREFETCHER_CAP_CHASER_ALLIN_H_50_M_ALWAYS
+    `define DATA_PREFETCHER_CAP_CHASER_ALLIN
+    `define ALLIN_H 2
+    `define ALLIN_M 1
+`endif
+
+`ifdef DATA_PREFETCHER_CAP_CHASER_ALLIN_H_75_M_75
+    `define DATA_PREFETCHER_CAP_CHASER_ALLIN
+    `define ALLIN_H 3
+    `define ALLIN_M 3
+`endif
+`ifdef DATA_PREFETCHER_CAP_CHASER_ALLIN_H_75_M_50
+    `define DATA_PREFETCHER_CAP_CHASER_ALLIN
+    `define ALLIN_H 3
+    `define ALLIN_M 2
+`endif
+`ifdef DATA_PREFETCHER_CAP_CHASER_ALLIN_H_75_M_ALWAYS
+    `define DATA_PREFETCHER_CAP_CHASER_ALLIN
+    `define ALLIN_H 3
+    `define ALLIN_M 1
+`endif
+
+`ifdef DATA_PREFETCHER_CAP_CHASER_ALLIN_H_NEVER_M_NEVER
+    `define DATA_PREFETCHER_CAP_CHASER_ALLIN
+    `define ALLIN_H 0
+    `define ALLIN_M 0
+`endif
+`ifdef DATA_PREFETCHER_CAP_CHASER_ALLIN_H_NEVER_M_75
+    `define DATA_PREFETCHER_CAP_CHASER_ALLIN
+    `define ALLIN_H 0
+    `define ALLIN_M 3
+`endif
+`ifdef DATA_PREFETCHER_CAP_CHASER_ALLIN_H_NEVER_M_50
+    `define DATA_PREFETCHER_CAP_CHASER_ALLIN
+    `define ALLIN_H 0
+    `define ALLIN_M 2
+`endif
+`ifdef DATA_PREFETCHER_CAP_CHASER_ALLIN_H_NEVER_M_ALWAYS
+    `define DATA_PREFETCHER_CAP_CHASER_ALLIN
+    `define ALLIN_H 0
+    `define ALLIN_M 1
+`endif
+
+
 module mkDoNothingPrefetcher(Prefetcher);
     method Action reportAccess(Addr addr, HitOrMiss hitMiss);
     endmethod
@@ -656,59 +711,18 @@ module mkL1DPrefetcher#(TlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(2048) bitmapTableSize <- mkParameter;
         Parameter#(4) filterTableSize <- mkParameter;
         Parameter#(128) inverseDecayChanceSpatial <- mkParameter;
-        ms[1] = mkCapBitmapPrefetcher(maxCapSizeToTrack, bitmapTableSize, filterTableSize, inverseDecayChanceSpatial);
+        ms[1] = mkNextLevelPrefetcherAdapter(mkCapBitmapPrefetcher(maxCapSizeToTrack, bitmapTableSize, filterTableSize, inverseDecayChanceSpatial));
 
         let m <- mkCheriPCPrefetcherMultiplier(ms);
-    `elsif DATA_PREFETCHER_CAP_PTR_HYBRID
-        Vector#(2, module#(CheriPCPrefetcher)) ms;
-
-        Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
-        Parameter#(0) onDemandHit <- mkParameter;
-        Parameter#(0) onDemandMiss <- mkParameter;
-        Parameter#(0) onPrefetchHit <- mkParameter;
-        ms[0] = mkCheriPCPrefetcherAdapterFromPC(mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit));
-
-        Parameter#(2097152) maxCapSizeToTrack <- mkParameter;
-        Parameter#(4096) ptrTableSize <- mkParameter; 
-        Parameter#(64) trainingTableSize <- mkParameter;
-        Parameter#(4) inverseDecayChance <- mkParameter;
-        Parameter#(0) onlyOnMiss <- mkParameter;
-        Parameter#(0) onlyExactCap <- mkParameter;
-        ms[1] = mkCheriPCPrefetcherAdapterFromCheri(mkCapPtrPrefetcherNonPC(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap));
-
-        let m <- mkCheriPCPrefetcherMultiplier(ms);
-    `elsif DATA_PREFETCHER_CAP_CHASER_ALLINBASELINE
-        Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
-        Parameter#(0) onDemandHit <- mkParameter;
-        Parameter#(1) onDemandMiss <- mkParameter;
-        Parameter#(0) onPrefetchHit <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapterFromCheri(mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit));
     `elsif DATA_PREFETCHER_CAP_CHASER
         Vector#(2, module#(CheriPCPrefetcher)) ms;
 
         Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
         Parameter#(0) onDemandHit <- mkParameter;
         Parameter#(0) onDemandMiss <- mkParameter;
-        Parameter#(0) onPrefetchHit <- mkParameter;
-        ms[0] = mkCheriPCPrefetcherAdapterFromCheri(mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit));
-
-        Parameter#(512) maxCapSizeToTrack <- mkParameter;
-        Parameter#(256) ptrTableSize <- mkParameter; 
-        Parameter#(64) trainingTableSize <- mkParameter;
-        Parameter#(1) l1OnlyMode <- mkParameter;
-        Parameter#(16) trainingTableDecayCycles <- mkParameter;
-        Parameter#(0) useFiltering <- mkParameter;
-        ms[1] = mkCheriPCPrefetcherAdapterFromCheri(mkL1CapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, l1OnlyMode, trainingTableDecayCycles, useFiltering));
-
-        let m <- mkCheriPCPrefetcherMultiplier(ms);
-    `elsif DATA_PREFETCHER_CAP_CHASER_FILTER
-        Vector#(2, module#(CheriPCPrefetcher)) ms;
-
-        Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
-        Parameter#(0) onDemandHit <- mkParameter;
-        Parameter#(0) onDemandMiss <- mkParameter;
-        Parameter#(1) onPrefetchHit <- mkParameter;
-        ms[0] = mkCheriPCPrefetcherAdapterFromCheri(mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit));
+        Parameter#(2) onPrefetchHit <- mkParameter;
+        Parameter#(1) onPrefetchMiss <- mkParameter;
+        ms[0] = mkCheriPCPrefetcherAdapterFromCheri(mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit, onPrefetchMiss));
 
         Parameter#(512) maxCapSizeToTrack <- mkParameter;
         Parameter#(256) ptrTableSize <- mkParameter; 
@@ -725,41 +739,54 @@ module mkL1DPrefetcher#(TlbToPrefetcher toTlb)(CheriPCPrefetcher);
         Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
         Parameter#(0) onDemandHit <- mkParameter;
         Parameter#(0) onDemandMiss <- mkParameter;
-        Parameter#(1) onPrefetchHit <- mkParameter;
-        ms[0] = mkCheriPCPrefetcherAdapterFromCheri(mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit));
+        Parameter#(2) onPrefetchHit <- mkParameter;
+        Parameter#(1) onPrefetchMiss <- mkParameter;
+        ms[0] = mkCheriPCPrefetcherAdapterFromCheri(mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit, onPrefetchMiss));
 
         Parameter#(512) maxCapSizeToTrack <- mkParameter;
         Parameter#(256) ptrTableSize <- mkParameter; 
         Parameter#(64) trainingTableSize <- mkParameter;
         Parameter#(0) l1OnlyMode <- mkParameter;
         Parameter#(16) trainingTableDecayCycles <- mkParameter;
-        Parameter#(0) useFiltering <- mkParameter;
+        Parameter#(1) useFiltering <- mkParameter;
         ms[1] = mkCheriPCPrefetcherAdapterFromCheri(mkL1CapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, l1OnlyMode, trainingTableDecayCycles, useFiltering));
 
         let m <- mkCheriPCPrefetcherMultiplier(ms);
-    `elsif DATA_PREFETCHER_CAP_CHASER_SPLIT_SOLO
+    `elsif DATA_PREFETCHER_CAP_CHASER_ALLIN
+        Vector#(2, module#(CheriPCPrefetcher)) ms;
+
+        Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
+        Parameter#(0) onDemandHit <- mkParameter;
+        Parameter#(0) onDemandMiss <- mkParameter;
+        Parameter#(`ALLIN_H) onPrefetchHit <- mkParameter;
+        Parameter#(`ALLIN_M) onPrefetchMiss <- mkParameter;
+        ms[0] = mkCheriPCPrefetcherAdapterFromCheri(mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit, onPrefetchMiss));
+
         Parameter#(512) maxCapSizeToTrack <- mkParameter;
         Parameter#(256) ptrTableSize <- mkParameter; 
         Parameter#(64) trainingTableSize <- mkParameter;
-        Parameter#(0) l1OnlyMode <- mkParameter;
+        Parameter#(1) l1OnlyMode <- mkParameter;
         Parameter#(16) trainingTableDecayCycles <- mkParameter;
-        Parameter#(0) useFiltering <- mkParameter;
-        let m <- mkCheriPCPrefetcherAdapterFromCheri(mkL1CapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, l1OnlyMode, trainingTableDecayCycles, useFiltering));
+        Parameter#(1) useFiltering <- mkParameter;
+        ms[1] = mkCheriPCPrefetcherAdapterFromCheri(mkL1CapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, l1OnlyMode, trainingTableDecayCycles, useFiltering));
+
+        let m <- mkCheriPCPrefetcherMultiplier(ms);
     `elsif DATA_PREFETCHER_CAP_CHASER_SPLIT_STRIDE
         Vector#(3, module#(CheriPCPrefetcher)) ms;
 
         Parameter#(256) maxCapSizeToPrefetch <- mkParameter;
         Parameter#(0) onDemandHit <- mkParameter;
         Parameter#(0) onDemandMiss <- mkParameter;
-        Parameter#(1) onPrefetchHit <- mkParameter;
-        ms[0] = mkCheriPCPrefetcherAdapterFromCheri(mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit));
+        Parameter#(2) onPrefetchHit <- mkParameter;
+        Parameter#(1) onPrefetchMiss <- mkParameter;
+        ms[0] = mkCheriPCPrefetcherAdapterFromCheri(mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit, onPrefetchMiss));
 
         Parameter#(512) maxCapSizeToTrack <- mkParameter;
         Parameter#(256) ptrTableSize <- mkParameter; 
         Parameter#(64) trainingTableSize <- mkParameter;
         Parameter#(0) l1OnlyMode <- mkParameter;
         Parameter#(16) trainingTableDecayCycles <- mkParameter;
-        Parameter#(0) useFiltering <- mkParameter;
+        Parameter#(1) useFiltering <- mkParameter;
         ms[1] = mkCheriPCPrefetcherAdapterFromCheri(mkL1CapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, l1OnlyMode, trainingTableDecayCycles, useFiltering));
 
         Parameter#(512) strideTableSize <- mkParameter;
@@ -836,50 +863,44 @@ module mkLLDPrefetcher#(TlbToPrefetcher toTlb)(CheriPrefetcher);
         Parameter#(0) onlyOnMiss <- mkParameter;
         Parameter#(0) onlyExactCap <- mkParameter;
         let m <- mkCapPtrPrefetcherNonPC(toTlb, maxCapSizeToTrack, ptrTableSize, trainingTableSize, inverseDecayChance, onlyOnMiss, onlyExactCap);
-    `elsif DATA_PREFETCHER_CAP_CHASER_ALLINBASELINE
-        Parameter#(512) maxCapSizeToPrefetch <- mkParameter;
-        Parameter#(0) onDemandHit <- mkParameter;
-        Parameter#(1) onDemandMiss <- mkParameter;
-        Parameter#(0) onPrefetchHit <- mkParameter;
-        let m <- mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit);
     `elsif DATA_PREFETCHER_CAP_CHASER
         Parameter#(512) maxCapSizeToPrefetch <- mkParameter;
         Parameter#(0) onDemandHit <- mkParameter;
         Parameter#(0) onDemandMiss <- mkParameter;
-        Parameter#(1) onPrefetchHit <- mkParameter;
-        let m <- mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit);
-    `elsif DATA_PREFETCHER_CAP_CHASER_FILTER
-        Parameter#(512) maxCapSizeToPrefetch <- mkParameter;
-        Parameter#(0) onDemandHit <- mkParameter;
-        Parameter#(0) onDemandMiss <- mkParameter;
-        Parameter#(1) onPrefetchHit <- mkParameter;
-        let m <- mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit);
+        Parameter#(2) onPrefetchHit <- mkParameter;
+        Parameter#(1) onPrefetchMiss <- mkParameter;
+        let m <- mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit, onPrefetchMiss);
     `elsif DATA_PREFETCHER_CAP_CHASER_SPLIT
         Vector#(2, module#(CheriPrefetcher)) ms;
 
         Parameter#(512) maxCapSizeToPrefetch <- mkParameter;
         Parameter#(0) onDemandHit <- mkParameter;
         Parameter#(0) onDemandMiss <- mkParameter;
-        Parameter#(1) onPrefetchHit <- mkParameter;
-        ms[0] = mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit);
+        Parameter#(2) onPrefetchHit <- mkParameter;
+        Parameter#(1) onPrefetchMiss <- mkParameter;
+        ms[0] = mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit, onPrefetchMiss);
 
         Parameter#(512) maxCapSizeToTrack <- mkParameter;
         Parameter#(256) ptrTableSize <- mkParameter;
         ms[1] = mkLLCapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize);
 
         let m <- mkCheriPrefetcherMultiplier(ms);
-    `elsif DATA_PREFETCHER_CAP_CHASER_SPLIT_SOLO
-        Parameter#(512) maxCapSizeToTrack <- mkParameter;
-        Parameter#(256) ptrTableSize <- mkParameter;
-        let m <- mkLLCapChaserPrefetcher(toTlb, maxCapSizeToTrack, ptrTableSize);
+    `elsif DATA_PREFETCHER_CAP_CHASER_ALLIN
+        Parameter#(512) maxCapSizeToPrefetch <- mkParameter;
+        Parameter#(0) onDemandHit <- mkParameter;
+        Parameter#(0) onDemandMiss <- mkParameter;
+        Parameter#( `ALLIN_H ) onPrefetchHit <- mkParameter;
+        Parameter#( `ALLIN_M ) onPrefetchMiss <- mkParameter;
+        let m <- mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit, onPrefetchMiss);
     `elsif DATA_PREFETCHER_CAP_CHASER_SPLIT_STRIDE
         Vector#(2, module#(CheriPrefetcher)) ms;
 
         Parameter#(512) maxCapSizeToPrefetch <- mkParameter;
         Parameter#(0) onDemandHit <- mkParameter;
         Parameter#(0) onDemandMiss <- mkParameter;
-        Parameter#(1) onPrefetchHit <- mkParameter;
-        ms[0] = mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit);
+        Parameter#(2) onPrefetchHit <- mkParameter;
+        Parameter#(1) onPrefetchMiss <- mkParameter;
+        ms[0] = mkCapChaserAllInPrefetcher(maxCapSizeToPrefetch, onDemandHit, onDemandMiss, onPrefetchHit, onPrefetchMiss);
 
         Parameter#(512) maxCapSizeToTrack <- mkParameter;
         Parameter#(256) ptrTableSize <- mkParameter;

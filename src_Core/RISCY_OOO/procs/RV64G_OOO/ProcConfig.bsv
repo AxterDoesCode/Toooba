@@ -149,6 +149,23 @@
 
 `endif
 
+`ifdef CACHE_LOUIS
+
+    // L1
+    `define LOG_L1_LINES 8 // 16KB
+    `define LOG_L1_WAYS 2 // 4 ways
+    `define L1D_CRQ_NUM 8
+
+    // LLC
+    `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+    // There is already 20 cycles of baseline latency
+    `undef DRAM_LATENCY
+    `define DRAM_LATENCY 60
+
+`endif
+
 `ifdef CACHE_LARGE
 
     // L1

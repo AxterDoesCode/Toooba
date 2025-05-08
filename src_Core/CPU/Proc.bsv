@@ -166,7 +166,7 @@ module mkProc (Proc_IFC);
    // ================================================================
    // Prefetcher tlb to Core
 
-   Vector#(CoreNum, ParentToLLCTlb#(LLCTlbReqIdx)) toLLCTlbs = ?;
+   Vector#(CoreNum, ParentToLLCTlb#(LLCTlbReqIdx, void)) toLLCTlbs = ?;
    for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
       toLLCTlbs[i] = core[i].toLLCTlb;
       rule flushLLCTlb;
@@ -311,7 +311,7 @@ module mkProc (Proc_IFC);
    // ================================================================
    // DRAM latency injection
 
-   NumProxy#(128) depthProxy = error("Do not look inside proxy");
+   NumProxy#(64) depthProxy = error("Do not look inside proxy");
    let master_0_delay = llc_axi4_adapter.mem_master;
    if (valueOf(DramLatency) != 0) begin
       let delayshim <- mkAXI4_DelayShim(depthProxy, fromInteger(valueOf(DramLatency)));
