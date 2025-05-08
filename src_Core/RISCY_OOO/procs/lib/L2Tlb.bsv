@@ -419,7 +419,9 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                      "mega or giga page");
             pageHit(entry);
             tlb4KB.deqResp(Invalid); // just deq 4KB array
-            tlbMG.updateRepByHit(respMG.index); // update replacement in MG array
+            if (!pendIsPrefetch[idx]) begin
+                tlbMG.updateRepByHit(respMG.index); // update replacement in MG array
+            end
 `ifdef PERF_COUNT
             if(doStats) begin
                 if(cRq.child == I) begin
@@ -442,7 +444,11 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             doAssert(entry.level == 0, "must be 4KB page");
             pageHit(entry);
             // update 4KB array replacement, no need to touch MG array
-            tlb4KB.deqResp(Valid (resp4KB.way));
+            if (!pendIsPrefetch[idx]) begin
+                tlb4KB.deqResp(Valid (resp4KB.way));
+            end else begin
+                tlb4KB.deqResp(Invalid);
+            end
 `ifdef PERFORMANCE_MONITORING
             EventsLL ev = unpack(0);
             ev.evt_TLB = 1;
