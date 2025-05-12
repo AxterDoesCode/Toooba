@@ -208,7 +208,9 @@ module mkLLBank#(
     Add#(tagSz, a__, AddrSz),
     // make sure: cRqNum <= wayNum
     Add#(cRqNum, b__, wayNum),
-    Add#(TLog#(TDiv#(childNum,2)), c__, TLog#(childNum))
+    Add#(TLog#(TDiv#(childNum,2)), c__, TLog#(childNum)),
+    // Each core has at least one cache
+    Add#(TLog#(CoreNum), f__, TLog#(childNum))
 );
 
     Bool verbose = False;
@@ -266,6 +268,9 @@ module mkLLBank#(
     function module#(CheriPrefetcher) mkmkLLDPrefetcher(LLCTlb tlb);
         return mkLLDPrefetcher(tlb.toPrefetcher);
     endfunction
+    function module#(CheriPrefetcher) mkmkLLIPrefetcher(Integer i);
+        return mkCheriPrefetcherAdapter(mkLLIPrefetcher);
+    endfunction
 
     // XBar for TLB requests to parent TLB
     RWire#(rqToL2TlbT) rqToL2TlbWire <- mkRWire;
@@ -301,7 +306,7 @@ module mkLLBank#(
 
     // Create prefetchers
     PrefetcherVector#(CoreNum) dataPrefetchers <- mkCheriPrefetcherVector(map(mkmkLLDPrefetcher, dataLLCTlbs));
-    PrefetcherVector#(CoreNum) instrPrefetchers <- mkCheriPrefetcherVector(vec(mkCheriPrefetcherAdapter(mkLLIPrefetcher)));
+    PrefetcherVector#(CoreNum) instrPrefetchers <- mkCheriPrefetcherVector(map(mkmkLLIPrefetcher, genVector));
     Fifo#(16, cRqFromCT) overflowPrefetchQueue <- mkOverflowPipelineFifo;
 
     Reg#(Bit#(64)) crqMshrEnqs <- mkConfigReg(0);
