@@ -364,7 +364,8 @@ module mkL1CapChaserPrefetcher#(
 
     // Hashing functions to produce the index/tags 
     function ptrTableIdxTagT getPtrTableIdxTag(Addr boundsOffset, Addr boundsLength);
-        return hash((boundsOffset >> 4) ^ (boundsLength >> 4) ^ boundsLength);
+        Addr hashLength = {boundsLength[3:0], truncateLSB(boundsLength)};
+        return hash((boundsOffset >> 4) ^ hashLength);
     endfunction
     function trainingTableIdxTagT getTrainingTableIdxTag(Addr boundsLength, Addr boundsVirtBase);
         let bvb = boundsVirtBase >> 4;
@@ -373,7 +374,8 @@ module mkL1CapChaserPrefetcher#(
         // If there is lower-granuality consistent alignment then the training table will be underutilised (this is really not ideal)
         // If there is high-granuality consistent alignment (16-byte) then there will be some aliasing (this is fine really)
         Addr hashBvb = {bvb[1:0], truncateLSB(bvb)};
-        return hash(hashBvb ^ (boundsLength >> 4) ^ boundsLength);
+        Addr hashLength = {boundsLength[3:0], truncateLSB(boundsLength)};
+        return hash(hashBvb ^ hashLength);
     endfunction
     
     // Confidence-checking functions
@@ -825,6 +827,7 @@ module mkL1CapChaserPrefetcher#(
      */
     method Action reportAccess(Addr addr, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
         if (inited &&
+            memOp == Ld &&
             !isPrefetch && 
             boundsLength >= 16 && 
             boundsLength <= fromInteger(valueOf(maxCapSizeToTrack))
