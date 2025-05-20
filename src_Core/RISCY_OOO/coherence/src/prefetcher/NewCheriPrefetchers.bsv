@@ -964,6 +964,12 @@ module mkL1CapChaserPrefetcher#(
     method Action sendBroadcastData(PrefetcherBroadcastData data);
     endmethod
 
+`ifdef PERFORMANCE_MONITORING
+    method EventsPrefetcher events;
+        return unpack(0);
+    endmethod
+`endif
+
 endmodule
 
 
@@ -1331,6 +1337,12 @@ module mkLLCapChaserPrefetcher#(
         end
     endmethod
 
+`ifdef PERFORMANCE_MONITORING
+    method EventsPrefetcher events;
+        return unpack(0);
+    endmethod
+`endif
+
 endmodule
 
 
@@ -1373,7 +1385,7 @@ module mkCapChaserAllInPrefetcher#(
     Ehr#(2, CapPipe) prefetchCap <- mkEhr(?);
     Reg#(CapPipe) prefetchCap_ongoing = prefetchCap[0];
     Reg#(CapPipe) prefetchCap_new = prefetchCap[1];
-    Reg#(PrefetchAuxData) auxData <- mkConfigRegU;
+    Reg#(PrefetchAuxData) auxDataReg <- mkConfigRegU;
     
     Reg#(Addr) prevBaseAddr1 <- mkRegU;
     Reg#(Addr) prevBaseAddr2 <- mkRegU;
@@ -1420,7 +1432,7 @@ module mkCapChaserAllInPrefetcher#(
             addr: nextPrefetchAddr_ongoing,
             cap: prefetchCap_ongoing,
             nextLevel: False,
-            auxData: auxData
+            auxData: auxDataReg
         });
     endrule
 
@@ -1475,7 +1487,7 @@ module mkCapChaserAllInPrefetcher#(
             stopLineAddr <= getLineAddr(boundsTop);
             origLineAddr <= getLineAddr(addr);
             // Keep any aux data from CapChaser to avoid infinite prefetch chaining
-            auxData <= (prefetchAuxData matches tagged CapChaserAuxData .auxData ? CapChaserAllInAuxData(auxData) : CapChaserAllInEmpty);
+            auxDataReg <= (prefetchAuxData matches tagged CapChaserAuxData .auxData ? CapChaserAllInAuxData(auxData) : CapChaserAllInEmpty);
 
             // Create a capability for the prefetches
             CapPipe cap = almightyCap;
@@ -1504,5 +1516,11 @@ module mkCapChaserAllInPrefetcher#(
 
     method Action sendBroadcastData(PrefetcherBroadcastData data);
     endmethod
+
+`ifdef PERFORMANCE_MONITORING
+    method EventsPrefetcher events;
+        return unpack(0);
+    endmethod
+`endif
 
 endmodule

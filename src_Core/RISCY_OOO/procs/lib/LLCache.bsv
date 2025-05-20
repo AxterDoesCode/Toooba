@@ -48,7 +48,9 @@ import ProcTypes::*;
 import CCTypes::*;
 import LLPipe::*;
 import LLCRqMshr::*;
+`ifdef USE_LLC_MSHR_SECURE_MODEL
 import LLCRqMshrSecureModel::*;
+`endif
 import LLBank::*;
 import SelfInvLLPipe::*;
 import SelfInvLLBank::*;

@@ -1051,9 +1051,8 @@ endfunction
         function Action cRqQueue;
         action
             cRqMshr.pipelineResp.setStateSlot(n, Queued, defaultValue);
-            if (cRqQueuedEOC matches tagged Valid .eoc) begin
+            if (cRqQueuedEOC matches tagged Valid .eoc)
                 cRqMshr.pipelineResp.setSucc(eoc, Valid (n));
-            end
             pipeline.deqWrite(Invalid, pipeOut.ram, Valid(fromMaybe(n, pipeOutNextInQueue)), False);
         endaction
         endfunction
@@ -1065,9 +1064,6 @@ endfunction
             pipeline.deqWrite(Invalid, pipeOut.ram, pipeOutNextInQueue, False);
         endaction
         endfunction
-
-        // check if Sc fails early. If an Sc needs to req parent but it's addr
-        // does not match link addr, we can directly respond the Sc with
         // failure, and thus avoid requesting parent.
         Bool scFail = procRq.op == Sc && linkAddr != Valid (getLineAddr(procRq.addr));
         // check tag match
@@ -1087,12 +1083,11 @@ endfunction
                     if (cRqIsPrefetch[n]) begin
                         cRqDrop;
                     end else begin
-                        cRqSetDepNoCacheChange;
-                    end
-                    if (verbose)
+                        cRqMshr.pipelineResp.setSucc(fromMaybe(?, cRqDependEOC), Valid (n));
                         $display("%t L1 %m pipelineResp: cRq: own by other cRq ", $time,
                             fshow(cOwner), ", depend on cRq ", fshow(cRqDependEOC)
                         );
+                    end
                     if (prefetchVerbose)
                         $display("%t L1D cRq dependency: mshr: %d, depMshr: %d, addr: 0x%h, cRq is prefetch: %d, reqCs: ",
                             cur_cycle,
@@ -1104,9 +1099,8 @@ endfunction
                             ", op: ",
                             fshow(procRq.op)
                         );
-                end 
                 // If the tags don't match then we want to queue the cRq
-                else begin
+                end else begin
                     // if there was an option to add a dependency, L1Pipe should have found it
                     doAssert(!isValid(cRqDependEOC), ("end of chain is valid but the chosen way did not match tags"));
                     if (cRqIsPrefetch[n]) begin
