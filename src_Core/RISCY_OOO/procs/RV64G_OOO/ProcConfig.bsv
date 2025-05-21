@@ -117,6 +117,7 @@
     // L1
     `define LOG_L1_LINES 6 // 4KB
     `define LOG_L1_WAYS 1 // 2 ways
+    `define L1D_CRQ_NUM 8 // 8 L1D MSHRs
 
     // LLC
     `define LOG_LLC_LINES 8 // 8KB
@@ -183,6 +184,7 @@
     // L1
     `define LOG_L1_LINES 9 // 32KB
     `define LOG_L1_WAYS 2 // 4 ways
+    `define L1D_CRQ_NUM 8 // 8 L1D MSHRs
 
     // LLC
     `define LOG_LLC_LINES 14 // 1MB
@@ -195,6 +197,7 @@
     // L1
     `define LOG_L1_LINES 9 // 32KB
     `define LOG_L1_WAYS 2 // 4 ways
+    `define L1D_CRQ_NUM 8 // 8 L1D MSHRs
 
     // LLC
     `define LOG_LLC_LINES 15 // 2MB
