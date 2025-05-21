@@ -314,7 +314,7 @@ module mkL1CapChaserPrefetcher#(
 
     // Queues for observed capabilities
     // observedCLineQ can probably get away with being bypass..? It's also on the critical path for prefetching.
-    Fifo#(8, observedCLineT) observedCLineQ <- mkOverflowBypassFifo;
+    Fifo#(8, observedCLineT) observedCLineQ <- mkOverflowPipelineFifo;
     Fifo#(1, UInt#(2)) observedCapRespQ <- mkPipelineFifo;
     Reg#(Vector#(4, Bool)) unprocessedObservedCap <- mkReg(replicate(True));
 
@@ -1046,7 +1046,7 @@ module mkLLCapChaserPrefetcher#(
         <- mkRWSetAssocBramCoreForwarded(isPtrTableMatch, isPtrTableReplaceCandidate);
 
     // Queues for observed capabilities
-    Fifo#(8, observedCLineT) observedCLineQ <- mkOverflowBypassFifo;
+    Fifo#(8, observedCLineT) observedCLineQ <- mkOverflowPipelineFifo;
     Fifo#(1, UInt#(2)) observedCapRespQ <- mkPipelineFifo;
     Reg#(Vector#(4, Bool)) unprocessedObservedCap <- mkReg(replicate(True));
 
