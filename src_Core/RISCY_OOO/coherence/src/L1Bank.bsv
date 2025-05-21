@@ -457,6 +457,7 @@ endfunction
     endrule
 
     (* descending_urgency = "pipelineResp_cRq, notifyPrefetcherOfLlcHit" *)
+    (* descending_urgency = "pipelineResp_pRs, notifyPrefetcherOfLlcHit" *)
     rule notifyPrefetcherOfLlcHit;
         let resp = llcDataArrivalQ.first;
         llcDataArrivalQ.deq;
@@ -466,7 +467,7 @@ endfunction
         );
     endrule
 
-    (* descending_urgency = "pRqTransfer, cRqTransfer_retry, cRqTransfer_new, createPrefetchRq" *)
+    (* descending_urgency = "pRqTransfer, cRqTransfer_retry, cRqTransfer_new, sendRqToP, createPrefetchRq" *)
     rule createPrefetchRq(flushDone && crqMshrEnqs - crqMshrDeqs < 6);
         let prefetch <- prefetcher.getNextPrefetchAddr;
         if (prefetch.nextLevel) begin

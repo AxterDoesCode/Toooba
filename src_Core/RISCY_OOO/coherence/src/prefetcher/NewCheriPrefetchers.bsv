@@ -316,7 +316,7 @@ module mkL1CapChaserPrefetcher#(
     // observedCLineQ can probably get away with being bypass..? It's also on the critical path for prefetching.
     Fifo#(8, observedCLineT) observedCLineQ <- mkOverflowPipelineFifo;
     Fifo#(1, UInt#(2)) observedCapRespQ <- mkPipelineFifo;
-    Reg#(Vector#(4, Bool)) unprocessedObservedCap <- mkReg(replicate(True));
+    Reg#(Vector#(4, Bool)) unprocessedObservedCap <- mkConfigReg(replicate(True));
 
     // Tlb lookup and prefetch queues
     // candidateQ can't really be bypass: when dequeued, it sends a TLB request, which is a quite heavy operation. 
@@ -447,7 +447,8 @@ module mkL1CapChaserPrefetcher#(
      * This implicity conflicts with doTtLookup, so make doTtLookup more urgent.
      */
     (* descending_urgency = "doTtLookup, decayTrainingTableLookup" *)
-    rule decayTrainingTableLookup(inited && trainingDecayCounter == 0 && !isValid(nextObservedCapIdx));
+    (* descending_urgency = "doObservedCapLookup, decayTrainingTableLookup" *)
+    rule decayTrainingTableLookup(inited && trainingDecayCounter == 0);
         trainingTableIdxT tIdx = truncate(trainingDecayLfsr.value >> 4);
         trainingDecayLfsr.next;
         trainingTable.rdReq(tIdx);
@@ -479,7 +480,8 @@ module mkL1CapChaserPrefetcher#(
     /* Lookup in training table for an accessed capabilitiy.
      * Prefer to process observed cache lines first.
      */
-    rule doTtLookup(inited && !isValid(nextObservedCapIdx));
+    (* descending_urgency = "doObservedCapLookup, doTtLookup" *)
+    rule doTtLookup(inited);
         let ttUpdate = ttLookupQ.first;
         ttLookupQ.deq;
         ttLookupRespQ.enq(ttUpdate);
@@ -1048,7 +1050,7 @@ module mkLLCapChaserPrefetcher#(
     // Queues for observed capabilities
     Fifo#(8, observedCLineT) observedCLineQ <- mkOverflowPipelineFifo;
     Fifo#(1, UInt#(2)) observedCapRespQ <- mkPipelineFifo;
-    Reg#(Vector#(4, Bool)) unprocessedObservedCap <- mkReg(replicate(True));
+    Reg#(Vector#(4, Bool)) unprocessedObservedCap <- mkConfigReg(replicate(True));
 
     // Tlb lookup and prefetch queues
     Fifo#(8, candidatePrefetchT) candidateQ <- mkOverflowPipelineFifo;

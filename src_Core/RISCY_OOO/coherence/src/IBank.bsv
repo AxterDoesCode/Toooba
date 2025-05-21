@@ -270,7 +270,7 @@ module mkIBank#(
         // enq to indexQ for in order resp
         cRqIndexQ.enq(n);
         cRqIsPrefetch[n] <= False;
-        addedCRqs.incr(1);
+        //addedCRqs.incr(1);
         // performance counter: cRq type
         incrReqCnt;
        if (verbose)
@@ -782,7 +782,7 @@ module mkIBank#(
     rule discardPrefetchRqResult(
             cRqMshr.prefetcher.getResult(prefetchIndexQ.first) matches tagged Valid .inst);
         prefetchIndexQ.deq;
-        removedCRqs.incr(1);
+        //removedCRqs.incr(1);
         cRqMshr.prefetcher.releaseEntry(prefetchIndexQ.first); // release MSHR entry
         if (verbose)
         $display("%t I %m discardPrefetchRqResult: ", $time,
@@ -878,7 +878,7 @@ module mkIBank#(
                 cRqMshr.sendRsToC.getResult(cRqIndexQ.first) matches tagged Valid .inst
             );
                 cRqIndexQ.deq;
-                removedCRqs.incr(1);
+                //removedCRqs.incr(1);
                 cRqMshr.sendRsToC.releaseEntry(cRqIndexQ.first); // release MSHR entry
                if (verbose)
                 $display("%t I %m sendRsToC: ", $time,
