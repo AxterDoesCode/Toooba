@@ -67,7 +67,7 @@ typedef struct {
 typedef struct {
     // may get page fault: i.e. hit invalid page or
     // get non-leaf page at last-level page table
-    TaggedTlbEntry entry;
+    Maybe#(TlbEntry) entry;
 } ITlbRsFromP deriving(Bits, Eq, FShow);
 
 interface ITlbToParent;
@@ -184,7 +184,7 @@ module mkITlb(ITlb::ITlb);
         rsFromPQ.deq;
         let pRs = rsFromPQ.first;
 
-        if(pRs.entry matches tagged ValidTlbEntry .en) begin
+        if(pRs.entry matches tagged Valid .en) begin
             // TODO when we have multiple misses in future.  We first need to
             // search TLB to check whether the PTE is already in TLB; this may
             // happen for mega/giga pages.  We don't want same PTE to occupy >1

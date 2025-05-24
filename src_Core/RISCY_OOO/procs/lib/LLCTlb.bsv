@@ -66,7 +66,7 @@ typedef struct {
 } LLCTlbRqToP#(type idxT) deriving(Bits, Eq, FShow);
 
 typedef struct {
-    TaggedTlbEntry entry;
+    Maybe#(TlbEntry) entry;
     idxT id;
 } LLCTlbRsFromP#(type idxT) deriving(Bits, Eq, FShow);
 
@@ -195,7 +195,7 @@ module mkLLCTlb(LLCTlb);
         let idx = fromMaybe(pRs.id, respForOtherReq);
         let vaddr = getAddr(pendInst[idx].cap);
 
-        if(pRs.entry matches tagged ValidTlbEntry .en) begin
+        if(pRs.entry matches tagged Valid .en) begin
             // check permission
             if (verbose)
                 $display("[LLCTlb] doPRs: vm_info: ", fshow(vm_info),

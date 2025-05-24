@@ -125,12 +125,6 @@ typedef struct {
     Asid          asid;
 } TlbEntry deriving (Bits, Eq, FShow);
 
-typedef union tagged {
-    TlbEntry ValidTlbEntry;
-    void TlbDisabled;
-    void TlbFault;
-} TaggedTlbEntry deriving (Bits, Eq, FShow);
-
 // SV39 translate
 function Vpn getVpn(Addr addr) = addr[38:12];
 

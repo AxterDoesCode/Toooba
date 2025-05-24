@@ -170,7 +170,7 @@ module mkProc (Proc_IFC);
    for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
       toLLCTlbs[i] = core[i].toLLCTlb;
       rule flushLLCTlb;
-         core[i].shouldFlushLLCTlb; // Creates an implicit condition 
+         let x <- core[i].shouldFlushLLCTlb; // Creates an implicit condition 
          llc.flushTlb(fromInteger(i));
       endrule
       rule updateLLCTlbVMInfo;

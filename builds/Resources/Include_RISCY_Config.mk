@@ -50,7 +50,7 @@ DISABLE_SECURE_BW ?= false
 SIM_LOG_LLC_PARTITION_NUM ?=
 SIM_LOG_LLC_MSHR_BANK_NUM ?=
 SIM_LLC_ARBITER_NUM ?=
-SIM_LLC_ARBITER_LAT ?= 1
+SIM_LLC_ARBITER_LAT ?=
 # default check cache deadlock and rename error
 CHECK_DEADLOCK ?= true
 RENAME_DEBUG ?= false

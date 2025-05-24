@@ -98,7 +98,7 @@ typedef struct {
 
 typedef struct {
     TlbChild child;
-    TaggedTlbEntry entry;
+    Maybe#(TlbEntry) entry;
 } L2TlbRsToC deriving(Bits, Eq, FShow);
 
 interface L2TlbToChildren;
@@ -383,7 +383,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // resp to child
             rsToCQ.enq(L2TlbRsToC {
                 child: cRq.child,
-                entry: ValidTlbEntry (entry)
+                entry: Valid (entry)
             });
             // req is done
             pendValid_tlbResp[idx] <= False;
@@ -405,7 +405,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // resp with invalid entry
             rsToCQ.enq(L2TlbRsToC {
                 child: cRq.child,
-                entry: TlbDisabled
+                entry: Invalid
             });
             // deq 4KB TLB array
             tlb4KB.deqResp(Invalid);
@@ -484,7 +484,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // resp to child
             rsToCQ.enq(L2TlbRsToC {
                 child: cRq.child,
-                entry: TlbFault
+                entry: Invalid
             });
             // req is done
             pendValid_tlbResp[idx] <= False;
@@ -609,7 +609,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // resp with invalid entry
             rsToCQ.enq(L2TlbRsToC {
                 child: cRq.child,
-                entry: TlbFault
+                entry: Invalid
             });
             // req is done
             pendValid_pageWalk[idx] <= False;
@@ -718,7 +718,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 // resp child
                 rsToCQ.enq(L2TlbRsToC {
                     child: cRq.child,
-                    entry: ValidTlbEntry (entry)
+                    entry: Valid (entry)
                 });
 `ifdef PERFORMANCE_MONITORING
                 // page table walks are counted as accesses
