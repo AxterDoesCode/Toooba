@@ -70,7 +70,7 @@ else
 $(error unsupported CORE_SIZE)
 endif
 
-ifeq (,$(filter $(CACHE_SIZE),TEST SMALL STUMPY LARGE MC_1MB MC_2MB))
+ifeq (,$(filter $(CACHE_SIZE),TEST SMALL STUMPY LARGE MC_1MB MC_2MB LOUIS))
 $(error unsupported CACHE_SIZE)
 endif
 
