@@ -112,7 +112,7 @@ module mkLLCTlbConnect#(
     Vector#(CoreNum, ParentToLLCTlb#(LLCTlbReqIdx, void)) l2Tlbs
 )(Empty);
     // Crossbar from L2TLBs into the LLC
-    function XBarDstInfo#(Bit#(0), LLCTlbRsFromP#(CombinedLLCTlbReqIdx)) getL2TlbRsDstInfo(Bit#(TLog#(CoreNum)) idx, LLCTlbRsFromP#(LLCTlbReqIdx) rs);
+    function XBarDstInfo#(Bit#(0), LLCTlbRsFromP#(CombinedLLCTlbReqIdx)) getL2TlbRsDstInfo(LLCTlbId idx, LLCTlbRsFromP#(LLCTlbReqIdx) rs);
         return XBarDstInfo { idx: 0, data: LLCTlbRsFromP { entry: rs.entry, id: {rs.id, extend(idx)} } };
     endfunction
     function Get#(LLCTlbRsFromP#(LLCTlbReqIdx)) l2TlbRsGet(ParentToLLCTlb#(LLCTlbReqIdx, void) l2Tlb) = l2Tlb.lookup.response;
@@ -129,7 +129,7 @@ module mkLLCTlbConnect#(
     // Forward requests to the correct core's TLB
     rule doForwardRq;
         let rq <- llcTlb.lookup.request.get;
-        Bit#(TLog#(CoreNum)) idx = truncate(rq.id);
+        LLCTlbId idx = truncate(rq.id);
         l2Tlbs[idx].lookup.request.put(LLCTlbRqToP {
             vpn: rq.vpn,
             id: truncateLSB(rq.id)
