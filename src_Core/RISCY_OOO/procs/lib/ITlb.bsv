@@ -80,7 +80,9 @@ endinterface
 interface ITlb;
     // system consistency related
     method Bool flush_done;
+    (* always_ready, always_enabled *)
     method Action flush;
+    (* always_ready, always_enabled *)
     method Action updateVMInfo(VMInfo vm);
     method Bool noPendingReq;
 
@@ -93,6 +95,7 @@ interface ITlb;
     // performance
     interface Perf#(L1TlbPerfType) perf;
 `ifdef PERFORMANCE_MONITORING
+    (* always_ready *)
     method EventsL1I events;
 `endif
 endinterface
@@ -105,7 +108,7 @@ endmodule
 
 (* synthesize *)
 module mkITlb(ITlb::ITlb);
-    Bool verbose = False;
+    Bool verbose = True;
 
     // TLB array
     ITlbArray tlb <- mkITlbArray;
@@ -173,7 +176,7 @@ module mkITlb(ITlb::ITlb);
 `endif
     endrule
 
-    rule doFinishFlush(needFlush && waitFlushP && !isValid(miss));
+    rule doFinishFlush(!needFlush || waitFlushP);
         flushRsFromPQ.deq;
         needFlush <= False;
         waitFlushP <= False;
@@ -252,9 +255,8 @@ module mkITlb(ITlb::ITlb);
 
     Reg#(Bool) vm_info_change <- mkDReg(False);
 
-    method Action flush if(!needFlush);
+    method Action flush;
         needFlush <= True;
-        waitFlushP <= False;
         // this won't interrupt current processing, since
         // (1) miss process will continue even if needFlush=True
         // (2) flush truly starts when there is no pending req

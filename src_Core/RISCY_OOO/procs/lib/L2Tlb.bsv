@@ -54,6 +54,7 @@ import SetAssocTlb::*;
 import L2SetAssocTlb::*;
 import TranslationCache::*;
 import LatencyTimer::*;
+import SpecialRegs::*;
 `ifdef PERFORMANCE_MONITORING
 import PerformanceMonitor::*;
 import CCTypes::*;
@@ -146,7 +147,7 @@ typedef union tagged {
 
 (* synthesize *)
 module mkL2Tlb(L2Tlb::L2Tlb);
-    Bool verbose = False;
+    Bool verbose = True;
    
     // set associative TLB for 4KB pages
     L2SetAssocTlb tlb4KB <- mkL2SetAssocTlb;
@@ -161,15 +162,12 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Fifo#(1, L2TlbReqIdx) transCacheReqQ <- mkPipelineFifo;
 
     // flush
-    Reg#(Bool) iFlushReq <- mkReg(False);
-    Reg#(Bool) dFlushReq <- mkReg(False);
-    Reg#(Bool) llcFlushReq <- mkReg(False);
+    Vector#(4, Reg#(Bool)) needFlush <- mkRegOR(False);
     Reg#(Bool) waitFlushDone <- mkReg(False);
-    Bool flushing = iFlushReq && dFlushReq && llcFlushReq;
     Fifo#(1, void) flushDoneQ <- mkCFFifo;
 
     // req/resp with I/D TLBs
-    Fifo#(1, L2TlbRqFromC) rqFromCQ <- mkBypassFifo;
+    Fifo#(4, L2TlbRqFromC) rqFromCQ <- mkBypassFifo;
     Fifo#(1, L2TlbRsToC) rsToCQ <- mkBypassFifo;
 
     // pending reqs
@@ -202,6 +200,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // They cannot fire together, because page walk may udpate tlb and tlb req
     // may request tlb.
 
+    let pendValid_noMiss = getVEhrPort(pendValid, 0);
     let pendValid_transCacheResp = getVEhrPort(pendValid, 0); // assert
     let pendValid_tlbResp = getVEhrPort(pendValid, 0);
     let pendValid_pageWalk = getVEhrPort(pendValid, 0);
@@ -222,6 +221,9 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // When a mem resp comes, we first process the initiating req, then process
     // other reqs that in WaitPeer.
     Reg#(Maybe#(L2TlbReqIdx)) respForOtherReq <- mkReg(Invalid);
+
+    // For flushing
+    Bool noMiss = all(\== (False) , readVReg(pendValid_noMiss));
 
     // FIFO for perf req
     Fifo#(1, L2TlbPerfType) perfReqQ <- mkCFFifo;
@@ -298,13 +300,14 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // when flushing is true, since both I and D TLBs have finished flush and
     // is waiting for L2 to flush, all I/D TLB req must have been responded.
     // Thus, there cannot be any req in pendReq or rqFromCQ.
-    rule doStartFlush(flushing && !waitFlushDone);
+    rule doStartFlush(needFlush[3] && !waitFlushDone && noMiss);
         waitFlushDone <= True;
         tlb4KB.flush;
         tlbMG.flush;
         transCache.flush;
         // check no req
-        doAssert(!rqFromCQ.notEmpty, "cannot have new req");
+        //doAssert(!rqFromCQ.notEmpty, "cannot have new req");
+        // ^ not true anymore, flushes decoupled
         doAssert(readVEhr(0, pendValid) == replicate(False), "cannot have pending req");
 `ifdef PERFORMANCE_MONITORING
         EventsLL ev = unpack(0);
@@ -314,18 +317,16 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 `endif
     endrule
 
-    rule doWaitFlush(flushing && waitFlushDone && tlb4KB.flush_done && transCache.flush_done);
+    rule doWaitFlush(waitFlushDone && tlb4KB.flush_done && transCache.flush_done);
+        needFlush[3] <= False;
         waitFlushDone <= False;
         flushDoneQ.enq(?);
-        iFlushReq <= False;
-        dFlushReq <= False;
-        llcFlushReq <= False;
         if (verbose) $display("%t L2TLB done flush", $time);
     endrule
 
     // tlb req rule is preempted by page walk rule, i.e., don't fire when page
     // walk resp is avaiable
-    rule doTlbReq(!flushing && !respLdQ.notEmpty);
+    rule doTlbReq(!needFlush[3] && !respLdQ.notEmpty);
         // find a slot for the new req
         L2TlbReqIdx idx = ?;
         if(findIndex( \== (False) , readVReg(pendValid_tlbReq) ) matches tagged Valid .i) begin
@@ -355,7 +356,8 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 
     // process resp from 4KB TLB and mega-giga TLB
     rule doTlbResp(tlbReqQ.notEmpty);
-        doAssert(!flushing, "cannot have pending req when flushing");
+        //doAssert(!flushing, "cannot have pending req when flushing");
+        // ^ We now have a needFlush, similar to the L1 TLBs
 
         // get req in tlb
         tlbReqQ.deq;
@@ -579,7 +581,8 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // page walk is preempted by tlb resp rule and trans cache resp rule, i.e.,
     // don't fire when tlb resp or trans cache resp are available
     rule doPageWalk(respLdQ.notEmpty && !tlbReqQ.notEmpty && !transCacheReqQ.notEmpty);
-        doAssert(!flushing, "cannot have pending req when flushing");
+        //doAssert(!flushing, "cannot have pending req when flushing");
+        // ^ We now have a needFlush, similar to the L1 TLBs
 
         // get the resp data from memory (LLC); this resp is for the initiating
         // req and other req that wait on this one, so don't deq right away
@@ -782,18 +785,18 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         interface rsToC = toFifoDeq(rsToCQ);
 
         interface Put iTlbReqFlush;
-            method Action put(void x) if(!iFlushReq);
-                iFlushReq <= True;
+            method Action put(void x);
+                needFlush[0] <= True;
             endmethod
         endinterface
         interface Put dTlbReqFlush;
-            method Action put(void x) if(!dFlushReq);
-                dFlushReq <= True;
+            method Action put(void x);
+                needFlush[1] <= True;
             endmethod
         endinterface
         interface Put llcTlbReqFlush;
-            method Action put(void x) if(!llcFlushReq);
-                llcFlushReq <= True;
+            method Action put(void x);
+                needFlush[2] <= True;
             endmethod
         endinterface
         interface Get flushDone = toGet(flushDoneQ);
