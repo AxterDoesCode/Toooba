@@ -631,7 +631,7 @@ module mkDTlb#(
         // (2) flush truly starts when there is no pending req
     endmethod
 
-    method Bool flush_done = !needFlush;
+    method Bool flush_done = True; // !needFlush;
 
     method Action updateVMInfo(VMInfo vm);
         if(verbose) $display("%t DTlb updateVMInfo", $time);
