@@ -111,9 +111,7 @@ endinterface
 interface DTlb#(type instT);
     // system consistency related
     method Bool flush_done;
-    (* always_ready, always_enabled *)
     method Action flush;
-    (* always_ready, always_enabled *)
     method Action updateVMInfo(VMInfo vm);
     method Bool noPendingReq;
 
@@ -155,7 +153,7 @@ module mkDTlb#(
     function TlbReq createReqForPrefetch(PrefetcherReqToTlb prefetch),
     function CapPipe getCap(instT inst))
     (DTlb::DTlb#(instT)) provisos(Bits#(instT, a__), FShow#(instT));
-    Bool verbose = True;
+    Bool verbose = False;
 
     // TLB array
     DTlbArray tlb <- mkDTlbArray;
@@ -284,7 +282,7 @@ module mkDTlb#(
 `endif
     endrule
 
-    rule doFinishFlush(!needFlush || waitFlushP);
+    rule doFinishFlush(needFlush && waitFlushP);
         flushRsFromPQ.deq;
         needFlush <= False;
         waitFlushP <= False;
@@ -624,8 +622,9 @@ module mkDTlb#(
         wrongSpec_handleReq_conflict.wset(?);
     endrule
 
-    method Action flush;
+    method Action flush if(!needFlush);
         needFlush <= True;
+        waitFlushP <= False;
         // this won't interrupt current processing, since
         // (1) miss process will continue even if needFlush=True
         // (2) flush truly starts when there is no pending req

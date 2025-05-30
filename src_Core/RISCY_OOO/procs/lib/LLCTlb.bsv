@@ -82,9 +82,7 @@ endinterface
 
 interface LLCTlb;
     method Bool flush_done;
-    (* always_ready, always_enabled *)
     method Action flush;
-    (* always_ready, always_enabled *)
     method Action updateVMInfo(VMInfo vm);
     method Bool noPendingReq;
 
@@ -112,7 +110,7 @@ typedef union tagged {
 } LLCTlbWait deriving(Bits, Eq, FShow);
 
 module mkLLCTlb(LLCTlb);
-    Bool verbose = True;
+    Bool verbose = False;
 
     // TLB array
     LLCTlbArray tlb <- mkLLCTlbArray;
@@ -180,8 +178,7 @@ module mkLLCTlb(LLCTlb);
         perf_events[2] <= ev;
     endrule
 
-    (* descending_urgency = "doFlush, doFinishFlush" *)
-    rule doFinishFlush(!needFlush || waitFlushP);
+    rule doFinishFlush(needFlush && waitFlushP);
         flushRsFromPQ.deq;
         needFlush <= False;
         waitFlushP <= False;
@@ -423,10 +420,9 @@ module mkLLCTlb(LLCTlb);
         perf_events[1] <= ev;
     endrule
     
-    method Action flush;
-        if (!needFlush) begin
-            needFlush <= True;
-        end
+    method Action flush if(!needFlush);
+        needFlush <= True;
+        waitFlushP <= False;
         if(verbose) $display("%t LLCTlb flush", $time);
         // this won't interrupt current processing, since
         // (1) miss process will continue even if needFlush=True
