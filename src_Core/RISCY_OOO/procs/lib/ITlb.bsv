@@ -260,7 +260,7 @@ module mkITlb(ITlb::ITlb);
         // (2) flush truly starts when there is no pending req
     endmethod
 
-    method Bool flush_done = True; // !needFlush && !vm_info_change;
+    method Bool flush_done = !needFlush && !vm_info_change;
 
     method Action updateVMInfo(VMInfo vm);
         if (vm_info != vm) vm_info_change <= True;
