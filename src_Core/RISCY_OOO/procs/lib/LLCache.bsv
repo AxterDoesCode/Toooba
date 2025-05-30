@@ -258,7 +258,7 @@ interface LLCache;
     interface MemFifoClient#(LdMemRqId#(LLCRqMshrIdx), void) to_mem;
     interface LLCTlbToParent#(CombinedLLCTlbReqIdx, LLCTlbId) to_tlb;
     method Action sendDataPrefetcherBroadcastData(Tuple2#(PrefetcherBroadcastData, Bit#(TLog#(CoreNum))) data);
-    method Action flushTlb(LLCTlbId idx);
+    interface WriteOnly#(Bit#(CoreNum)) flushTlb;
     method Action updateTlbVMInfo(LLCTlbId idx, VMInfo vm);
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
     interface Get#(LLCStuck) cRqStuck;
@@ -447,9 +447,7 @@ module mkLLCache(LLCache);
     interface to_tlb = cache.to_tlb;
     interface cRqStuck = cache.cRqStuck;
 
-    method Action flushTlb(LLCTlbId idx);
-        cache.flushTlb(idx);
-    endmethod
+    interface flushTlb = cache.flushTlb;
     method Action updateTlbVMInfo(LLCTlbId idx, VMInfo vm);
         cache.updateTlbVMInfo(idx, vm);
     endmethod

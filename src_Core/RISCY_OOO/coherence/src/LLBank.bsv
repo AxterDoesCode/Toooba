@@ -126,7 +126,7 @@ interface LLBank#(
     method Data getPerfData(LLCPerfType t);
 
     // Prefetcher TLB interface
-    method Action flushTlb(LLCTlbId idx);
+    interface WriteOnly#(Bit#(CoreNum)) flushTlb;
     method Action updateTlbVMInfo(LLCTlbId idx, VMInfo vm);
 
 `ifdef PERFORMANCE_MONITORING
@@ -280,15 +280,6 @@ module mkLLBank#(
     function Get#(LLCTlbRqToP#(LLCTlbReqIdx)) tlbRqGet(LLCTlb tlb) = tlb.toParent.lookup.request;
     mkXBar(getTlbRqDstInfo, map(tlbRqGet, dataLLCTlbs), vec(toPut(rqToL2TlbWire)));
 
-    // We don't really need a crossbar for TLB flush requests
-    RWire#(LLCTlbId) flushRqToL2TlbWire <- mkRWire;
-    for (Integer i=0; i < valueOf(CoreNum); i=i+1) begin
-        rule doForwardL2TlbFlushRq;
-            let x <- dataLLCTlbs[i].toParent.flush.request.get;
-            flushRqToL2TlbWire.wset(fromInteger(i));
-        endrule
-    end
-
     // Function for responses from parent TLBs
     function Action doForwardL2TlbResp(LLCTlbRsFromP#(CombinedLLCTlbReqIdx) rs);
     action
@@ -297,12 +288,13 @@ module mkLLBank#(
     endaction
     endfunction
 
-    // Function for flush responses from parent TLBs
-    function Action doForwardL2TlbFlushResp(LLCTlbId rs);
-    action
-        dataLLCTlbs[rs].toParent.flush.response.put(?);
-    endaction
-    endfunction
+    // Flush requests
+    Wire#(Bit#(CoreNum)) flushTlbWire <- mkDWire(0);
+    for (Integer i = 0; i < valueOf(CoreNum); i=i+1) begin
+        rule forwardTlbFlush;
+            dataLLCTlbs[i].flush <= unpack(flushTlbWire[i]);
+        endrule
+    end
 
     // Create prefetchers
     PrefetcherVector#(CoreNum) dataPrefetchers <- mkCheriPrefetcherVector(map(mkmkLLDPrefetcher, dataLLCTlbs));
@@ -1964,10 +1956,6 @@ module mkLLBank#(
             interface request = toGet(rqToL2TlbWire);
             interface response = toPut(doForwardL2TlbResp);
         endinterface
-        interface Client flush;
-            interface request = toGet(flushRqToL2TlbWire);
-            interface response = toPut(doForwardL2TlbFlushResp);
-        endinterface
     endinterface
 
     interface MemFifoClient to_mem;
@@ -1995,9 +1983,9 @@ module mkLLBank#(
         dataPrefetchers.sendBroadcastData(tpl_2(data), tpl_1(data));
     endmethod
 
-    method Action flushTlb(LLCTlbId idx);
-        dataLLCTlbs[idx].flush;
-    endmethod
+    interface WriteOnly flushTlb;
+        method _write(x) = flushTlbWire._write(x);
+    endinterface
     method Action updateTlbVMInfo(LLCTlbId idx, VMInfo vm);
         dataLLCTlbs[idx].updateVMInfo(vm);
     endmethod

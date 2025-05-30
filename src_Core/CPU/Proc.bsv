@@ -167,12 +167,15 @@ module mkProc (Proc_IFC);
    // Prefetcher tlb to Core
 
    Vector#(CoreNum, ParentToLLCTlb#(LLCTlbReqIdx, void)) toLLCTlbs = ?;
+   rule flushLLCTlbs;
+      Bit#(CoreNum) flushVec = ?;
+      for(Integer i = 0; i < valueOf(CoreNum); i=i+1) begin
+         flushVec[i] = pack(core[i].shouldFlushLLCTlb);
+      end
+      llc.flushTlb <= flushVec;
+   endrule
    for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
       toLLCTlbs[i] = core[i].toLLCTlb;
-      rule flushLLCTlb;
-         let x <- core[i].shouldFlushLLCTlb; // Creates an implicit condition 
-         llc.flushTlb(fromInteger(i));
-      endrule
       rule updateLLCTlbVMInfo;
          let vmInfo <- core[i].shouldUpdateLLCTlbVMInfo; // Creates an implicit condition 
          llc.updateTlbVMInfo(fromInteger(i), vmInfo);

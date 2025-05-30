@@ -178,7 +178,7 @@ interface Core;
     interface ChildCacheToParent#(L1Way, void) iCacheToParent;
     // Core to Prefetcher TLB in the LLC
     interface ParentToLLCTlb#(LLCTlbReqIdx, void) toLLCTlb;
-    method Action shouldFlushLLCTlb;
+    interface ReadOnly#(Bool) shouldFlushLLCTlb;
     method ActionValue#(VMInfo) shouldUpdateLLCTlbVMInfo;
     // DMA to LLC
     interface TlbMemClient tlbToMem;
@@ -558,21 +558,16 @@ module mkCore#(CoreId coreId)(Core);
     L2Tlb l2Tlb <- mkL2Tlb;
     Fifo#(1, LLCTlbRqToP#(LLCTlbReqIdx)) rqFromLLCTlbQ <- mkCFFifo;
     Fifo#(1, LLCTlbRsFromP#(LLCTlbReqIdx)) rsToLLCTlbQ <- mkCFFifo;
-    Fifo#(1, void) flushRqFromLLCTlbQ <- mkCFFifo;
-    Fifo#(1, void) flushRsToLLCTlbQ <- mkCFFifo;
     mkTlbConnect(
         iTlb.toParent, 
         dTlb.toParent, 
         toGet(rqFromLLCTlbQ), 
         toPut(rsToLLCTlbQ), 
-        toGet(flushRqFromLLCTlbQ), 
-        toPut(flushRsToLLCTlbQ), 
         l2Tlb.toChildren
     );
 
     // flags to flush
     Reg#(Bool) flush_tlbs <- mkReg(False);
-    Reg#(Bool) flush_llctlb <- mkReg(False);
     Reg#(Bool) update_vm_info <- mkReg(False);
     Reg#(Maybe#(VMInfo)) update_llctlb_vm_info <- mkReg(Invalid);
     Reg#(Bool) flush_reservation <- mkReg(False);
@@ -692,7 +687,6 @@ module mkCore#(CoreId coreId)(Core);
         method setFlushTlbs;
            action
               flush_tlbs <= True;
-              flush_llctlb <= True;
               // $display ("%0d: %m.commitInput.setFlushTlbs", cur_cycle);
            endaction
         endmethod
@@ -1604,15 +1598,11 @@ module mkCore#(CoreId coreId)(Core);
             interface request = toPut(rqFromLLCTlbQ);
             interface response = toGet(rsToLLCTlbQ);
         endinterface
-        interface Server flush;
-            interface request = toPut(flushRqFromLLCTlbQ);
-            interface response = toGet(flushRsToLLCTlbQ);
-        endinterface
     endinterface
 
-    method Action shouldFlushLLCTlb if (flush_llctlb);
-        flush_llctlb <= False;
-    endmethod
+    interface ReadOnly shouldFlushLLCTlb;
+        method _read = !(iTlb.flush_done && dTlb.flush_done);
+    endinterface
     method ActionValue#(VMInfo) shouldUpdateLLCTlbVMInfo if (
         update_llctlb_vm_info matches tagged Valid .vmInfo
     );

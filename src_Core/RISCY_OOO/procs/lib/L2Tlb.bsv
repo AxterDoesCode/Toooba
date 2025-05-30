@@ -107,7 +107,6 @@ interface L2TlbToChildren;
     // flush with I/D TLB
     interface Put#(void) iTlbReqFlush;
     interface Put#(void) dTlbReqFlush;
-    interface Put#(void) llcTlbReqFlush;
     interface Get#(void) flushDone;
 endinterface
 
@@ -146,7 +145,7 @@ typedef union tagged {
 
 (* synthesize *)
 module mkL2Tlb(L2Tlb::L2Tlb);
-    Bool verbose = False;
+    Bool verbose = True;
    
     // set associative TLB for 4KB pages
     L2SetAssocTlb tlb4KB <- mkL2SetAssocTlb;
@@ -163,9 +162,8 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // flush
     Reg#(Bool) iFlushReq <- mkReg(False);
     Reg#(Bool) dFlushReq <- mkReg(False);
-    Reg#(Bool) llcFlushReq <- mkReg(False);
     Reg#(Bool) waitFlushDone <- mkReg(False);
-    Bool flushing = iFlushReq && dFlushReq && llcFlushReq;
+    Bool flushing = iFlushReq && dFlushReq;
     Fifo#(1, void) flushDoneQ <- mkCFFifo;
 
     // req/resp with I/D TLBs
@@ -202,6 +200,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // They cannot fire together, because page walk may udpate tlb and tlb req
     // may request tlb.
 
+    let pendValid_noMiss = getVEhrPort(pendValid, 0);
     let pendValid_transCacheResp = getVEhrPort(pendValid, 0); // assert
     let pendValid_tlbResp = getVEhrPort(pendValid, 0);
     let pendValid_pageWalk = getVEhrPort(pendValid, 0);
@@ -211,6 +210,9 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     let pendWait_pageWalk = getVEhrPort(pendWait, 0);
     let pendWait_tlbResp = getVEhrPort(pendWait, 1); // perf
     let pendWait_tlbReq = getVEhrPort(pendWait, 1); // assert
+
+    // For flushing
+    Bool noMiss = all(\== (False) , readVReg(pendValid_noMiss));
 
     // current processor VM information
     Reg#(VMInfo) vm_info_I <- mkReg(defaultValue);
@@ -298,7 +300,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // when flushing is true, since both I and D TLBs have finished flush and
     // is waiting for L2 to flush, all I/D TLB req must have been responded.
     // Thus, there cannot be any req in pendReq or rqFromCQ.
-    rule doStartFlush(flushing && !waitFlushDone);
+    rule doStartFlush(flushing && !waitFlushDone && noMiss);
         waitFlushDone <= True;
         tlb4KB.flush;
         tlbMG.flush;
@@ -319,7 +321,6 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         flushDoneQ.enq(?);
         iFlushReq <= False;
         dFlushReq <= False;
-        llcFlushReq <= False;
         if (verbose) $display("%t L2TLB done flush", $time);
     endrule
 
@@ -355,7 +356,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 
     // process resp from 4KB TLB and mega-giga TLB
     rule doTlbResp(tlbReqQ.notEmpty);
-        doAssert(!flushing, "cannot have pending req when flushing");
+        //doAssert(!flushing, "cannot have pending req when flushing");
 
         // get req in tlb
         tlbReqQ.deq;
@@ -579,7 +580,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // page walk is preempted by tlb resp rule and trans cache resp rule, i.e.,
     // don't fire when tlb resp or trans cache resp are available
     rule doPageWalk(respLdQ.notEmpty && !tlbReqQ.notEmpty && !transCacheReqQ.notEmpty);
-        doAssert(!flushing, "cannot have pending req when flushing");
+        //doAssert(!flushing, "cannot have pending req when flushing");
 
         // get the resp data from memory (LLC); this resp is for the initiating
         // req and other req that wait on this one, so don't deq right away
@@ -789,11 +790,6 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         interface Put dTlbReqFlush;
             method Action put(void x) if(!dFlushReq);
                 dFlushReq <= True;
-            endmethod
-        endinterface
-        interface Put llcTlbReqFlush;
-            method Action put(void x) if(!llcFlushReq);
-                llcFlushReq <= True;
             endmethod
         endinterface
         interface Get flushDone = toGet(flushDoneQ);

@@ -41,8 +41,6 @@ module mkTlbConnect#(
     DTlbToParent d, 
     Get#(LLCTlbRqToP#(LLCTlbReqIdx)) rqFromLLCTlb, 
     Put#(LLCTlbRsFromP#(LLCTlbReqIdx)) rsToLLCTlb, 
-    Get#(void) flushRqFromLLCTlb, 
-    Put#(void) flushRsToLLCTlb, 
     L2TlbToChildren l2
 )(Empty);
     // give priority to DTlb req
@@ -97,13 +95,11 @@ module mkTlbConnect#(
 
     mkConnection(d.flush.request, l2.dTlbReqFlush);
     mkConnection(i.flush.request, l2.iTlbReqFlush);
-    mkConnection(flushRqFromLLCTlb, l2.llcTlbReqFlush);
 
     rule sendFlushDone;
         let x <- l2.flushDone.get;
         d.flush.response.put(?);
         i.flush.response.put(?);
-        flushRsToLLCTlb.put(?);
     endrule
 endmodule
 
@@ -118,14 +114,6 @@ module mkLLCTlbConnect#(
     function Get#(LLCTlbRsFromP#(LLCTlbReqIdx)) l2TlbRsGet(ParentToLLCTlb#(LLCTlbReqIdx, void) l2Tlb) = l2Tlb.lookup.response;
     mkXBar(getL2TlbRsDstInfo, map(l2TlbRsGet, l2Tlbs), vec(llcTlb.lookup.response));
 
-    // Don't bother with a crossbar for flush responses
-    for (Integer i=0; i < valueOf(CoreNum); i=i+1) begin
-        rule doForwardFlushRs;
-            let x <- l2Tlbs[i].flush.response.get;
-            llcTlb.flush.response.put(fromInteger(i));
-        endrule
-    end
-
     // Forward requests to the correct core's TLB
     rule doForwardRq;
         let rq <- llcTlb.lookup.request.get;
@@ -136,11 +124,4 @@ module mkLLCTlbConnect#(
         });
     endrule
 
-    // Forward flush requests to the correct core's TLB
-    rule doForwardFlushRq;
-        let idx <- llcTlb.flush.request.get;
-        l2Tlbs[idx].flush.request.put(?);
-    endrule
-
-    
 endmodule
