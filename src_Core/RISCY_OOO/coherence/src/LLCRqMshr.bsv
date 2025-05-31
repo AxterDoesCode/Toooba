@@ -169,7 +169,6 @@ interface LLCRqMshr_pipelineResp#(
         Bit#(TLog#(cRqNum)) n, 
         Maybe#(Bit#(TLog#(cRqNum))) succ
     );
-    method Action releaseEntry(Bit#(TLog#(cRqNum)) n);
     // find existing cRq which has gone through pipeline, but not in Done state, and has no addr successor
     // (it could have rep successor)
     // i.e. search the end of dependency chain for req to the same addr
@@ -440,14 +439,6 @@ module mkLLCRqMshr#(
         method Action setRepSucc(cRqIndexT n, Maybe#(cRqIndexT) succ);
             repSuccValidVec[n][pipelineResp_port] <= isValid(succ);
             repSuccFile.upd(n, fromMaybe(?, succ));
-        endmethod
-
-        method Action releaseEntry(cRqIndexT n) if(inited);
-            emptyEntryQ.enq(n);
-            stateVec[n][pipelineResp_port] <= Empty;
-`ifdef CHECK_DEADLOCK
-            checker.releaseEntry(n);
-`endif
         endmethod
 
         method Maybe#(cRqIndexT) searchEndOfChain(Addr addr);
