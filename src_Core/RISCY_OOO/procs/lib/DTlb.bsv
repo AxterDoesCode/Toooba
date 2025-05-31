@@ -194,6 +194,8 @@ module mkDTlb#(
     RWire#(void) wrongSpec_prefetcherReq_conflict <- mkRWire;
     RWire#(void) doingWrongSpec <- mkRWire;
 
+    Reg#(Bit#(3)) prefetchTimeout <- mkReg(0);
+
     let pendValid_noMiss = getVEhrPort(pendValid, 0);
     let pendValid_wrongSpec = getVEhrPort(pendValid, 0);
     let pendValid_procResp = getVEhrPort(pendValid, 0); // write
@@ -207,6 +209,8 @@ module mkDTlb#(
 
     // free list of pend entries, to cut off path from procResp to procReq
     Fifo#(DTlbReqNum, DTlbReqIdx) freeQ <- mkCFFifo;
+    ConfigReg#(Bit#(64)) freeQEnqs <- mkConfigReg(0);
+    ConfigReg#(Bit#(64)) freeQDeqs <- mkConfigReg(0);
     Reg#(Bool) freeQInited <- mkReg(False);
     Reg#(DTlbReqIdx) freeQInitIdx <- mkReg(0);
 
@@ -422,6 +426,7 @@ module mkDTlb#(
     // init freeQ
     rule doInitFreeQ(!freeQInited);
         freeQ.enq(freeQInitIdx);
+        freeQEnqs <= freeQEnqs + 1;
         freeQInitIdx <= freeQInitIdx + 1;
         if(freeQInitIdx == fromInteger(valueof(DTlbReqNum) - 1)) begin
             freeQInited <= True;
@@ -458,6 +463,7 @@ module mkDTlb#(
         if(verbose) $display ("%t Dtlb dropPoisoned", $time);
         pendValid_procResp[idx] <= False;
         freeQ.enq(idx);
+        freeQEnqs <= freeQEnqs + 1;
         // conflict with wrong spec
         wrongSpec_procResp_conflict.wset(?);
     endrule
@@ -468,6 +474,7 @@ module mkDTlb#(
         if(verbose) $display ("%t DTlb handleMergedRq", $time);
         // allocate MSHR entry
         freeQ.deq;
+        freeQDeqs <= freeQDeqs + 1;
         DTlbReqIdx idx = freeQ.first;
         doAssert(!pendValid_procReq[idx], "free entry cannot be valid");
         doAssert(pendWait[idx] == None, "entry cannot wait for parent resp");
@@ -622,6 +629,11 @@ module mkDTlb#(
         wrongSpec_handleReq_conflict.wset(?);
     endrule
 
+    rule decrementPrefetchTimeout if (!isValid(doingWrongSpec.wget) && prefetchTimeout > 0);
+        $display ("Dtlb dectimeout");
+        prefetchTimeout <= prefetchTimeout - 1;
+    endrule
+    
     method Action flush if(!needFlush);
         needFlush <= True;
         waitFlushP <= False;
@@ -649,7 +661,7 @@ module mkDTlb#(
     method Action procReq(DTlbReq#(instT) req) if(
         !needFlush && !ldTransRsFromPQ.notEmpty && rqToPQ.notFull && freeQInited && freeQ.notEmpty
     );
-        $display ("%t DTlb procReq ", $time, fshow(req));
+        if(verbose) $display ("%t DTlb procReq ", $time, fshow(req));
         wrongSpec_procReq_conflict.wset(?);
         rqFromProc.wset(req);
     endmethod
@@ -657,7 +669,7 @@ module mkDTlb#(
     interface TlbToPrefetcher toPrefetcher;
         method Action prefetcherReq(PrefetcherReqToTlb req) if(
             !isValid(rqFromProc.wget) && !needFlush && !ldTransRsFromPQ.notEmpty && 
-            rqToPQ.notFull && freeQInited && freeQ.notEmpty && !isValid(doingWrongSpec.wget)
+            rqToPQ.notFull && freeQInited && freeQ.notEmpty && !isValid(doingWrongSpec.wget) && (prefetchTimeout == 0) && (freeQEnqs-freeQDeqs >= 3)
         );
             //wrongSpec_prefetcherReq_conflict.wset(?);
             if(verbose) $display ("%t DTlb prefetcherReq ", $time, fshow(req));
@@ -670,6 +682,7 @@ module mkDTlb#(
             if(verbose) $display ("%t DTlb deqPrefetcherReq ", $time, fshow(idx));
             pendValid_procResp[idx] <= False;
             freeQ.enq(idx);
+            freeQEnqs <= freeQEnqs + 1;
             // conflict with wrong spec
             //wrongSpec_procResp_conflict.wset(?);
         endmethod
@@ -695,6 +708,7 @@ module mkDTlb#(
         if(verbose) $display ("%t DTlb deqProcReq ", $time, fshow(idx));
         pendValid_procResp[idx] <= False;
         freeQ.enq(idx);
+        freeQEnqs <= freeQEnqs + 1;
         // conflict with wrong spec
         wrongSpec_procResp_conflict.wset(?);
     endmethod
@@ -721,7 +735,10 @@ module mkDTlb#(
     interface SpeculationUpdate specUpdate;
         method Action incorrectSpeculation(Bool kill_all, SpecTag x);
             // poison entries
-            if(verbose) $display ("%t Dtlb incorrectSpeculation killall %b spectag", $time, kill_all, fshow(x));
+            $display ("%t Dtlb incorrectSpeculation killall %b spectag", $time, kill_all, fshow(x));
+            if (kill_all) begin
+                prefetchTimeout <= 4;
+            end
             for(Integer i = 0 ; i < valueOf(DTlbReqNum) ; i = i+1) begin
                 if((kill_all || pendSpecBits_wrongSpec[i][x] == 1'b1) || isValid(pendPrefetchInst[i])) begin
                     pendPoisoned[i] <= True;

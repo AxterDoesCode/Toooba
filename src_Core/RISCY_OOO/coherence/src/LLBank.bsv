@@ -148,6 +148,7 @@ typedef struct {
 typedef struct {
     cRqIdT cRqId;
     Msi toState;
+    Bool dropPrefetch;
 } LLRsInfo#(type cRqIdT) deriving(Bits, Eq, FShow);
 
 // to mem info
@@ -1037,6 +1038,7 @@ module mkLLBank#(
         rsToCIndexQ.deq;
         cRqIndexT n = rsToCIndexQ.first.cRqId;
         Msi toState = rsToCIndexQ.first.toState;
+        Bool dropPrefetch = rsToCIndexQ.first.dropPrefetch;
         cRqT cRq = cRqMshr.sendRsToDmaC.getRq(n);
         Maybe#(Line) rsData = cRqMshr.sendRsToDmaC.getData(n);
        if (verbose)
@@ -1047,20 +1049,22 @@ module mkLLBank#(
             fshow(toState)
         );
         // send resp to child
-        doAssert(isRqFromC(cRq.id), "cRq should be child req");
-        cRqIdT cRqId = getIdFromC(cRq.id);
-        toCQ.enq(PRs (PRsMsg {
-            addr: cRq.addr,
-            toState: toState, // we may upgrade to E for req S, don't use toState in cRq
-            child: cRq.child,
-            data: rsData,
-            id: cRqId,
-            cameFromPrefetch: cRqIsPrefetch[n],
-            prefetchAuxData: cRqPrefetchAuxData[n],
-            boundsOffset: cRq.boundsOffset,
-            boundsLength: cRq.boundsLength,
-            boundsVirtBase: cRq.boundsVirtBase
-        }));
+        if (!dropPrefetch) begin
+            doAssert(isRqFromC(cRq.id), "cRq should be child req");
+            cRqIdT cRqId = getIdFromC(cRq.id);
+            toCQ.enq(PRs (PRsMsg {
+                addr: cRq.addr,
+                toState: toState, // we may upgrade to E for req S, don't use toState in cRq
+                child: cRq.child,
+                data: rsData,
+                id: cRqId,
+                cameFromPrefetch: cRqIsPrefetch[n],
+                prefetchAuxData: cRqPrefetchAuxData[n],
+                boundsOffset: cRq.boundsOffset,
+                boundsLength: cRq.boundsLength,
+                boundsVirtBase: cRq.boundsVirtBase
+            }));
+        end
         // release MSHR entry
         cRqMshr.sendRsToDmaC.releaseEntry(n);
         crqMshrDeqs <= crqMshrDeqs + 1;
@@ -1253,7 +1257,8 @@ module mkLLBank#(
         // decide data validity using dir (which is more up to date than fromState)
         rsToCIndexQ.enq(LLRsInfo {
             cRqId: n,
-            toState: toState
+            toState: toState,
+            dropPrefetch: False
         });
         cRqMshr.pipelineResp.setStateSlot(n, Done, ?); // we no longer need slot info
         cRqMshr.pipelineResp.setData(n, ram.info.dir[cRq.child] <= T ? Valid (ram.line) : Invalid);
@@ -1595,9 +1600,13 @@ module mkLLBank#(
 
         function Action cRqDrop;
         action
-            cRqMshr.pipelineResp.releaseEntry(n);
-            crqMshrDeqs <= crqMshrDeqs + 1;
+            cRqMshr.pipelineResp.setStateSlot(n, Done, ?);
             pipeline.deqWrite(Invalid, pipeOut.ram, False);
+            rsToCIndexQ.enq(LLRsInfo {
+                cRqId: n,
+                toState: ?,
+                dropPrefetch: True
+            });
         endaction
         endfunction
 
