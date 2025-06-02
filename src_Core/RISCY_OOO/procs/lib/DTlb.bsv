@@ -584,7 +584,7 @@ module mkDTlb#(
                 Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
                 if(findIndex(reqSamePage, idxVec) matches tagged Valid .i) begin
                     // peer entry has already requested, so don't send duplicate req
-                    pendWait[idx] <= WaitPeer (i);
+                    pendWait[idx] <= WaitPeer (pack(i));
                     doAssert(pendValid_procReq[i], "peer entry must be valid");
                     if(verbose) begin
                         $display("[DTLB] req miss, pend on peer: idx %d, ",
