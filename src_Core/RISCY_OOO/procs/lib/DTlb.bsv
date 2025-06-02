@@ -582,7 +582,7 @@ module mkDTlb#(
                     return pendWait[i] == WaitParent && getVpn(r.addr) == getVpn(r_i.addr) && checkPrefetch;
                 endfunction
                 Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
-                if(find(reqSamePage, idxVec) matches tagged Valid .i) begin
+                if(findIndex(reqSamePage, idxVec) matches tagged Valid .i) begin
                     // peer entry has already requested, so don't send duplicate req
                     pendWait[idx] <= WaitPeer (i);
                     doAssert(pendValid_procReq[i], "peer entry must be valid");
