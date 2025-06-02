@@ -302,8 +302,8 @@ module mkLLBank#(
     PrefetcherVector#(CoreNum) instrPrefetchers <- mkCheriPrefetcherVector(map(mkmkLLIPrefetcher, genVector));
     Fifo#(16, cRqFromCT) overflowPrefetchQueue <- mkOverflowPipelineFifo;
 
-    Reg#(Bit#(64)) crqMshrEnqs <- mkConfigReg(0);
-    Reg#(Bit#(64)) crqMshrDeqs <- mkConfigReg(0);
+    Reg#(Bit#(TAdd#(TLog#(cRqNum),1))) crqMshrEnqs <- mkConfigReg(0);
+    Reg#(Bit#(TAdd#(TLog#(cRqNum),1))) crqMshrDeqs <- mkConfigReg(0);
 
 `ifdef PERF_COUNT
     Reg#(Bool) doStats <- mkConfigReg(True);
