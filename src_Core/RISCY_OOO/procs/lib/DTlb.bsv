@@ -377,9 +377,9 @@ module mkDTlb#(
             return pendWait[i] == WaitPeer (pRs.id) && i != idx;
         endfunction
         Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
-        if(find(waitForResp, idxVec) matches tagged Valid .i) begin
+        if(findIndex(waitForResp, idxVec) matches tagged Valid .i) begin
             // still have req waiting for this resp, keep processing
-            respForOtherReq <= Valid (i);
+            respForOtherReq <= Valid (pack(i));
             doAssert(pendValid_doPRs[i], "waiting entry must be valid");
         end
         else begin
