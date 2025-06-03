@@ -241,9 +241,9 @@ module mkLLCTlb(LLCTlb);
             return pendWait[i] == WaitPeer (pRs.id) && i != idx;
         endfunction
         Vector#(LLCTlbReqNum, LLCTlbReqIdx) idxVec = genWith(fromInteger);
-        if(find(waitForResp, idxVec) matches tagged Valid .i) begin
+        if(findIndex(waitForResp, idxVec) matches tagged Valid .i) begin
             // still have req waiting for this resp, keep processing
-            respForOtherReq <= Valid (i);
+            respForOtherReq <= Valid (pack(i));
             doAssert(pendValid_doPRs[i], "waiting entry must be valid");
         end
         else begin
@@ -371,9 +371,9 @@ module mkLLCTlb(LLCTlb);
                     return pendWait[i] == WaitParent && getVpn(vaddr) == getVpn(vaddr_i);
                 endfunction
                 Vector#(LLCTlbReqNum, LLCTlbReqIdx) idxVec = genWith(fromInteger);
-                if(find(reqSamePage, idxVec) matches tagged Valid .i) begin
+                if(findIndex(reqSamePage, idxVec) matches tagged Valid .i) begin
                     // peer entry has already requested, so don't send duplicate req
-                    pendWait[idx] <= WaitPeer (i);
+                    pendWait[idx] <= WaitPeer (pack(i));
                     doAssert(pendValid_req[i], "peer entry must be valid");
                     if(verbose) begin
                         $display("[LLCTlb] req miss, pend on peer: idx %d, ",
