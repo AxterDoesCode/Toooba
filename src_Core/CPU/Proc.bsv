@@ -314,7 +314,7 @@ module mkProc (Proc_IFC);
    // ================================================================
    // DRAM latency injection
 
-   NumProxy#(64) depthProxy = error("Do not look inside proxy");
+   NumProxy#(128) depthProxy = error("Do not look inside proxy");
    let master_0_delay = llc_axi4_adapter.mem_master;
    if (valueOf(DramLatency) != 0) begin
       let delayshim <- mkAXI4_DelayShim(depthProxy, fromInteger(valueOf(DramLatency)));

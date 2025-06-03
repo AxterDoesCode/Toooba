@@ -179,7 +179,6 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Vector#(L2TlbReqNum, Ehr#(2, Bool)) pendValid <- replicateM(mkEhr(False));
     Vector#(L2TlbReqNum, Reg#(L2TlbRqFromC)) pendReq <- replicateM(mkRegU);
     Vector#(L2TlbReqNum, Ehr#(2, L2TlbWait)) pendWait <- replicateM(mkEhr(None));
-    Vector#(L2TlbReqNum, Reg#(Bool)) pendIsPrefetch <- replicateM(mkRegU);
     Vector#(L2TlbReqNum, Reg#(PageWalkLevel)) pendWalkLevel <- replicateM(mkRegU);
     Vector#(L2TlbReqNum, Reg#(Addr)) pendWalkAddr <- replicateM(mkRegU);
 `ifdef SECURITY
@@ -348,7 +347,6 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         // record req
         pendValid_tlbReq[idx] <= True;
         pendReq[idx] <= r;
-        pendIsPrefetch[idx] <= r.isPrefetch;
         doAssert(!pendValid_tlbReq[idx], "entry must be invalid");
         doAssert(pendWait_tlbReq[idx] == None, "cannot be waiting");
         if(verbose) $display("L2TLB new req: ", fshow(r), "; ", fshow(idx));
@@ -420,7 +418,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                      "mega or giga page");
             pageHit(entry);
             tlb4KB.deqResp(Invalid); // just deq 4KB array
-            if (!pendIsPrefetch[idx]) begin
+            if (!cRq.isPrefetch) begin
                 tlbMG.updateRepByHit(respMG.index); // update replacement in MG array
             end
 `ifdef PERF_COUNT
@@ -445,7 +443,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             doAssert(entry.level == 0, "must be 4KB page");
             pageHit(entry);
             // update 4KB array replacement, no need to touch MG array
-            if (!pendIsPrefetch[idx]) begin
+            if (!cRq.isPrefetch) begin
                 tlb4KB.deqResp(Valid (resp4KB.way));
             end else begin
                 tlb4KB.deqResp(Invalid);
@@ -456,7 +454,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             perf_events[1] <= ev;
 `endif
         end
-        else if (!pendIsPrefetch[idx]) begin
+        else if (!cRq.isPrefetch) begin
             // miss on non-prefetch, deq resp
             tlb4KB.deqResp(Invalid);
             // check translation cache
