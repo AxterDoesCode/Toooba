@@ -488,9 +488,6 @@ endfunction
             };
             rqToPQ.enq(cRqToP);
             if (verbose) $display("%t L1 %m sendPrefetchRqToP: ", $time, fshow(cRqToP));
-            EventsL1D events = unpack (0);
-            events.evt_AMO_MISS_LAT = 1;
-            perf_events[2] <= events;
         end else begin
             procRqT r = ProcRq {
                 id: ?, //Or maybe do 0 here
@@ -530,6 +527,9 @@ endfunction
                     ", op: ",
                     fshow(r.op)
                 );
+            EventsL1D events = unpack (0);
+            events.evt_AMO_MISS_LAT = 1;
+            perf_events[2] <= events;
         end        
     endrule
 
