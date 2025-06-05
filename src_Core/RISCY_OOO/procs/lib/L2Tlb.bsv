@@ -309,7 +309,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         doAssert(readVEhr(0, pendValid) == replicate(False), "cannot have pending req");
 `ifdef PERFORMANCE_MONITORING
         EventsLL ev = unpack(0);
-        ev.evt_TLB_FLUSH = 1;
+        //ev.evt_TLB_FLUSH = 1;
         perf_events[2] <= ev;
         if (verbose) $display("%t L2TLB start flush", $time);
 `endif

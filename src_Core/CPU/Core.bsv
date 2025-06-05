@@ -1199,7 +1199,7 @@ module mkCore#(CoreId coreId)(Core);
      Reg#(EventsTGC) events_tgc_reg <- mkRegU;
      rule report_events;
          EventsCore events = unpack(pack(commitStage.events));
-         events.evt_REDIRECT = zeroExtend(pack(fetchStage.redirect_evt));
+         //events.evt_REDIRECT = zeroExtend(pack(fetchStage.redirect_evt));
          hpm_core_events[1] <= events;
      endrule
 
@@ -1216,10 +1216,12 @@ module mkCore#(CoreId coreId)(Core);
      core_evts.evt_REDIRECT = llmem_evts.evt_EVICT;
      tgc_evts.evt_EVICT = llmem_evts.evt_TLB_FLUSH;
      tgc_evts.evt_WRITE = llmem_evts.evt_ST;
+     tgc_evts.evt_SET_TAG_WRITE = llmem_evts.evt_ST;
 
      core_evts.evt_BRANCH = (rob.isFull_ehrPort0) ? 1 : 0;
 
      tgc_evts.evt_READ = events_llc_reg.evt_TLB;
+     tgc_evts.evt_SET_TAG_READ = events_llc_reg.evt_TLB;
      tgc_evts.evt_READ_MISS = events_llc_reg.evt_TLB_MISS;
 
 
