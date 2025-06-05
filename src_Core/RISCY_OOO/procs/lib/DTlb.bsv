@@ -626,7 +626,7 @@ module mkDTlb#(
 `endif
  `ifdef PERFORMANCE_MONITORING
          EventsL1D ev = unpack(0);
-         //ev.evt_TLB = 1;
+         ev.evt_TLB = 1;
          perf_events[1] <= ev;
  `endif
         // conflict with wrong spec
@@ -673,7 +673,7 @@ module mkDTlb#(
     interface TlbToPrefetcher toPrefetcher;
         method Action prefetcherReq(PrefetcherReqToTlb req) if(
             !isValid(rqFromProc.wget) && !needFlush && !ldTransRsFromPQ.notEmpty && 
-            rqToPQ.notFull && freeQInited && freeQ.notEmpty && !isValid(doingWrongSpec.wget) && (prefetchTimeout == 0) && (freeQEnqs-freeQDeqs >= 3)
+            rqToPQ.notFull && freeQInited && freeQ.notEmpty && !isValid(doingWrongSpec.wget) && (prefetchTimeout == 0) && (freeQEnqs-freeQDeqs >= 5)
         );
             //wrongSpec_prefetcherReq_conflict.wset(?);
             if(verbose) $display ("%t DTlb prefetcherReq ", $time, fshow(req));
