@@ -138,6 +138,7 @@ typedef struct {
 `ifdef KONATA
     Bit#(64) u_id;
 `endif
+    Bool prefetch;
 } MemExeToFinish deriving(Bits, FShow);
 
 // bookkeeping when waiting for MMIO resp which may cause exception
@@ -216,18 +217,7 @@ module mkDTlbSynth(DTlbSynth);
         };
     endfunction
     
-    function TlbReq createReqForPrefetch(PrefetcherReqToTlb req);
-        //return unpack(0);
-        return TlbReq {
-            addr: getAddr(req.cap),
-            write: False,
-            capStore: False,
-            potentialCapLoad: True
-        };
-    endfunction
-    function CapPipe getCap(MemExeToFinish inst) = inst.vaddr;
-    
-    let m <- mkDTlb(createTlbReq, createReqForPrefetch, getCap);
+    let m <- mkDTlb(createTlbReq);
     return m;
 endmodule
 
@@ -486,7 +476,64 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         endmethod
     endinterface);
     // non-blocking coherent D$
-    DCoCache dMem <- mkDCoCache(procRespIfc, dTlb.toPrefetcher);
+    DCoCache dMem <- mkDCoCache(procRespIfc, 
+        interface TlbToPrefetcher;
+            method Action prefetcherReq(PrefetcherReqToTlb req);
+                //function TlbReq createReqForPrefetch(PrefetcherReqToTlb req);
+                //    //return unpack(0);
+                //    return TlbReq {
+                //        addr: getAddr(req.cap),
+                //        write: False,
+                //        capStore: False,
+                //        potentialCapLoad: True
+                //    };
+                //endfunction
+                //function CapPipe getCap(MemExeToFinish inst) = inst.vaddr;
+                if(verbose) $display ("%t DTlb prefetcherReq ", $time, fshow(req));
+                dTlb.procReq(DTlbReq {
+                    inst: MemExeToFinish {
+                        mem_func: Ld,
+                        tag: ?,
+                        ldstq_tag: unpack(zeroExtend(pack(req.id))),
+                        shiftedBE: unpack(-1),
+                        vaddr: req.cap,
+`ifdef INCLUDE_TANDEM_VERIF
+                        store_data: ?,
+                        store_data_BE: ?,
+`endif
+                        misaligned: False,
+                        capStore: False,
+                        allowCapLoad: True,
+                        capException: ?,
+                        check: ?
+`ifdef KONATA
+                        , u_id: ?
+`endif
+                        , prefetch: True
+                    },
+                    specBits: 0
+                });
+            endmethod
+
+            method Action deqPrefetcherResp if (dTlb.procResp.inst.prefetch);
+                if(verbose) $display ("%t DTlb deqPrefetcherResp ", $time, fshow(dTlb.procResp));
+                dTlb.deqProcResp;
+            endmethod
+
+            method TlbRespToPrefetcher prefetcherResp if (dTlb.procResp.inst.prefetch);
+                let dTlbResp = dTlb.procResp;
+                let x = dTlbResp.inst;
+                let {paddr, expCause, allowCapPTE} = dTlbResp.resp;
+                return TlbRespToPrefetcher {
+                    paddr: paddr,
+                    cap: x.vaddr,
+                    id: unpack(truncate(pack(x.ldstq_tag))),
+                    haveException: isValid(expCause),
+                    permsCheckPass: allowCapPTE
+                };
+            endmethod
+        endinterface
+    );
 
 `ifdef SELF_INV_CACHE
     // Waiting bit for reconcile to be performed. We set the bit and start
@@ -673,12 +720,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `ifdef KONATA
                 , u_id: x.u_id
 `endif
+                , prefetch: False
             },
             specBits: regToExe.spec_bits
         });
     endrule
 
-    rule doFinishMem;
+    rule doFinishMem(!dTlb.procResp.inst.prefetch);
         dTlb.deqProcResp;
         let dTlbResp = dTlb.procResp;
         let x = dTlbResp.inst;
