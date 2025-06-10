@@ -37,20 +37,21 @@ import CrossBar::*;
 import BuildVector::*;
 
 module mkTlbConnect#(
-    ITlbToParent i, 
-    DTlbToParent d, 
+    ITlbToParent i,
+    DTlbToParent d,
+    DTlbToParent p,
     Get#(LLCTlbRqToP#(LLCTlbReqIdx)) rqFromLLCTlb, 
     Put#(LLCTlbRsFromP#(LLCTlbReqIdx)) rsToLLCTlb, 
     L2TlbToChildren l2
 )(Empty);
     // give priority to DTlb req
-    (* descending_urgency = "sendDTlbReq, sendITlbReq, sendLLCTlbReq" *)
+    (* descending_urgency = "sendDTlbReq, sendITlbReq, sendPTlbReq, sendLLCTlbReq" *)
     rule sendDTlbReq;
         DTlbRqToP r <- toGet(d.rqToP).get;
         l2.rqFromC.put(L2TlbRqFromC {
             child: D (r.id),
             vpn: r.vpn,
-            isPrefetch: False //r.isPrefetch
+            isPrefetch: False
         });
     endrule
 
@@ -60,6 +61,15 @@ module mkTlbConnect#(
             child: I,
             vpn: r.vpn,
             isPrefetch: False
+        });
+    endrule
+
+    rule sendPTlbReq;
+        DTlbRqToP r <- toGet(p.rqToP).get;
+        l2.rqFromC.put(L2TlbRqFromC {
+            child: P (r.id),
+            vpn: r.vpn,
+            isPrefetch: True
         });
     endrule
 
@@ -80,6 +90,14 @@ module mkTlbConnect#(
         });
     endrule
 
+    rule sendRsToPTlb(l2.rsToC.first.child matches tagged P .id);
+        L2TlbRsToC r <- toGet(l2.rsToC).get;
+        p.ldTransRsFromP.enq(DTlbTransRsFromP {
+            entry: r.entry,
+            id: id
+        });
+    endrule
+
     rule sendRsToITlb(l2.rsToC.first.child == I);
         L2TlbRsToC r <- toGet(l2.rsToC).get;
         i.rsFromP.enq(ITlbRsFromP {entry: r.entry});
@@ -94,11 +112,13 @@ module mkTlbConnect#(
     endrule
 
     mkConnection(d.flush.request, l2.dTlbReqFlush);
+    mkConnection(p.flush.request, l2.pTlbReqFlush);
     mkConnection(i.flush.request, l2.iTlbReqFlush);
 
     rule sendFlushDone;
         let x <- l2.flushDone.get;
         d.flush.response.put(?);
+        p.flush.response.put(?);
         i.flush.response.put(?);
     endrule
 endmodule

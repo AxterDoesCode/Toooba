@@ -550,6 +550,7 @@ module mkCore#(CoreId coreId)(Core);
     end
     ReservationStationMem reservationStationMem = coreFix.memExeIfc.rsMemIfc;
     DTlbSynth dTlb = coreFix.memExeIfc.dTlbIfc;
+    DTlbSynth pTlb = coreFix.memExeIfc.pTlbIfc;
     SplitLSQ lsq = coreFix.memExeIfc.lsqIfc;
     StoreBuffer stb = coreFix.memExeIfc.stbIfc;
     DCoCache dMem = coreFix.memExeIfc.dMemIfc;
@@ -560,7 +561,8 @@ module mkCore#(CoreId coreId)(Core);
     Fifo#(1, LLCTlbRsFromP#(LLCTlbReqIdx)) rsToLLCTlbQ <- mkCFFifo;
     mkTlbConnect(
         iTlb.toParent, 
-        dTlb.toParent, 
+        dTlb.toParent,
+        pTlb.toParent,
         toGet(rqFromLLCTlbQ), 
         toPut(rsToLLCTlbQ), 
         l2Tlb.toChildren

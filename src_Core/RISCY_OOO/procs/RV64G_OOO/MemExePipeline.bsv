@@ -138,7 +138,6 @@ typedef struct {
 `ifdef KONATA
     Bit#(64) u_id;
 `endif
-    Bool prefetch;
 } MemExeToFinish deriving(Bits, FShow);
 
 // bookkeeping when waiting for MMIO resp which may cause exception
@@ -280,6 +279,7 @@ interface MemExePipeline;
     interface Vector#(TMul#(2, AluExeNum), RecvBypass) recvBypass;
     interface ReservationStationMem rsMemIfc;
     interface DTlbSynth dTlbIfc;
+    interface DTlbSynth pTlbIfc;
     interface SplitLSQ lsqIfc;
     interface StoreBuffer stbIfc;
     interface DCoCache dMemIfc;
@@ -352,7 +352,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
     // TLB
     DTlbSynth dTlb <- mkDTlbSynth;
-    PulseWire doExeMem_fired <- mkPulseWire;
+    DTlbSynth pTlb <- mkDTlbSynth;
+    //PulseWire doExeMem_fired <- mkPulseWire;
 
     // store buffer only used in WEAK model
 `ifdef TSO_MM
@@ -479,9 +480,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // non-blocking coherent D$
     DCoCache dMem <- mkDCoCache(procRespIfc, 
         interface TlbToPrefetcher;
-            method Action prefetcherReq(PrefetcherReqToTlb req) if (!doExeMem_fired);
-                if(verbose) $display ("%t DTlb prefetcherReq ", $time, fshow(req));
-                dTlb.procReq(DTlbReq {
+            method Action prefetcherReq(PrefetcherReqToTlb req);
+                if(verbose) $display ("%t PTlb prefetcherReq ", $time, fshow(req));
+                pTlb.procReq(DTlbReq {
                     inst: MemExeToFinish {
                         mem_func: Ld,
                         tag: ?,
@@ -500,21 +501,20 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `ifdef KONATA
                         , u_id: ?
 `endif
-                        , prefetch: True
                     },
                     specBits: 0
                 });
             endmethod
 
-            method Action deqPrefetcherResp if (dTlb.procResp.inst.prefetch);
-                if(verbose) $display ("%t DTlb deqPrefetcherResp ", $time, fshow(dTlb.procResp));
-                dTlb.deqProcResp;
+            method Action deqPrefetcherResp;
+                if(verbose) $display ("%t PTlb deqPrefetcherResp ", $time, fshow(pTlb.procResp));
+                pTlb.deqProcResp;
             endmethod
 
-            method TlbRespToPrefetcher prefetcherResp if (dTlb.procResp.inst.prefetch);
-                let dTlbResp = dTlb.procResp;
-                let x = dTlbResp.inst;
-                let {paddr, expCause, allowCapPTE} = dTlbResp.resp;
+            method TlbRespToPrefetcher prefetcherResp;
+                let pTlbResp = pTlb.procResp;
+                let x = pTlbResp.inst;
+                let {paddr, expCause, allowCapPTE} = pTlbResp.resp;
                 return TlbRespToPrefetcher {
                     paddr: paddr,
                     cap: x.vaddr,
@@ -711,14 +711,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `ifdef KONATA
                 , u_id: x.u_id
 `endif
-                , prefetch: False
             },
             specBits: regToExe.spec_bits
         });
-        doExeMem_fired.send;
     endrule
 
-    rule doFinishMem(!dTlb.procResp.inst.prefetch);
+    rule doFinishMem;
         dTlb.deqProcResp;
         let dTlbResp = dTlb.procResp;
         let x = dTlbResp.inst;
@@ -1714,6 +1712,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     interface recvBypass = map(getRecvBypassIfc, bypassWire);
     interface rsMemIfc = rsMem;
     interface dTlbIfc = dTlb;
+    interface pTlbIfc = pTlb;
     interface lsqIfc = lsq;
     interface stbIfc = stb;
     interface dMemIfc = dMem;

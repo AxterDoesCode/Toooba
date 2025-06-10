@@ -88,6 +88,7 @@ endinterface
 typedef union tagged {
     void I;
     DTlbReqIdx D;
+    DTlbReqIdx P;
     LLCTlbReqIdx LLC;
 } TlbChild deriving(Bits, Eq, FShow);
 typedef struct {
@@ -107,6 +108,7 @@ interface L2TlbToChildren;
     // flush with I/D TLB
     interface Put#(void) iTlbReqFlush;
     interface Put#(void) dTlbReqFlush;
+    interface Put#(void) pTlbReqFlush;
     interface Get#(void) flushDone;
 endinterface
 
@@ -162,8 +164,9 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // flush
     Reg#(Bool) iFlushReq <- mkReg(False);
     Reg#(Bool) dFlushReq <- mkReg(False);
+    Reg#(Bool) pFlushReq <- mkReg(False);
     Reg#(Bool) waitFlushDone <- mkReg(False);
-    Bool flushing = iFlushReq && dFlushReq;
+    Bool flushing = iFlushReq && dFlushReq && pFlushReq;
     Fifo#(1, void) flushDoneQ <- mkCFFifo;
 
     // req/resp with I/D TLBs
@@ -788,6 +791,11 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         interface Put dTlbReqFlush;
             method Action put(void x) if(!dFlushReq);
                 dFlushReq <= True;
+            endmethod
+        endinterface
+        interface Put pTlbReqFlush;
+            method Action put(void x) if(!pFlushReq);
+                pFlushReq <= True;
             endmethod
         endinterface
         interface Get flushDone = toGet(flushDoneQ);
