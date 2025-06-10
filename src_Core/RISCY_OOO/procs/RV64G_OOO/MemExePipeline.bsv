@@ -352,6 +352,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
     // TLB
     DTlbSynth dTlb <- mkDTlbSynth;
+    PulseWire doExeMem_fired <- mkPulseWire;
 
     // store buffer only used in WEAK model
 `ifdef TSO_MM
@@ -478,17 +479,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // non-blocking coherent D$
     DCoCache dMem <- mkDCoCache(procRespIfc, 
         interface TlbToPrefetcher;
-            method Action prefetcherReq(PrefetcherReqToTlb req);
-                //function TlbReq createReqForPrefetch(PrefetcherReqToTlb req);
-                //    //return unpack(0);
-                //    return TlbReq {
-                //        addr: getAddr(req.cap),
-                //        write: False,
-                //        capStore: False,
-                //        potentialCapLoad: True
-                //    };
-                //endfunction
-                //function CapPipe getCap(MemExeToFinish inst) = inst.vaddr;
+            method Action prefetcherReq(PrefetcherReqToTlb req) if (!doExeMem_fired);
                 if(verbose) $display ("%t DTlb prefetcherReq ", $time, fshow(req));
                 dTlb.procReq(DTlbReq {
                     inst: MemExeToFinish {
@@ -724,6 +715,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             },
             specBits: regToExe.spec_bits
         });
+        doExeMem_fired.send;
     endrule
 
     rule doFinishMem(!dTlb.procResp.inst.prefetch);

@@ -177,9 +177,7 @@ module mkDTlb#(
     // correctSpec CF doPRs
     // {procReq, procResp} < correctSpec (correctSpec is always at end)
 
-    RWire#(void) wrongSpec_procResp_conflict <- mkRWire;
-    RWire#(void) wrongSpec_doPRs_conflict <- mkRWire;
-    RWire#(void) wrongSpec_procReq_conflict <- mkRWire;
+    PulseWire wrongSpec_conflict <- mkPulseWire;
 
     let pendValid_noMiss = getVEhrPort(pendValid, 0);
     let pendValid_wrongSpec = getVEhrPort(pendValid, 0);
@@ -274,7 +272,7 @@ module mkDTlb#(
     // get resp from parent TLB
     // At high level, this rule is always exclusive with doStartFlush, though
     // we don't bother to make compiler understand this...
-    rule doPRs(ldTransRsFromPQ.notEmpty);
+    rule doPRs(ldTransRsFromPQ.notEmpty && !wrongSpec_conflict);
         let pRs = ldTransRsFromPQ.first;
         // the current req being served is either the initiating req or other
         // req pending on the same resp
@@ -375,8 +373,6 @@ module mkDTlb#(
         ev.evt_TLB_MISS = 1;
         perf_events[0] <= ev;
 `endif
-        // conflict with wrong spec
-        wrongSpec_doPRs_conflict.wset(?);
     endrule
 
     // init freeQ
@@ -406,11 +402,9 @@ module mkDTlb#(
     endfunction
 
     // drop poisoned resp
-    rule doPoisonedProcResp(poisonedProcRespIdx matches tagged Valid .idx &&& freeQInited);
+    rule doPoisonedProcResp(poisonedProcRespIdx matches tagged Valid .idx &&& freeQInited && !wrongSpec_conflict);
         pendValid_procResp[idx] <= False;
         freeQ.enq(idx);
-        // conflict with wrong spec
-        wrongSpec_procResp_conflict.wset(?);
     endrule
 
     method Action flush if(!needFlush);
@@ -437,7 +431,7 @@ module mkDTlb#(
     // also check rqToPQ not full. This simplifies the guard, i.e., it does not
     // depend on whether we hit in TLB or not.
     method Action procReq(DTlbReq#(instT) req) if(
-        !needFlush && !ldTransRsFromPQ.notEmpty && rqToPQ.notFull && freeQInited
+        !needFlush && !ldTransRsFromPQ.notEmpty && rqToPQ.notFull && freeQInited && !wrongSpec_conflict
     );
         // allocate MSHR entry
         freeQ.deq;
@@ -576,17 +570,13 @@ module mkDTlb#(
         ev.evt_TLB = 1;
         perf_events[1] <= ev;
 `endif
-        // conflict with wrong spec
-        wrongSpec_procReq_conflict.wset(?);
     endmethod
 
     method Action deqProcResp if(
-        validProcRespIdx matches tagged Valid .idx &&& freeQInited
+        validProcRespIdx matches tagged Valid .idx &&& freeQInited && !wrongSpec_conflict
     );
         pendValid_procResp[idx] <= False;
         freeQ.enq(idx);
-        // conflict with wrong spec
-        wrongSpec_procResp_conflict.wset(?);
     endmethod
 
     method DTlbResp#(instT) procResp if(
@@ -617,9 +607,7 @@ module mkDTlb#(
                 end
             end
             // make conflicts with procReq, doPRs, procResp
-            wrongSpec_procReq_conflict.wset(?);
-            wrongSpec_doPRs_conflict.wset(?);
-            wrongSpec_procResp_conflict.wset(?);
+            wrongSpec_conflict.send;
         endmethod
         method Action correctSpeculation(SpecBits mask);
             // clear spec bits for all entries
