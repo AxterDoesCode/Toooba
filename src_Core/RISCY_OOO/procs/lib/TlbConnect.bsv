@@ -112,13 +112,11 @@ module mkTlbConnect#(
     endrule
 
     mkConnection(d.flush.request, l2.dTlbReqFlush);
-    mkConnection(p.flush.request, l2.pTlbReqFlush);
     mkConnection(i.flush.request, l2.iTlbReqFlush);
 
     rule sendFlushDone;
         let x <- l2.flushDone.get;
         d.flush.response.put(?);
-        p.flush.response.put(?);
         i.flush.response.put(?);
     endrule
 endmodule
