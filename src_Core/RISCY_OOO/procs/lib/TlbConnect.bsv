@@ -78,7 +78,7 @@ module mkTlbConnect#(
         l2.rqFromC.put(L2TlbRqFromC {
             child: LLC(r.id),
             vpn: r.vpn,
-            isPrefetch: True
+            isPrefetch: False
         });
     endrule
 
