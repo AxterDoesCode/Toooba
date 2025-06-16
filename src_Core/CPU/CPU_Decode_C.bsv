@@ -938,7 +938,6 @@ function Tuple2 #(Bool, Instr) fv_decode_C_SLLI (MISA  misa,  Bit #(2)  xl, Bool
                        && (op == opcode_C2)
                        && (funct3 == funct3_C_SLLI)
                        && (rd_rs1 != 0)
-                       && (shamt6 != 0)
                        && ((xl == misa_mxl_32) ? (imm_at_12 == 0) : True));
 
       Bit #(12) imm12 = (  (xl == misa_mxl_32)
@@ -964,7 +963,6 @@ function Tuple2 #(Bool, Instr) fv_decode_C_SRLI (MISA  misa,  Bit #(2)  xl, Bool
                        && (funct3 == funct3_C_SRLI)
                        && (funct2 == funct2_C_SRLI)
                        && (rd_rs1 != 0)
-                       && (shamt6 != 0)
                        && ((xl == misa_mxl_32) ? (shamt6_5 == 0) : True));
 
       Bit #(12) imm12 = (  (xl == misa_mxl_32)
