@@ -1,4 +1,19 @@
 // Copyright (c) 2017-2019 Bluespec, Inc. All Rights Reserved.
+//
+//-
+// RVFI_DII + CHERI modifications:
+//     Copyright (c) 2020 Alexandre Joannou
+//     Copyright (c) 2020 Peter Rugg
+//     Copyright (c) 2020 Jonathan Woodruff
+//     All rights reserved.
+//
+//     This software was developed by SRI International and the University of
+//     Cambridge Computer Laboratory (Department of Computer Science and
+//     Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+//     DARPA SSITH research programme.
+//
+//     This work was supported by NCSC programme grant 4212611/RFA 15971 ("SafeBet").
+//-
 
 package DM_Run_Control;
 
@@ -32,7 +47,7 @@ import ProcTypes :: *;
 // Interface
 
 interface DM_Run_Control_IFC;
-   method Bool   dmactive;
+   method Bool   dmactive_cleared;
    method Action reset;
 
    // ----------------
@@ -45,6 +60,7 @@ interface DM_Run_Control_IFC;
    interface Vector #(CoreNum, Client #(Bool, Bool)) harts_reset_client;
    interface Vector #(CoreNum, Client #(Bool, Bool)) harts_client_run_halt;
    interface Vector #(CoreNum, Get #(Bit #(4)))      harts_get_other_req;
+   interface Vector #(CoreNum, Put #(Bool))          harts_is_running;
 
    // ----------------
    // Facing Platform: Non-Debug-Module Reset (reset all except DM)
@@ -95,6 +111,8 @@ module mkDM_Run_Control (DM_Run_Control_IFC);
    Reg #(Bool)     rg_dmcontrol_ndmreset  <- mkRegU;
    Reg #(Bool)     rg_dmcontrol_dmactive  <- mkReg (False);
    Reg #(Bit#(20)) rg_dmcontrol_hartsel   <- mkReg (0);
+   // Whether the user has attempted to clear dmactive since last reset
+   Reg #(Bool)     rg_dmactive_cleared    <- mkReg (False);
 
    Bit#(20) core_num_sel = fromInteger(valueOf(CoreNum));
 
@@ -177,7 +195,6 @@ module mkDM_Run_Control (DM_Run_Control_IFC);
 	 rg_dmcontrol_haltreq   <= haltreq;
 	 rg_dmcontrol_hartreset <= hartreset;
 	 rg_dmcontrol_ndmreset  <= ndmreset;
-	 rg_dmcontrol_dmactive  <= dmactive;
 	 rg_dmcontrol_hartsel   <= hartsel;
 
 	 // Debug Module reset
@@ -198,88 +215,90 @@ module mkDM_Run_Control (DM_Run_Control_IFC);
 	       $display ("    dmactive has priority; ignoring hartreset");
 	    end
 
-	    // No action here; other rules will fire (see method dmactive, Debug_Module.rl_reset)
-	    noAction;
-	 end
+	    rg_dmactive_cleared <= True;
 
-	 // Ignore if NDM reset is in progress
-	 else if (rg_ndm_reset_pending) begin
-	    $display ("%0d: %m.dmcontrol_write 0x%0h: ndm reset in progress; ignoring this write",
-		      cur_cycle, dm_word);
-	 end
+	 end else begin
+	    rg_dmcontrol_dmactive <= True;
 
-	 // Non-Debug-Module reset (platform reset) posedge: ignore
-	 else if ((! rg_dmcontrol_ndmreset) && ndmreset) begin
-	    if (verbosity != 0)
-	       $display ("%0d: %m.dmcontrol_write 0x%08h: ndmreset: 0->1: ignoring",
-			 cur_cycle, dm_word);
-	 end
-
-	 // Non-Debug-Module reset (platform reset) negedge: do it
-	 else if (rg_dmcontrol_ndmreset && (! ndmreset)) begin
-	    Bool running = (! haltreq);
-	    if (verbosity != 0) begin
-	       $display ("%0d: %m.dmcontrol_write 0x%08h: ndmreset: 1->0: resetting platform",
-			 cur_cycle, dm_word);
-	       $display ("    Requested 'running' state = ", fshow (running));
+	    // Ignore if NDM reset is in progress
+	    if (rg_ndm_reset_pending) begin
+	       $display ("%0d: %m.dmcontrol_write 0x%0h: ndm reset in progress; ignoring this write",
+	                 cur_cycle, dm_word);
 	    end
 
-	    f_ndm_reset_reqs.enq (running);
-	    rg_ndm_reset_pending <= True;
-
-	    // Error-checking
-	    if (hartreset) begin
-	       $display ("    WARNING: %m.dmcontrol_write 0x%08h:", dm_word);
-	       $display ("    Both ndmreset [1] and hartreset [29] are asserted");
-	       $display ("    ndmreset has priority; ignoring hartreset");
+	    // Non-Debug-Module reset (platform reset) posedge: ignore
+	    else if ((! rg_dmcontrol_ndmreset) && ndmreset) begin
+	       if (verbosity != 0)
+	          $display ("%0d: %m.dmcontrol_write 0x%08h: ndmreset: 0->1: ignoring",
+		            cur_cycle, dm_word);
 	    end
 
-	 end
+	    // Non-Debug-Module reset (platform reset) negedge: do it
+	    else if (rg_dmcontrol_ndmreset && (! ndmreset)) begin
+	       Bool running = (! haltreq);
+	       if (verbosity != 0) begin
+	          $display ("%0d: %m.dmcontrol_write 0x%08h: ndmreset: 1->0: resetting platform",
+		     cur_cycle, dm_word);
+	          $display ("    Requested 'running' state = ", fshow (running));
+	       end
 
-	 // Hart reset
-	 else if (hartreset) begin
-	    Bool running = (! haltreq);
-	    f_harts_reset_reqs[hartsel].enq (running);
-	    rg_harts_hasreset[hartsel] <= True;
+	       f_ndm_reset_reqs.enq (running);
+	       rg_ndm_reset_pending <= True;
 
-	    // Deassert platform reset
-	    if (verbosity != 0) begin
-	       $display ("%0d: %m.dmcontrol_write 0x%08h: hartreset=1: resetting hart",
-			 cur_cycle, dm_word);
-	       $display ("    Requested 'running' state = ", fshow (running));
+	       // Error-checking
+	       if (hartreset) begin
+	          $display ("    WARNING: %m.dmcontrol_write 0x%08h:", dm_word);
+	          $display ("    Both ndmreset [1] and hartreset [29] are asserted");
+	          $display ("    ndmreset has priority; ignoring hartreset");
+	       end
+
 	    end
-	 end
 
-	 // run/halt commands
-	 else begin
-	    // Deassert hart reset
-	    if ((verbosity != 0) && rg_dmcontrol_hartreset)
-	       $display ("%0d: %m.dmcontrol_write 0x%08h: clearing hartreset",
-			 cur_cycle, dm_word);
+	    // Hart reset
+	    else if (hartreset) begin
+	       Bool running = (! haltreq);
+	       f_harts_reset_reqs[hartsel].enq (running);
+	       rg_harts_hasreset[hartsel] <= True;
 
-	    if (hasel)
-	       $display ("%0d:ERROR: %m.dmcontrol_write 0x%08h: hasel is not supported",
-			 cur_cycle, dm_word);
-
-	    if (hartsel >= core_num_sel)
-	       $display ("%0d:WARNING: %m.dmcontrol_write 0x%08h: hartsel 0x%0h refers to non-existent hart",
-			 cur_cycle, dm_word, hartsel);
-
-	    if (haltreq && resumereq) begin
-	       $display ("%0d:ERROR: %m.dmcontrol_write 0x%08h: haltreq=1 and resumereq=1",
-			 cur_cycle, dm_word);
-	       $display ("    This behavior is 'undefined' in the spec; ignoring");
+	       // Deassert platform reset
+	       if (verbosity != 0) begin
+	          $display ("%0d: %m.dmcontrol_write 0x%08h: hartreset=1: resetting hart",
+		     cur_cycle, dm_word);
+	          $display ("    Requested 'running' state = ", fshow (running));
+	       end
 	    end
-	    // Resume hart(s) if not running
-	    else if (resumereq && (! rg_harts_running[hartsel])) begin
-	       f_harts_run_halt_reqs[hartsel].enq (True);
-	       rg_harts_resumeack[hartsel] <= False;
-	       $display ("%0d: %m.dmcontrol_write: hart %0d resume request", cur_cycle, hartsel);
-	    end
-	    // Halt hart(s)
-	    else if (haltreq && rg_harts_running[hartsel]) begin
-	       f_harts_run_halt_reqs[hartsel].enq (False);
-	       $display ("%0d: %m.dmcontrol_write: hart %0d halt request", cur_cycle, hartsel);
+
+	    // run/halt commands
+	    else begin
+	       // Deassert hart reset
+	       if ((verbosity != 0) && rg_dmcontrol_hartreset)
+	          $display ("%0d: %m.dmcontrol_write 0x%08h: clearing hartreset",
+		     cur_cycle, dm_word);
+
+	       if (hasel)
+	          $display ("%0d:ERROR: %m.dmcontrol_write 0x%08h: hasel is not supported",
+		     cur_cycle, dm_word);
+
+	       if (hartsel >= core_num_sel)
+	          $display ("%0d:WARNING: %m.dmcontrol_write 0x%08h: hartsel 0x%0h refers to non-existent hart",
+		     cur_cycle, dm_word, hartsel);
+
+	       if (haltreq && resumereq) begin
+	          $display ("%0d:ERROR: %m.dmcontrol_write 0x%08h: haltreq=1 and resumereq=1",
+		     cur_cycle, dm_word);
+	          $display ("    This behavior is 'undefined' in the spec; ignoring");
+	       end
+	       // Resume hart(s) if not running
+	       else if (resumereq && (! rg_harts_running[hartsel])) begin
+	          f_harts_run_halt_reqs[hartsel].enq (True);
+	          rg_harts_resumeack[hartsel] <= False;
+	          $display ("%0d: %m.dmcontrol_write: hart %0d resume request", cur_cycle, hartsel);
+	       end
+	       // Halt hart(s)
+	       else if (haltreq && rg_harts_running[hartsel]) begin
+	          f_harts_run_halt_reqs[hartsel].enq (False);
+	          $display ("%0d: %m.dmcontrol_write: hart %0d halt request", cur_cycle, hartsel);
+	       end
 	    end
 	 end
       endaction
@@ -308,7 +327,7 @@ module mkDM_Run_Control (DM_Run_Control_IFC);
       rule rl_harts_reset_rsp;
 	 Bool running <- pop (f_harts_reset_rsps[core]);
 	 rg_harts_hasreset[core] <= False;
-	 rg_harts_running[core]  <= running;
+	 //rg_harts_running[core]  <= running;
 
 	 if (verbosity != 0)
 	    $display ("%0d: %m.rl_harts_reset_rsp: hart %0d running = ", cur_cycle, core, fshow (running));
@@ -317,7 +336,7 @@ module mkDM_Run_Control (DM_Run_Control_IFC);
    // Response from system for NDM reset
    rule rl_ndm_reset_rsp;
       Bool running <- pop (f_ndm_reset_rsps);
-      writeVReg(rg_harts_running, replicate(running));
+      //writeVReg(rg_harts_running, replicate(running));
       rg_ndm_reset_pending <= False;
 
       if (verbosity != 0)
@@ -328,7 +347,7 @@ module mkDM_Run_Control (DM_Run_Control_IFC);
    // Response from system for run/halt request
       rule rl_harts_run_rsp (! f_ndm_reset_rsps.notEmpty);
 	 let running <- pop (f_harts_run_halt_rsps[core]);
-	 rg_harts_running[core] <= running;
+	 //rg_harts_running[core] <= running;
       if (running)
 	    rg_harts_resumeack[core] <= True;
 
@@ -339,8 +358,8 @@ module mkDM_Run_Control (DM_Run_Control_IFC);
    // ----------------------------------------------------------------
    // INTERFACE
 
-   method Bool dmactive;
-      return rg_dmcontrol_dmactive;
+   method Bool dmactive_cleared;
+      return rg_dmactive_cleared;
    endmethod
 
    method Action reset;
@@ -352,14 +371,16 @@ module mkDM_Run_Control (DM_Run_Control_IFC);
       mapM_(proj_clear, f_harts_reset_reqs);
       mapM_(proj_clear, f_harts_reset_rsps);
 
-      writeVReg(rg_harts_running, replicate(True));    // Safe approximation of whether the CPU is running or not
+      //writeVReg(rg_harts_running, replicate(True));    // Safe approximation of whether the CPU is running or not
       mapM_(proj_clear, f_harts_run_halt_reqs);
       mapM_(proj_clear, f_harts_run_halt_rsps);
 
       rg_dmcontrol_haltreq   <= False;
       rg_dmcontrol_hartreset <= False;
       rg_dmcontrol_ndmreset  <= False;
-      rg_dmcontrol_dmactive  <= True;    // DM module is now active
+      rg_dmcontrol_dmactive  <= False;  // Debug module stays inactive so debugger can confirm it has reset
+
+      rg_dmactive_cleared    <= False;
 
       writeVReg(rg_harts_hasreset, replicate(False));
       writeVReg(rg_harts_resumeack, replicate(False));
@@ -412,6 +433,7 @@ module mkDM_Run_Control (DM_Run_Control_IFC);
    interface harts_reset_client    = zipWith(toGPClient, f_harts_reset_reqs, f_harts_reset_rsps);
    interface harts_client_run_halt = zipWith(toGPClient, f_harts_run_halt_reqs, f_harts_run_halt_rsps);
    interface harts_get_other_req   = map (toGet, f_harts_other_reqs);
+   interface harts_is_running      = map (toPut, rg_harts_running);
 
    // ----------------
    // Facing Platform: Non-Debug-Module Reset (reset all except DM)

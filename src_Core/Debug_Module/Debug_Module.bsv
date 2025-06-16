@@ -1,4 +1,19 @@
 // Copyright (c) 2017-2019 Bluespec, Inc. All Rights Reserved.
+//
+//-
+// RVFI_DII + CHERI modifications:
+//     Copyright (c) 2020 Alexandre Joannou
+//     Copyright (c) 2020 Peter Rugg
+//     Copyright (c) 2020 Jonathan Woodruff
+//     All rights reserved.
+//
+//     This software was developed by SRI International and the University of
+//     Cambridge Computer Laboratory (Department of Computer Science and
+//     Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+//     DARPA SSITH research programme.
+//
+//     This work was supported by NCSC programme grant 4212611/RFA 15971 ("SafeBet").
+//-
 
 package Debug_Module;
 
@@ -52,7 +67,7 @@ package Debug_Module;
 // BSV library imports
 
 import Memory       :: *;
-import FIFOF        :: *;
+import FIFO         :: *;
 import GetPut       :: *;
 import ClientServer :: *;
 import SpecialFIFOs :: *;
@@ -63,12 +78,12 @@ import Vector       :: *;
 
 import Semi_FIFOF :: *;
 import Cur_Cycle  :: *;
+import AXI4       :: *;
 
 // ================================================================
 // Project imports
 
 import ISA_Decls    :: *;
-import AXI4_Types   :: *;
 import Fabric_Defs  :: *;
 import ProcTypes    :: *;
 
@@ -101,6 +116,7 @@ interface Debug_Module_IFC;
    interface Vector #(CoreNum, Client #(Bool, Bool)) harts_reset_client;
    interface Vector #(CoreNum, Client #(Bool, Bool)) harts_client_run_halt;
    interface Vector #(CoreNum, Get #(Bit #(4)))      harts_get_other_req;
+   interface Vector #(CoreNum, Put #(Bool))          harts_is_running;
 
    // GPR access
    interface Vector #(CoreNum, Client #(DM_CPU_Req #(5,  XLEN), DM_CPU_Rsp #(XLEN))) harts_gpr_mem_client;
@@ -121,7 +137,9 @@ interface Debug_Module_IFC;
    interface Client #(Bool, Bool) ndm_reset_client;
 
    // Read/Write RISC-V memory
-   interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) master;
+   interface AXI4_Master #( Wd_CoreW_Bus_MId, Wd_Addr, Wd_Data_Periph
+                          , Wd_AW_User_Periph, Wd_W_User_Periph, Wd_B_User_Periph
+                          , Wd_AR_User_Periph, Wd_R_User_Periph) master;
 endinterface
 
 // ================================================================
@@ -132,21 +150,32 @@ module mkDebug_Module (Debug_Module_IFC);
    // Local verbosity: 0 = quiet; 1 = print DMI transactions
    Integer verbosity = 0;
 
+   Reg #(Maybe#(DM_Reset_Count)) rg_reset_count <- mkReg(Valid(~0));
+
    // The three parts
    DM_Run_Control_IFC        dm_run_control       <- mkDM_Run_Control;
    DM_Abstract_Commands_IFC  dm_abstract_commands <- mkDM_Abstract_Commands;
    DM_System_Bus_IFC         dm_system_bus        <- mkDM_System_Bus;
 
-   FIFOF#(DM_Addr) f_read_addr <- mkBypassFIFOF;
+   FIFO#(DM_Addr) f_read_addr <- mkFIFO1;
 
    // ================================================================
-   // Reset all three parts when dm_run_control.dmactive is low
+   // Reset all three parts: triggered when dm_run_control.dmactive is low
 
-   rule rl_reset (! dm_run_control.dmactive);
-      $display ("%0d: Debug_Module reset", cur_cycle);
+   rule rl_reset_start (dm_run_control.dmactive_cleared && rg_reset_count == Invalid);
+      rg_reset_count <= Valid(~0);
+   endrule
+
+   rule rl_reset_wait (rg_reset_count matches tagged Valid .c &&& c != 0);
+      rg_reset_count <= Valid(c - 1);
+   endrule
+
+   rule rl_reset_done (rg_reset_count == Valid(0));
+      $display ("%0d: Debug_Module reset complete", cur_cycle);
       dm_run_control.reset;
       dm_abstract_commands.reset;
       dm_system_bus.reset;
+      rg_reset_count <= Invalid;
    endrule
 
    // ================================================================
@@ -223,58 +252,60 @@ module mkDebug_Module (Debug_Module_IFC);
 	 return dm_word;
       endmethod
 
-      method Action write (DM_Addr dm_addr, DM_Word dm_word) if (dm_run_control.dmactive);
+      method Action write (DM_Addr dm_addr, DM_Word dm_word);
 
 	 Bool handled = False;
 
-	 if (   (dm_addr == dm_addr_dmcontrol)
-	    || (dm_addr == dm_addr_dmstatus)
-	    || (dm_addr == dm_addr_hartinfo)
-	    || (dm_addr == dm_addr_haltsum0)
-	    || (dm_addr == dm_addr_hawindowsel)
-	    || (dm_addr == dm_addr_hawindow)
-	    || (dm_addr == dm_addr_devtreeaddr0)
-	    || (dm_addr == dm_addr_authdata)
-	    || (dm_addr == dm_addr_verbosity)) begin
+         if (rg_reset_count == Invalid) begin
+	    if (   (dm_addr == dm_addr_dmcontrol)
+	       || (dm_addr == dm_addr_dmstatus)
+	       || (dm_addr == dm_addr_hartinfo)
+	       || (dm_addr == dm_addr_haltsum0)
+	       || (dm_addr == dm_addr_hawindowsel)
+	       || (dm_addr == dm_addr_hawindow)
+	       || (dm_addr == dm_addr_devtreeaddr0)
+	       || (dm_addr == dm_addr_authdata)
+	       || (dm_addr == dm_addr_verbosity)) begin
 
-	    dm_run_control.write (dm_addr, dm_word);
-	    handled = True;
-	 end
+	       dm_run_control.write (dm_addr, dm_word);
+	       handled = True;
+	    end
 
-	 if (  (dm_addr == dm_addr_dmcontrol)
-	    || (dm_addr == dm_addr_abstractcs)
-		  || (dm_addr == dm_addr_command)
-		  || (dm_addr == dm_addr_data0)
-		  || (dm_addr == dm_addr_data1)
-		  || (dm_addr == dm_addr_data2)
-		  || (dm_addr == dm_addr_data3)
-		  || (dm_addr == dm_addr_data4)
-		  || (dm_addr == dm_addr_data5)
-		  || (dm_addr == dm_addr_data6)
-		  || (dm_addr == dm_addr_data7)
-		  || (dm_addr == dm_addr_data8)
-		  || (dm_addr == dm_addr_data9)
-		  || (dm_addr == dm_addr_data10)
-		  || (dm_addr == dm_addr_data11)
-		  || (dm_addr == dm_addr_abstractauto)
-	    || (dm_addr == dm_addr_progbuf0)) begin
+	    if (  (dm_addr == dm_addr_dmcontrol)
+	       || (dm_addr == dm_addr_abstractcs)
+	             || (dm_addr == dm_addr_command)
+	             || (dm_addr == dm_addr_data0)
+	             || (dm_addr == dm_addr_data1)
+	             || (dm_addr == dm_addr_data2)
+	             || (dm_addr == dm_addr_data3)
+	             || (dm_addr == dm_addr_data4)
+	             || (dm_addr == dm_addr_data5)
+	             || (dm_addr == dm_addr_data6)
+	             || (dm_addr == dm_addr_data7)
+	             || (dm_addr == dm_addr_data8)
+	             || (dm_addr == dm_addr_data9)
+	             || (dm_addr == dm_addr_data10)
+	             || (dm_addr == dm_addr_data11)
+	             || (dm_addr == dm_addr_abstractauto)
+	       || (dm_addr == dm_addr_progbuf0)) begin
 
-	    dm_abstract_commands.write (dm_addr, dm_word);
-	    handled = True;
-	 end
+	       dm_abstract_commands.write (dm_addr, dm_word);
+	       handled = True;
+	    end
 
-	 if (  (dm_addr == dm_addr_sbcs)
-		  || (dm_addr == dm_addr_sbaddress0)
-		  || (dm_addr == dm_addr_sbaddress1)
-		  || (dm_addr == dm_addr_sbaddress2)
-		  || (dm_addr == dm_addr_sbdata0)
-		  || (dm_addr == dm_addr_sbdata1)
-		  || (dm_addr == dm_addr_sbdata2)
-	    || (dm_addr == dm_addr_sbdata3)) begin
+	    if (  (dm_addr == dm_addr_sbcs)
+	             || (dm_addr == dm_addr_sbaddress0)
+	             || (dm_addr == dm_addr_sbaddress1)
+	             || (dm_addr == dm_addr_sbaddress2)
+	             || (dm_addr == dm_addr_sbdata0)
+	             || (dm_addr == dm_addr_sbdata1)
+	             || (dm_addr == dm_addr_sbdata2)
+	       || (dm_addr == dm_addr_sbdata3)) begin
 
-	    dm_system_bus.write (dm_addr, dm_word);
-	    handled = True;
-	 end
+	       dm_system_bus.write (dm_addr, dm_word);
+	       handled = True;
+	    end
+         end
 
 	 if (! handled) begin
 	    // TODO: set error status?
@@ -294,6 +325,7 @@ module mkDebug_Module (Debug_Module_IFC);
    interface harts_reset_client    = dm_run_control.harts_reset_client;
    interface harts_client_run_halt = dm_run_control.harts_client_run_halt;
    interface harts_get_other_req   = dm_run_control.harts_get_other_req;
+   interface harts_is_running      = dm_run_control.harts_is_running;
 
    // GPR access
    interface harts_gpr_mem_client = dm_abstract_commands.harts_gpr_mem_client;
@@ -313,7 +345,7 @@ module mkDebug_Module (Debug_Module_IFC);
    interface Client ndm_reset_client = dm_run_control.ndm_reset_client;
 
    // Read/Write RISC-V memory
-   interface AXI4_Master_IFC master = dm_system_bus.master;
+   interface master = dm_system_bus.master;
 endmodule
 
 // ================================================================
