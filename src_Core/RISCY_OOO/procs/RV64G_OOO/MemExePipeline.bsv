@@ -334,12 +334,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
                 exeStMemLat.incr(zeroExtend(lat));
             end
 `endif
-`ifdef PERFORMANCE_MONITORING
-            EventsCoreMem events = unpack(0);
-            if (waitSt.shiftedBE == -1) events.evt_MEM_CAP_STORE = 1;
-            events.evt_STORE_WAIT = saturating_truncate(lat);
-            events_reg[2] <= events;
-`endif
             // now figure out the data to be written
             Vector#(LineSzData, ByteEn) be = replicate(replicate(False));
             Line data = replicate(0);
@@ -359,12 +353,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             if(inIfc.doStats) begin
                 exeStMemLat.incr(zeroExtend(lat));
             end
-`endif
-`ifdef PERFORMANCE_MONITORING
-            EventsCoreMem events = unpack(0);
-            if (pack(e.byteEn) == -1) events.evt_MEM_CAP_STORE = 1;
-            events.evt_STORE_WAIT = saturating_truncate(lat);
-            events_reg[2] <= events;
 `endif
             return tuple2(e.byteEn, unpack(e.data)); // return SB entry
         endmethod

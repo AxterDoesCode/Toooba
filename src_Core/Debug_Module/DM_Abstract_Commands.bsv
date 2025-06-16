@@ -1,4 +1,19 @@
 // Copyright (c) 2017-2019 Bluespec, Inc. All Rights Reserved.
+//
+//-
+// RVFI_DII + CHERI modifications:
+//     Copyright (c) 2020 Alexandre Joannou
+//     Copyright (c) 2020 Peter Rugg
+//     Copyright (c) 2020 Jonathan Woodruff
+//     All rights reserved.
+//
+//     This software was developed by SRI International and the University of
+//     Cambridge Computer Laboratory (Department of Computer Science and
+//     Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+//     DARPA SSITH research programme.
+//
+//     This work was supported by NCSC programme grant 4212611/RFA 15971 ("SafeBet").
+//-
 
 package DM_Abstract_Commands;
 
@@ -58,7 +73,7 @@ module mkDM_Abstract_Commands (DM_Abstract_Commands_IFC);
 
    // ----------------------------------------------------------------
 
-   Reg #(Bool) rg_start_reg_access <- mkReg (False);
+   Reg #(Bool) rg_start_reg_access <- mkConfigReg (False);
 
    Reg #(Bit#(20)) rg_dmcontrol_hartsel <- mkConfigReg(0);
 
@@ -94,8 +109,8 @@ module mkDM_Abstract_Commands (DM_Abstract_Commands_IFC);
    // ----------------------------------------------------------------
    // rg_abstractcs
 
-   Reg #(Bool)                 rg_abstractcs_busy   <- mkRegU;
-   Reg #(DM_abstractcs_cmderr) rg_abstractcs_cmderr <- mkRegU;
+   Reg #(Bool)                 rg_abstractcs_busy   <- mkConfigRegU;
+   Reg #(DM_abstractcs_cmderr) rg_abstractcs_cmderr <- mkConfigRegU;
 
    // Size of program buffer, in 32b words
    Bit #(5) abstractcs_progbufsize = 0;
@@ -143,7 +158,7 @@ module mkDM_Abstract_Commands (DM_Abstract_Commands_IFC);
    Reg #(Bool) rg_command_access_reg_write <- mkConfigRegU;
 
    // regno: we only implement lower 13 bits of this 16-bit field
-   Reg #(Bit #(13)) rg_command_access_reg_regno <- mkRegU;
+   Reg #(Bit #(13)) rg_command_access_reg_regno <- mkConfigRegU;
 
    DM_Word virt_rg_command = fn_mk_command_access_reg (
         rg_command_access_size

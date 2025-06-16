@@ -1,4 +1,19 @@
 // Copyright (c) 2017-2019 Bluespec, Inc. All Rights Reserved.
+//
+//-
+// RVFI_DII + CHERI modifications:
+//     Copyright (c) 2020 Alexandre Joannou
+//     Copyright (c) 2020 Peter Rugg
+//     Copyright (c) 2020 Jonathan Woodruff
+//     All rights reserved.
+//
+//     This software was developed by SRI International and the University of
+//     Cambridge Computer Laboratory (Department of Computer Science and
+//     Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+//     DARPA SSITH research programme.
+//
+//     This work was supported by NCSC programme grant 4212611/RFA 15971 ("SafeBet").
+//-
 
 package Debug_Module;
 
@@ -52,7 +67,7 @@ package Debug_Module;
 // BSV library imports
 
 import Memory       :: *;
-import FIFOF        :: *;
+import FIFO         :: *;
 import GetPut       :: *;
 import ClientServer :: *;
 import SpecialFIFOs :: *;
@@ -63,12 +78,12 @@ import Vector       :: *;
 
 import Semi_FIFOF :: *;
 import Cur_Cycle  :: *;
+import AXI4       :: *;
 
 // ================================================================
 // Project imports
 
 import ISA_Decls    :: *;
-import AXI4_Types   :: *;
 import Fabric_Defs  :: *;
 import ProcTypes    :: *;
 
@@ -101,6 +116,7 @@ interface Debug_Module_IFC;
    interface Vector #(CoreNum, Client #(Bool, Bool)) harts_reset_client;
    interface Vector #(CoreNum, Client #(Bool, Bool)) harts_client_run_halt;
    interface Vector #(CoreNum, Get #(Bit #(4)))      harts_get_other_req;
+   interface Vector #(CoreNum, Put #(Bool))          harts_is_running;
 
    // GPR access
    interface Vector #(CoreNum, Client #(DM_CPU_Req #(5,  XLEN), DM_CPU_Rsp #(XLEN))) harts_gpr_mem_client;
@@ -121,7 +137,9 @@ interface Debug_Module_IFC;
    interface Client #(Bool, Bool) ndm_reset_client;
 
    // Read/Write RISC-V memory
-   interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) master;
+   interface AXI4_Master #( Wd_CoreW_Bus_MId, Wd_Addr, Wd_Data_Periph
+                          , Wd_AW_User_Periph, Wd_W_User_Periph, Wd_B_User_Periph
+                          , Wd_AR_User_Periph, Wd_R_User_Periph) master;
 endinterface
 
 // ================================================================
@@ -139,7 +157,7 @@ module mkDebug_Module (Debug_Module_IFC);
    DM_Abstract_Commands_IFC  dm_abstract_commands <- mkDM_Abstract_Commands;
    DM_System_Bus_IFC         dm_system_bus        <- mkDM_System_Bus;
 
-   FIFOF#(DM_Addr) f_read_addr <- mkBypassFIFOF;
+   FIFO#(DM_Addr) f_read_addr <- mkFIFO1;
 
    // ================================================================
    // Reset all three parts: triggered when dm_run_control.dmactive is low
@@ -307,6 +325,7 @@ module mkDebug_Module (Debug_Module_IFC);
    interface harts_reset_client    = dm_run_control.harts_reset_client;
    interface harts_client_run_halt = dm_run_control.harts_client_run_halt;
    interface harts_get_other_req   = dm_run_control.harts_get_other_req;
+   interface harts_is_running      = dm_run_control.harts_is_running;
 
    // GPR access
    interface harts_gpr_mem_client = dm_abstract_commands.harts_gpr_mem_client;
@@ -326,7 +345,7 @@ module mkDebug_Module (Debug_Module_IFC);
    interface Client ndm_reset_client = dm_run_control.ndm_reset_client;
 
    // Read/Write RISC-V memory
-   interface AXI4_Master_IFC master = dm_system_bus.master;
+   interface master = dm_system_bus.master;
 endmodule
 
 // ================================================================
