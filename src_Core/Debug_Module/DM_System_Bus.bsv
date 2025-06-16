@@ -344,8 +344,6 @@ module mkDM_System_Bus (DM_System_Bus_IFC);
 
 	 rg_sb_state <= SB_WRITE_FINISH;
 
-	 rg_sb_state <= SB_WRITE_FINISH;
-
 	 if (verbosity != 0) begin
 	    $display ("    DM_System_Bus.fa_fabric_send_write_req:");
 	    $display ("    ", fshow (wra));
