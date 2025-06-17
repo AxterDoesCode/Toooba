@@ -380,10 +380,10 @@ module mkL1CapChaserPrefetcher#(
     
     // Confidence-checking functions
     function Bool isL1LevelConfidence(Bit#(fixPointConfBits) fixpoint);
-        return fixpoint[6:5] == 2'b11; // >= 75% 
+        return fixpoint[6:4] == 3'b111; // >= 87.5% 
     endfunction
     function Bool isL2LevelConfidence(Bit#(fixPointConfBits) fixpoint);
-        return fixpoint[6:5] != 0; // >= 25%
+        return fixpoint[6] != 0; // >= 50%
     endfunction
 
     // Whether we have inited
@@ -1084,7 +1084,7 @@ module mkLLCapChaserPrefetcher#(
 
     // We only need to check L2 confidence here
     function Bool isL2LevelConfidence(Bit#(fixPointConfBits) fixpoint);
-        return fixpoint[6:5] != 0; // 25%
+        return fixpoint[6] != 0; // 50%
     endfunction
 
     // Whether we have inited
