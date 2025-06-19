@@ -309,6 +309,11 @@ function CapPipe capModify(CapPipe a, CapPipe b, CapModifyFunc func);
                      clearTagIf(setKind(a_mut, SEALED_WITH_TYPE (truncate(getAddr(b)))), sealIllegal));
             tagged Unseal .src            :
                 clearTagIf(setHardPerms(setKind(((src == Src1) ? a:b), UNSEALED), new_hard_perms), (src == Src1) && unsealIllegal);
+            tagged AndPerm                :
+                setPerms(a_mut, pack(getPerms(a)) & truncate(getAddr(b)));
+            tagged SetFlags               :
+                setIntMode(a_mut, getAddr(b)[0]!=0); // XXX Sense swapped for legacy SetFlags
+`ifndef ZCHERI
             tagged FromPtr                :
                 (getAddr(a) == 0 ? nullCap : setAddr(b_mut, getAddr(a)).value);
 `endif
