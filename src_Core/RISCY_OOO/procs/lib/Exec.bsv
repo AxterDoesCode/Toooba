@@ -321,6 +321,7 @@ function Data capInspect(CapPipe a, CapPipe b, CapInspectFunc func);
                    zeroExtend(pack(   (isValidCap(b) == isValidCap(a))
                                    && isDerivable(a)
                                    && isDerivable(b)
+				   && areLegalHardPerms (a)
                                    && ((getPerms(a) & getPerms(b)) == getPerms(a))
                                    && (getBase(a) >= getBase(b))
                                    && (getTop(a) <= getTop(b))));
