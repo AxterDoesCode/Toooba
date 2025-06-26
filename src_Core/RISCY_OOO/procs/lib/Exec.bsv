@@ -270,7 +270,7 @@ function CapPipe capModify(CapPipe a, CapPipe b, CapModifyFunc func);
     new_hard_perms.global = new_hard_perms.global && getHardPerms(b).global;
     Bool unsealIllegal = !isValidCap(b) || getKind(a) != UNSEALED || getKind(b) == UNSEALED || a_res || getAddr(b) != a_type || !getHardPerms(b).permitUnseal || !isInBounds(b, False);
 `endif
-    Bool buildCapIllegal = !isValidCap(b) || getKind(b) != UNSEALED || !isDerivable(a) || !isDerivable(b) || !areLegalHardPerms(a) || !areLegalHardPerms(b) ||  (getPerms(a) | getPerms(b)) >= getPerms(a) || getBase(a) <= getBase(b) || getTop(a) >= getTop(b); // XXX needs optimisation
+    Bool buildCapIllegal = !isValidCap(b) || getKind(b) != UNSEALED || !isDerivable(a) || !isDerivable(b) || !areLegalHardPerms(a) || !areLegalHardPerms(b) ||  (getPerms(a) | getPerms(b)) > getPerms(a) || getBase(a) > getBase(b) || getTop(a) < getTop(b); // XXX needs optimisation
     CapPipe res = (case(func) matches
             tagged ModifyOffset .offsetOp :
                 modifyOffset(a_mut, getAddr(b), offsetOp == IncOffset).value;
