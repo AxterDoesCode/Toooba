@@ -343,8 +343,8 @@ function Data capInspect(CapPipe a, CapPipe b, CapInspectFunc func);
                tagged GetFlags               :
                    // XXX Sense of legacy getFlags will be swapped
                    begin
-                       let intMode = getIntMode(a);
-                       return zeroExtend(pack(intMode.exact ? intMode.value : False));
+                       let intMode = getLegalisedIntMode(a);
+                       return zeroExtend(pack(intMode));
                    end
                tagged GetPerm                :
                    zeroExtend(getPerms(a));
