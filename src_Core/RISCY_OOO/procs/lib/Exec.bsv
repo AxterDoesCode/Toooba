@@ -293,7 +293,7 @@ function CapPipe capModify(CapPipe a, CapPipe b, CapModifyFunc func);
                 clearTagIf(setHardPerms(setKind(((src == Src1) ? a:b), UNSEALED), new_hard_perms), (src == Src1) && unsealIllegal);
 `endif
             tagged AndPerm                :
-                setPerms(a_mut, pack(getPerms(a)) & truncate(getAddr(b)));
+                setLegalisedPerms(a_mut, pack(getPerms(a)) & truncate(getAddr(b)));
             tagged SetFlags               :
                 setLegalisedIntMode(a_mut, getAddr(b)[0]!=0); // XXX Sense swapped for legacy SetFlags
 `ifndef ZCHERI
@@ -329,9 +329,9 @@ function Data capInspect(CapPipe a, CapPipe b, CapInspectFunc func);
                tagged SetEqualExact          :
                    zeroExtend(pack(toMem(a) == toMem(b)));
                tagged GetLen                 :
-                   truncate(getLength(a));
+                   truncate(getLegalisedLength(a));
                tagged GetBase                :
-                   getBase(a);
+                   getLegalisedBase(a);
                tagged GetTag                 :
                    zeroExtend(pack(isValidCap(a)));
                tagged GetSealed              :
@@ -347,7 +347,7 @@ function Data capInspect(CapPipe a, CapPipe b, CapInspectFunc func);
                        return zeroExtend(pack(intMode));
                    end
                tagged GetPerm                :
-                   zeroExtend(getPerms(a));
+                   zeroExtend(getLegalisedPerms(a));
                tagged GetHigh                :
                    zeroExtend(tpl_2(toMem(a))[127:64]);
                tagged GetType                :
