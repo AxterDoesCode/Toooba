@@ -3,9 +3,10 @@
 //-
 // RVFI_DII + CHERI modifications:
 //     Copyright (c) 2020 Alexandre Joannou
-//     Copyright (c) 2020 Peter Rugg
+//     Copyright (c) 2020-2025 Peter Rugg
 //     Copyright (c) 2020 Jonathan Woodruff
 //     Copyright (c) 2021 Marno van der Maas
+//     Copyright (c) 2025 Franz Fuchs
 //     All rights reserved.
 //
 //     This software was developed by SRI International and the University of
