@@ -342,11 +342,7 @@ function Data capInspect(CapPipe a, CapPipe b, CapInspectFunc func);
                tagged GetOffset              :
                    getOffset(a);
                tagged GetFlags               :
-                   // XXX Sense of legacy getFlags will be swapped
-                   begin
-                       let intMode = getIntMode(a);
-                       return zeroExtend(pack(intMode));
-                   end
+                   return zeroExtend(pack(getIntMode(a)));
                tagged GetPerm                :
                    zeroExtend(getPerms(a));
                tagged GetHigh                :
