@@ -293,9 +293,9 @@ function CapPipe capModify(CapPipe a, CapPipe b, CapModifyFunc func);
                 clearTagIf(setHardPerms(setKind(((src == Src1) ? a:b), UNSEALED), new_hard_perms), (src == Src1) && unsealIllegal);
 `endif
             tagged AndPerm                :
-                setLegalisedPerms(a_mut, pack(getPerms(a)) & truncate(getAddr(b)));
+                setPerms(a_mut, pack(getPerms(a)) & truncate(getAddr(b)));
             tagged SetFlags               :
-                setLegalisedIntMode(a_mut, getAddr(b)[0]!=0); // XXX Sense swapped for legacy SetFlags
+                setIntMode(a_mut, getAddr(b)[0]!=0); // XXX Sense swapped for legacy SetFlags
 `ifndef ZCHERI
             tagged FromPtr                :
                 (getAddr(a) == 0 ? nullCap : setAddr(b_mut, getAddr(a)).value);
@@ -329,9 +329,9 @@ function Data capInspect(CapPipe a, CapPipe b, CapInspectFunc func);
                tagged SetEqualExact          :
                    zeroExtend(pack(toMem(a) == toMem(b)));
                tagged GetLen                 :
-                   truncate(getLegalisedLength(a));
+                   truncate(getLength(a));
                tagged GetBase                :
-                   getLegalisedBase(a);
+                   getBase(a);
                tagged GetTag                 :
                    zeroExtend(pack(isValidCap(a)));
                tagged GetSealed              :
@@ -343,11 +343,11 @@ function Data capInspect(CapPipe a, CapPipe b, CapInspectFunc func);
                tagged GetFlags               :
                    // XXX Sense of legacy getFlags will be swapped
                    begin
-                       let intMode = getLegalisedIntMode(a);
+                       let intMode = getIntMode(a);
                        return zeroExtend(pack(intMode));
                    end
                tagged GetPerm                :
-                   zeroExtend(getLegalisedPerms(a));
+                   zeroExtend(getPerms(a));
                tagged GetHigh                :
                    zeroExtend(tpl_2(toMem(a))[127:64]);
                tagged GetType                :
