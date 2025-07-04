@@ -428,6 +428,23 @@ function DecodeResult decode(Instruction inst, Bool cap_mode);
                     legalInst = isValid(mAluFunc);
                     dInst.execFunc = tagged Alu mAluFunc.Valid;
                 end
+                opCZERO: begin
+                    Maybe#(AluFunc) mAluFunc = case (funct3)
+                        fnEQZ: Valid (Eqz);
+                        fnNEZ: Valid (Nez);
+                        default: Invalid;
+                    endcase;
+                    legalInst = isValid(mAluFunc);
+                    dInst.execFunc = tagged Alu mAluFunc.Valid;
+                    if(cap_mode) begin
+                        dInst.iType = Cap;
+                        dInst.capFunc = case (funct3)
+                            fnEQZ: CapModify (CZeroEqz);
+                            fnNEZ: CapModify (CZeroNez);
+                            default: tagged Other;
+                        endcase;
+                    end
+                end
                 opMULDIV: begin
                     if (isa.m) begin
                         // Processor includes "M" extension

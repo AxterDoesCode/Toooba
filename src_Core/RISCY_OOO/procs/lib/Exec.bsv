@@ -201,6 +201,8 @@ function Data alu(Data a, Data b, AluFunc func);
             Csrw    : b;
             Csrs    : (a | b); // same as Or
             Csrc    : (a & ~b);
+            Eqz     : ((b == 0) ? 0 : a);
+            Nez     : ((b != 0) ? 0 : a);
             default : 0;
         endcase);
     return res;
@@ -312,7 +314,18 @@ function CapPipe capModify(CapPipe a, CapPipe b, CapModifyFunc func);
             tagged FromPtr                :
                 (getAddr(a) == 0 ? nullCap : setAddr(b_mut, getAddr(a)).value);
 `endif
-`endif
+            tagged SetHigh:
+                fromMem(tuple2(False, {getAddr(b), getAddr(a)}));
+            tagged BuildCap               :
+                setKind(setValidCap(a_mut, !buildCapIllegal), getKind(a)==SENTRY ? SENTRY : UNSEALED);
+            tagged Move                   :
+                a;
+            tagged CZeroEqz               :
+                ((getAddr(b) == 0) ? nullCap : a);
+            tagged CZeroNez               :
+                ((getAddr(b) != 0) ? nullCap : a);
+            tagged ClearTag               :
+                setValidCap(a, False);
             default: ?;
         endcase);
     return res;

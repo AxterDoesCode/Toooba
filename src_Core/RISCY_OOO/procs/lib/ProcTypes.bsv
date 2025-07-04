@@ -302,7 +302,8 @@ typedef enum {
     Add, Addw, Sub, Subw,
     And, Or, Xor,
     Slt, Sltu, Sll, Sllw, Sra, Sraw, Srl, Srlw,
-    Csrw, Csrs, Csrc
+    Csrw, Csrs, Csrc,
+    Eqz, Nez
 } AluFunc deriving(Bits, Eq, FShow);
 
 typedef enum {
@@ -357,6 +358,8 @@ typedef union tagged {
     void ClearTag;
     void FromPtr;
 `endif
+    void CZeroEqz;
+    void CZeroNez;
 } CapModifyFunc deriving(Bits, Eq, FShow);
 
 typedef union tagged {
@@ -815,6 +818,7 @@ Bit#(3) fnAND   = 3'b111;
 Bit#(7) opALU1   = 7'b0000000;
 Bit#(7) opALU2   = 7'b0100000;
 Bit#(7) opMULDIV = 7'b0000001;
+Bit#(7) opCZERO  = 7'b0000111;
 
 Bit#(3) fnMUL    = 3'b000;
 Bit#(3) fnMULH   = 3'b001;
@@ -824,6 +828,9 @@ Bit#(3) fnDIV    = 3'b100;
 Bit#(3) fnDIVU   = 3'b101;
 Bit#(3) fnREM    = 3'b110;
 Bit#(3) fnREMU   = 3'b111;
+
+Bit#(3) fnEQZ    = 3'b101;
+Bit#(3) fnNEZ    = 3'b111;
 
 // Branch
 Bit#(3) fnBEQ   = 3'b000;
