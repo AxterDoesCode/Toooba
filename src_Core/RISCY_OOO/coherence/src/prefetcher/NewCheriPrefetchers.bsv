@@ -169,6 +169,15 @@ typedef struct {
     numeric type confBits
 ) deriving (Bits, Eq, FShow);
 
+typedef struct {
+    CapPipe cap;
+    Bool missedL1;
+    Bit#(fixPointConfBits) confidence;
+    Maybe#(CapChaserAuxDataT) auxData;
+} CapChaserL1ConfidencePrefetch#(
+    numeric type fixPointConfBits
+) deriving (Bits, Eq, FShow);
+
 /* For preparing broadcast messages to the LL cache */
 typedef struct {
     Bit#(ptIdxTagBits) ptrTableIdxTag;
@@ -255,6 +264,7 @@ module mkL1CapChaserPrefetcher#(
     Alias#(observedCapT, CapChaserL1ObservedCap#(ptrTableIdxTagBits, trainingTableIdxTagBits, capOffsetBits)),
     Alias#(observedCLineT, CapChaserL1ObservedCLine#(ptrTableIdxTagBits, trainingTableIdxTagBits, capOffsetBits)),
     Alias#(candidatePrefetchT, CapChaserL1CandidatePrefetch#(ptrTableConfBits)),
+    Alias#(confidencePrefetchT, CapChaserL1ConfidencePrefetch#(fixPointConfBits)),
     Alias#(broadcastPrepT, CapChaserL1BroadcastPrep#(ptrTableIdxTagBits, ptrTableWayBits, ptrTableConfBits, capOffsetBits)),
     Alias#(trainingTableUpdateT, CapChaserL1TtUpdate#(trainingTableIdxTagBits, capOffsetBits)),
 
@@ -264,9 +274,6 @@ module mkL1CapChaserPrefetcher#(
 
     // UpDowngrade type
     Alias#(ptUpDowngradeT, CapChaserL1PtUpDowngrade#(ptrTableIdxTagBits, capOffsetBits)),
-
-    // Type for aux data
-    Alias#(auxDataT, Maybe#(CapChaserAuxDataT)),
 
     // Training decay counter reset value
     NumAlias#(trainingDecayReset, TSub#(trainingDecayCycles, 1)),
@@ -322,7 +329,8 @@ module mkL1CapChaserPrefetcher#(
     // candidateQ can't really be bypass: when dequeued, it sends a TLB request, which is a quite heavy operation. 
     // prefetchQ is probably fine to be bypass, however.
     Fifo#(8, candidatePrefetchT) candidateQ <- mkOverflowPipelineFifo;
-    Fifo#(1, LLCTlbReqIdx) confidenceMultQ <- mkPipelineFifo;
+    Fifo#(1, confidencePrefetchT) multiplyQ <- mkPipelineFifo;
+    Fifo#(1, confidencePrefetchT) tlbRequestQ <- mkPipelineFifo;
     Fifo#(16, PendingPrefetch) prefetchQ <- mkOverflowBypassFifo;
 
     // Queue for preparing and sending broadcasts
@@ -330,10 +338,8 @@ module mkL1CapChaserPrefetcher#(
     Fifo#(8, PrefetcherBroadcastData) broadcastQ <- mkOverflowPipelineFifo;
 
     // Registers for pending TLB requests
-    Vector#(LLCTlbReqNum, Reg#(Bool)) pendConfidenceReady <- replicateM(mkRegU);
-    Vector#(LLCTlbReqNum, Reg#(Bool)) pendMissedL1 <- replicateM(mkRegU);
-    Vector#(LLCTlbReqNum, Reg#(Bit#(fixPointConfBits))) pendConfidence <- replicateM(mkRegU);
-    Vector#(LLCTlbReqNum, Reg#(auxDataT)) pendAuxData <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(CapChaserAuxDataT)) pendAuxData <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(Bool)) pendL1Confidence <- replicateM(mkRegU);
     Fifo#(LLCTlbReqNum, LLCTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
     
     // Init registers 
@@ -631,35 +637,27 @@ module mkL1CapChaserPrefetcher#(
         );
     endrule
 
-    /* Process a candidate prefetch.
-     * Access the TLB and perform the confidence division.
-     */
-    (* conflict_free = "processCandidatePrefetch, doConfidenceMultiply" *)
+    /* Process a candidate prefetch by performing confidence division. */
+    (* descending_urgency = "doConfidenceMultiply, processCandidatePrefetch" *)
     rule processCandidatePrefetch;
         let candidate = candidateQ.first;
         candidateQ.deq;
 
-        // Set up a TLB request.
-        // The confidence is ready on the next cycle if this is the first prefetch in a chain
-        // i.e. we don't need to perform a multiplication.
-        let tlbReqIdx = tlbReqFreeQ.first;
-        tlbReqFreeQ.deq;
-        if (isValid(candidate.auxData)) begin
-            pendConfidenceReady[tlbReqIdx] <= False;
-            confidenceMultQ.enq(tlbReqIdx);
-        end else begin
-            pendConfidenceReady[tlbReqIdx] <= True;
-        end
-        pendConfidence[tlbReqIdx] <= readDivtable4x4to7({candidate.nFetched, candidate.nSeen});
-        pendMissedL1[tlbReqIdx] <= candidate.missedL1;
-        pendAuxData[tlbReqIdx] <= candidate.auxData;
-
-        // Send the TLB request
-        toTlb.prefetcherReq(PrefetcherReqToTlb {
+        // Perform confidence division
+        CapChaserL1ConfidencePrefetch#(fixPointConfBits) confCandidate = CapChaserL1ConfidencePrefetch {
             cap: candidate.cap,
-            id: tlbReqIdx
-        });
+            missedL1: candidate.missedL1,
+            confidence: readDivtable4x4to7({candidate.nFetched, candidate.nSeen}),
+            auxData: candidate.auxData
+        };
 
+        // Either perform confidence multiplication, or send straight to the TLB
+        if (isValid(candidate.auxData)) begin
+            multiplyQ.enq(confCandidate);
+        end else begin
+            tlbRequestQ.enq(confCandidate);
+        end
+      
         if (verbose) $display("%t CapChaser L1 candidate prefetch: auxData: ", 
             $time, 
             fshow(candidate.auxData),
@@ -670,60 +668,92 @@ module mkL1CapChaserPrefetcher#(
 
     /* Do a confidence multiplication */
     rule doConfidenceMultiply;
-        let tlbReqIdx = confidenceMultQ.first;    
-        confidenceMultQ.deq;
-        if (pendAuxData[tlbReqIdx] matches tagged Valid .auxData) begin
-            pendConfidence[tlbReqIdx] <= (pack(unsignedMul(unpack(pendConfidence[tlbReqIdx]) , unpack(auxData.confidence))))[13:7];
-            pendConfidenceReady[tlbReqIdx] <= True;
+        let candidate = multiplyQ.first;
+        multiplyQ.deq;
+        if (candidate.auxData matches tagged Valid .auxData) begin
+            candidate.confidence = (pack(unsignedMul(unpack(candidate.confidence), unpack(auxData.confidence))))[13:7];
         end else begin
             doAssert(False, "Attempted to do confidence multiply without prefetch aux data");
         end
+        tlbRequestQ.enq(candidate);
     endrule
 
-    /* Handle a TLB reponse, but only if the confidence is ready */
-    rule processTlbResp(pendConfidenceReady[toTlb.prefetcherResp.id]);
+    /* The confidence is ready, so either discard the candidate prefetch or send a TLB request */
+    rule doTlbRequest;
+        let candidate = tlbRequestQ.first;
+        tlbRequestQ.deq;
+
+        // Get the confidence level
+        let l1Confidence = isL1LevelConfidence(candidate.confidence);
+        let l2Confidence = isL2LevelConfidence(candidate.confidence);
+
+        if (// We need to have at least L2 confidence level
+            l2Confidence &&
+            // If we are in split mode, and we missed the L1, then only issue if we have L1-level confidence
+            (valueOf(l1OnlyMode)!=0 || !candidate.missedL1 || l1Confidence)
+        ) begin
+            // Set up a TLB request.
+            let tlbReqIdx = tlbReqFreeQ.first;
+            tlbReqFreeQ.deq;
+
+            // Send the TLB request
+            toTlb.prefetcherReq(PrefetcherReqToTlb {
+                cap: candidate.cap,
+                id: tlbReqIdx
+            });
+
+            // Save the aux data
+            pendL1Confidence[tlbReqIdx] <= l1Confidence;
+            pendAuxData[tlbReqIdx] <= CapChaserAuxDataT {
+                confidence: candidate.confidence
+            `ifdef CAP_CHASER_COUNT_DEPTH
+                , depth: (candidate.auxData matches tagged Valid .auxData ? auxData.depth + 1 : 0)
+            `endif
+            };
+
+            if (verbose) $display("%t CapChaser L1 TLB request: confidence: %b, l1Conf: %b, l2Conf: %b", 
+                $time, 
+                candidate.confidence,
+                isL1LevelConfidence(candidate.confidence),
+                isL2LevelConfidence(candidate.confidence),
+            `ifdef CAP_CHASER_COUNT_DEPTH
+                ", depth: ", (pcandidate.auxData matches tagged Valid .auxData ? auxData.depth + 1 : 0),
+            `endif
+                ", cap: ", fshow(candidate.cap)
+            );
+        end
+        
+    endrule
+
+    /* Handle a TLB reponse */
+    rule processTlbResp;
         let resp = toTlb.prefetcherResp;
         let tlbReqIdx = resp.id;
         toTlb.deqPrefetcherResp;
 
-        // Get the confidence level
-        let l1Confidence = isL1LevelConfidence(pendConfidence[tlbReqIdx]);
-        let l2Confidence = isL2LevelConfidence(pendConfidence[tlbReqIdx]);
-
         if (// Check TLB permissions 
             !resp.haveException && 
             resp.permsCheckPass && 
-            resp.paddr != 0 && 
-            // We need to have at least L2 confidence level
-            l2Confidence &&
-            // If we are in split mode, and we missed the L1, then only issue if we have L1-level confidence
-            (valueOf(l1OnlyMode)!=0 || !pendMissedL1[tlbReqIdx] || l1Confidence)
+            resp.paddr != 0
         ) begin
             prefetchQ.enq(PendingPrefetch {
                 addr: resp.paddr,
                 cap: resp.cap,
-                nextLevel: !l1Confidence,
-                auxData: CapChaserAuxData (CapChaserAuxDataT {
-                    confidence: pendConfidence[tlbReqIdx]
-                `ifdef CAP_CHASER_COUNT_DEPTH
-                  , depth: (pendAuxData[tlbReqIdx] matches tagged Valid .auxData ? auxData.depth + 1 : 0)
-                `endif
-                })
+                nextLevel: !pendL1Confidence[tlbReqIdx],
+                auxData: CapChaserAuxData(pendAuxData[tlbReqIdx])
             });
         end
+        
         tlbReqFreeQ.enq(tlbReqIdx);
 
-        if (verbose) $display("%t CapChaser L1 TLB response: exception: %b, perms: %b, confidence: %b, l1Conf: %b, l2Conf: %b", 
+        if (verbose) $display("%t CapChaser L1 TLB response: exception: %b, perms: %b, confidence: %b",
             $time, 
             resp.haveException,
             resp.permsCheckPass,
-            pendConfidence[tlbReqIdx],
-            isL1LevelConfidence(pendConfidence[tlbReqIdx]),
-            isL2LevelConfidence(pendConfidence[tlbReqIdx]),
+            pendAuxData[tlbReqIdx].confidence
         `ifdef CAP_CHASER_COUNT_DEPTH
-            ", depth: ", (pendAuxData[tlbReqIdx] matches tagged Valid .auxData ? auxData.depth + 1 : 0),
+          , ", depth: ", pendAuxData[tlbReqIdx].depth
         `endif
-            ", cap: ", fshow(resp.cap)
         );
     endrule
 
@@ -1000,9 +1030,6 @@ module mkLLCapChaserPrefetcher#(
 
     // Need to have the same fixed point float confidence bits as the L1
     NumAlias#(fixPointConfBits, 7),
-
-    // Aux data type
-    Alias#(auxDataT, Maybe#(CapChaserAuxDataT)),
     
     // Index/tag types
     Alias#(ptrTableIdxT, Bit#(ptrTableIdxBits)),
@@ -1057,13 +1084,13 @@ module mkLLCapChaserPrefetcher#(
 
     // Tlb lookup and prefetch queues
     Fifo#(8, candidatePrefetchT) candidateQ <- mkOverflowPipelineFifo;
+    Fifo#(1, candidatePrefetchT) tlbRequestQ <- mkPipelineFifo;
     Fifo#(16, PendingPrefetch) prefetchQ <- mkOverflowBypassFifo;
 
     // Registers for pending TLB requests
     // The confidence is ready a cycle after sending the TLB request, so we don't
     // need to flag whether it's ready or not.
-    Vector#(LLCTlbReqNum, Reg#(Bit#(fixPointConfBits))) pendConfidence <- replicateM(mkRegU);
-    Vector#(LLCTlbReqNum, Reg#(auxDataT)) pendAuxData <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(CapChaserAuxDataT)) pendAuxData <- replicateM(mkRegU);
     Fifo#(LLCTlbReqNum, LLCTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
     
     // Init registers 
@@ -1172,29 +1199,21 @@ module mkLLCapChaserPrefetcher#(
         );
     endrule
 
-    /* Process a candidate prefetch.
-     * Access the TLB and perform the confidence division.
-     */
+    /* Process a candidate prefetch by performing confidence multiplication. */
     rule processCandidatePrefetch;
         let candidate = candidateQ.first;
         candidateQ.deq;
 
-        // We perform the multiplication here, as the division is already done.
-        let tlbReqIdx = tlbReqFreeQ.first;
-        tlbReqFreeQ.deq;
-        if (candidate.auxData matches tagged Valid .auxData) begin
-            pendConfidence[tlbReqIdx] <= (pack(unsignedMul(unpack(candidate.confidence) , unpack(auxData.confidence))))[13:7];
-        end else begin
-            pendConfidence[tlbReqIdx] <= candidate.confidence;
-        end
-        pendAuxData[tlbReqIdx] <= candidate.auxData;
-
-        // Send the TLB request
-        toTlb.prefetcherReq(PrefetcherReqToTlb {
+        // Perform confidence multiplication
+        tlbRequestQ.enq(CapChaserLLCandidatePrefetch {
             cap: candidate.cap,
-            id: tlbReqIdx
+            confidence: (candidate.auxData matches tagged Valid .auxData 
+                ? (pack(unsignedMul(unpack(candidate.confidence) , unpack(auxData.confidence))))[13:7]
+                : candidate.confidence
+            ),
+            auxData: candidate.auxData
         });
-
+      
         if (verbose) $display("%t CapChaser LL candidate prefetch: auxData: ", 
             $time, 
             fshow(candidate.auxData),
@@ -1203,34 +1222,65 @@ module mkLLCapChaserPrefetcher#(
         );
     endrule
 
-    /* Handle a TLB reponse*/
+    /* The confidence is ready, so either discard the candidate prefetch or send a TLB request */
+    rule doTlbRequest;
+        let candidate = tlbRequestQ.first;
+        tlbRequestQ.deq;
+
+        // Check confidence
+        if (isL2LevelConfidence(candidate.confidence)) begin
+            // Set up a TLB request.
+            let tlbReqIdx = tlbReqFreeQ.first;
+            tlbReqFreeQ.deq;
+
+            // Send the TLB request
+            toTlb.prefetcherReq(PrefetcherReqToTlb {
+                cap: candidate.cap,
+                id: tlbReqIdx
+            });
+
+            // Save the aux data
+            pendAuxData[tlbReqIdx] <= CapChaserAuxDataT {
+                confidence: candidate.confidence
+            `ifdef CAP_CHASER_COUNT_DEPTH
+                , depth: (candidate.auxData matches tagged Valid .auxData ? auxData.depth + 1 : 0)
+            `endif
+            };
+
+            if (verbose) $display("%t CapChaser LL TLB request: confidence: %b",
+                $time, 
+                candidate.confidence,
+            `ifdef CAP_CHASER_COUNT_DEPTH
+                ", depth: ", (pcandidate.auxData matches tagged Valid .auxData ? auxData.depth + 1 : 0),
+            `endif
+                ", cap: ", fshow(candidate.cap)
+            );
+        end        
+    endrule
+
+    /* Handle a TLB reponse */
     rule processTlbResp;
         let resp = toTlb.prefetcherResp;
         let tlbReqIdx = resp.id;
         toTlb.deqPrefetcherResp;
-        if (!resp.haveException && resp.permsCheckPass && resp.paddr != 0 && isL2LevelConfidence(pendConfidence[tlbReqIdx])) begin
+        
+        if (!resp.haveException && resp.permsCheckPass && resp.paddr != 0) begin
             prefetchQ.enq(PendingPrefetch {
                 addr: resp.paddr,
                 cap: resp.cap,
                 nextLevel: False,
-                auxData: CapChaserAuxData (CapChaserAuxDataT {
-                    confidence: pendConfidence[tlbReqIdx]
-                `ifdef CAP_CHASER_COUNT_DEPTH
-                  , depth: (pendAuxData[tlbReqIdx] matches tagged Valid .auxData ? auxData.depth + 1 : 0)
-                `endif
-                })
+                auxData: CapChaserAuxData(pendAuxData[tlbReqIdx])
             });
         end
         tlbReqFreeQ.enq(tlbReqIdx);
 
-        if (verbose) $display("%t CapChaser LL TLB response: exception: %b, perms: %b, confidence: %b, l2Conf: %b", 
+        if (verbose) $display("%t CapChaser LL TLB response: exception: %b, perms: %b, confidence: %b",
             $time, 
             resp.haveException,
             resp.permsCheckPass,
-            pendConfidence[tlbReqIdx],
-            isL2LevelConfidence(pendConfidence[tlbReqIdx]),
+            pendAuxData[tlbReqIdx].confidence,
         `ifdef CAP_CHASER_COUNT_DEPTH
-            ", depth: ", (pendAuxData[tlbReqIdx] matches tagged Valid .auxData ? auxData.depth + 1 : 0),
+          , ", depth: ", pendAuxData[tlbReqIdx].depth
         `endif
             ", cap: ", fshow(resp.cap)
         );
