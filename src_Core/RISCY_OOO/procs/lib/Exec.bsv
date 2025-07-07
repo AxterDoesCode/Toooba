@@ -323,6 +323,7 @@ function Data capInspect(CapPipe a, CapPipe b, CapInspectFunc func);
                                    && isDerivable(a)
                                    && isDerivable(b)
 				   && hasLegalHardPerms (a)
+				   && hasLegalHardPerms (b)
                                    && ((getPerms(a) & getPerms(b)) == getPerms(a))
                                    && (getBase(a) >= getBase(b))
                                    && (getTop(a) <= getTop(b))));
