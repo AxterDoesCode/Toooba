@@ -818,7 +818,6 @@ Bit#(3) fnAND   = 3'b111;
 Bit#(7) opALU1   = 7'b0000000;
 Bit#(7) opALU2   = 7'b0100000;
 Bit#(7) opMULDIV = 7'b0000001;
-Bit#(7) opCZERO  = 7'b0000111;
 
 Bit#(3) fnMUL    = 3'b000;
 Bit#(3) fnMULH   = 3'b001;
@@ -909,11 +908,11 @@ Bit#(3) opSCBNDS    = 3'b000;
 Bit#(3) opSCBNDSR   = 3'b001;
 Bit#(3) fnCADDI     = 3'b010;
 
-Bit#(7) opCapInspect = 7'b0001000;
-Bit#(7) opCapArith   = 7'b0000110;
-Bit#(7) opCapBounds  = 7'b0000111;
-Bit#(7) opMSWCap     = 7'b0001001;
-Bit#(7) opMSWInt     = 7'b0001010;
+Bit#(7) opCapInspect     = 7'b0001000;
+Bit#(7) opCapArith       = 7'b0000110;
+Bit#(7) opCapBoundsZero  = 7'b0000111;
+Bit#(7) opMSWCap         = 7'b0001001;
+Bit#(7) opMSWInt         = 7'b0001010;
 
 //MiscMem
 Bit#(3) fnFENCE  = 3'b000;

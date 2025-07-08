@@ -428,23 +428,6 @@ function DecodeResult decode(Instruction inst, Bool cap_mode);
                     legalInst = isValid(mAluFunc);
                     dInst.execFunc = tagged Alu mAluFunc.Valid;
                 end
-                opCZERO: begin
-                    Maybe#(AluFunc) mAluFunc = case (funct3)
-                        fnEQZ: Valid (Eqz);
-                        fnNEZ: Valid (Nez);
-                        default: Invalid;
-                    endcase;
-                    legalInst = isValid(mAluFunc);
-                    dInst.execFunc = tagged Alu mAluFunc.Valid;
-                    if(cap_mode) begin
-                        dInst.iType = Cap;
-                        dInst.capFunc = case (funct3)
-                            fnEQZ: CapModify (CZeroEqz);
-                            fnNEZ: CapModify (CZeroNez);
-                            default: tagged Other;
-                        endcase;
-                    end
-                end
                 opMULDIV: begin
                     if (isa.m) begin
                         // Processor includes "M" extension
@@ -519,8 +502,11 @@ function DecodeResult decode(Instruction inst, Bool cap_mode);
                     regs.src1 = Valid(tagged Gpr (swap ? rs2 : rs1));
                     regs.src2 = mCapFunc matches tagged Valid .f &&& tpl_1(f) == CapModify(Move) ? Invalid : Valid(tagged Gpr (swap ? rs1 : rs2));
                 end
-                opCapBounds: begin
-                    Maybe#(CapFunc) mCapFunc = case(funct3)
+                opCapBoundsZero: begin
+                    dInst.iType = Cap;
+                    Maybe#(CapFunc) mCapFunc = case (funct3)
+                        fnEQZ: Valid(CapModify (CZeroEqz));
+                        fnNEZ: Valid(CapModify (CZeroNez));
                         opSCBNDS : Valid(CapModify(SetBounds(SetBoundsExact)));
                         opSCBNDSR: Valid(CapModify(SetBounds(SetBoundsRounding)));
                         default: Invalid;
@@ -528,6 +514,16 @@ function DecodeResult decode(Instruction inst, Bool cap_mode);
                     legalInst = isValid(mCapFunc);
                     dInst.capFunc = mCapFunc.Valid;
                     dInst.iType = Cap;
+                    if(!cap_mode) begin
+                        Maybe#(AluFunc) mAluFunc = case (funct3)
+                            fnEQZ: Valid (Eqz);
+                            fnNEZ: Valid (Nez);
+                            default: Invalid;
+                        endcase;
+                        legalInst = isValid(mAluFunc);
+                        dInst.execFunc = tagged Alu mAluFunc.Valid;
+                        if(legalInst) dInst.iType = Alu;
+                    end
                     regs.dst = Valid(tagged Gpr rd);
                     regs.src1 = Valid(tagged Gpr rs1);
                     regs.src2 = Valid(tagged Gpr rs2);
