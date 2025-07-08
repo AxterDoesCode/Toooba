@@ -299,6 +299,10 @@ function CapPipe capModify(CapPipe a, CapPipe b, CapModifyFunc func);
                 setPerms(a_mut, pack(getPerms(a)) & truncate(getAddr(b)));
             tagged SetFlags               :
                 setIntMode(a_mut, getAddr(b)[0]!=0); // XXX Sense swapped for legacy SetFlags
+            tagged CZeroEqz               :
+                ((getAddr(b) == 0) ? nullCap : a);
+            tagged CZeroNez               :
+                ((getAddr(b) != 0) ? nullCap : a);
 `ifdef CHERI_ISAV9
             tagged ClearTag               :
                 setValidCap(a, False);
@@ -314,18 +318,7 @@ function CapPipe capModify(CapPipe a, CapPipe b, CapModifyFunc func);
             tagged FromPtr                :
                 (getAddr(a) == 0 ? nullCap : setAddr(b_mut, getAddr(a)).value);
 `endif
-            tagged SetHigh:
-                fromMem(tuple2(False, {getAddr(b), getAddr(a)}));
-            tagged BuildCap               :
-                setKind(setValidCap(a_mut, !buildCapIllegal), getKind(a)==SENTRY ? SENTRY : UNSEALED);
-            tagged Move                   :
-                a;
-            tagged CZeroEqz               :
-                ((getAddr(b) == 0) ? nullCap : a);
-            tagged CZeroNez               :
-                ((getAddr(b) != 0) ? nullCap : a);
-            tagged ClearTag               :
-                setValidCap(a, False);
+`endif
             default: ?;
         endcase);
     return res;
