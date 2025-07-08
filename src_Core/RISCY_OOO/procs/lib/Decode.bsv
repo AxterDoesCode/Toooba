@@ -503,7 +503,7 @@ function DecodeResult decode(Instruction inst, Bool cap_mode);
                     regs.src2 = mCapFunc matches tagged Valid .f &&& tpl_1(f) == CapModify(Move) ? Invalid : Valid(tagged Gpr (swap ? rs1 : rs2));
                 end
                 opCapBoundsZero: begin
-                    dInst.iType = Cap;
+                    legalInst = False;
                     Maybe#(CapFunc) mCapFunc = case (funct3)
                         fnEQZ: Valid(CapModify (CZeroEqz));
                         fnNEZ: Valid(CapModify (CZeroNez));
@@ -520,9 +520,8 @@ function DecodeResult decode(Instruction inst, Bool cap_mode);
                             fnNEZ: Valid (Nez);
                             default: Invalid;
                         endcase;
-                        legalInst = isValid(mAluFunc);
                         dInst.execFunc = tagged Alu mAluFunc.Valid;
-                        if(legalInst) dInst.iType = Alu;
+                        if(isValid(mAluFunc)) dInst.iType = Alu;
                     end
                     regs.dst = Valid(tagged Gpr rd);
                     regs.src1 = Valid(tagged Gpr rs1);
