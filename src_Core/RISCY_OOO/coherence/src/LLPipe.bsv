@@ -55,6 +55,7 @@ export mkLLPipe;
 typedef struct {
     Addr addr;
     cRqIdxT mshrIdx;
+    Bit #(2) alloc_policy;
 } LLPipeCRqIn#(type cRqIdxT) deriving(Bits, Eq, FShow);
 
 typedef struct {
@@ -250,9 +251,11 @@ module mkLLPipe(
                 end
                 else begin
                     // cRs must hit, so only cRq cannot enter here
+                    /* cRs can also miss match for NT_STORE to pass data from L1 to LLC
                     doAssert(cmd matches tagged CRq ._rq ? True : False,
                         "only cRq can tag match miss"
                     );
+                    */
                     // find a unlocked way to replace for cRq
                     Vector#(wayNum, Bool) unlocked = ?;
                     Vector#(wayNum, Bool) invalid = ?;
@@ -273,7 +276,7 @@ module mkLLPipe(
     endfunction
 
     function ActionValue#(updateByUpCsT) updateByUpCs(
-        pipeCmdT cmd, Msi toState, Bool dataV, Msi oldCs
+        pipeCmdT cmd, Msi toState, Bool dataV, Msi oldCs, Bit #(2) alloc_policy
     );
     actionvalue
         doAssert(toState > oldCs, "should truly upgrade cs");
@@ -283,14 +286,15 @@ module mkLLPipe(
     endfunction
 
     function ActionValue#(updateByDownDirT) updateByDownDir(
-        pipeCmdT cmd, Msi toState, Bool dataV, Msi oldCs, dirT oldDir
+        pipeCmdT cmd, Msi toState, Bool dataV, Msi oldCs, dirT oldDir, Bit #(2) alloc_policy
     );
     actionvalue
         // update dir
         dirT newDir = oldDir;
         if(cmd matches tagged CRs .cRs) begin
             if(dataV) begin
-                doAssert(oldDir[cRs.child] >= E, "cRs with data, dir must >= E");
+                if(alloc_policy == 2'b00)
+                    doAssert(oldDir[cRs.child] >= E, "cRs with data, dir must >= E");
             end
             else begin
                 doAssert(oldDir[cRs.child] < M, "cRs without data, dir must < M");
@@ -310,8 +314,13 @@ module mkLLPipe(
         // valid field has not been overwritten by bypass in CCPipe.
         Msi newCs = oldCs;
         if(dataV) begin
-            doAssert(oldCs >= E, "cRs has data, cs must >= E");
-            newCs = M;
+            if(alloc_policy == 2'b10) begin 
+                //doAssert(oldCs >= E, "cRs has data, cs must >= E");
+                newCs = I;
+            end else begin 
+                doAssert(oldCs >= E, "cRs has data, cs must >= E");
+                newCs = M;
+            end 
         end
         return UpdateByDownDir {cs: newCs, dir: newDir};
     endactionvalue
@@ -349,19 +358,19 @@ module mkLLPipe(
     method Action send(pipeInT req);
         case(req) matches
             tagged CRq .rq: begin
-                pipe.enq(CRq (rq), Invalid, Invalid);
+                pipe.enq(CRq (rq), Invalid, Invalid,rq.alloc_policy);
             end
             tagged CRs .rs: begin
                 pipe.enq(CRs (LLPipeCRsCmd {
                     addr: rs.addr,
                     child: rs.child
-                }), rs.data, DownDir (rs.toState));
+                }), rs.data, DownDir (rs.toState), rs.alloc_policy);
             end
             tagged MRs .rs: begin
                 pipe.enq(MRs (LLPipeMRsCmd {
                     addr: rs.addr,
                     way: rs.way
-                }), Valid (rs.data), UpCs (rs.toState));
+                }), Valid (rs.data), UpCs (rs.toState), 2'b00);
             end
         endcase
     endmethod
@@ -382,7 +391,7 @@ module mkLLPipe(
         Addr addr = getAddrFromCmd(pipe.first.cmd); // inherit addr
         Maybe#(pipeCmdT) newCmd = Invalid;
         if(swapRq matches tagged Valid .idx) begin
-            newCmd = Valid (CRq (LLPipeCRqIn {addr: addr, mshrIdx: idx}));
+            newCmd = Valid (CRq (LLPipeCRqIn {addr: addr, mshrIdx: idx, alloc_policy: 2'b00}));
         end
         // call pipe
         pipe.deqWrite(newCmd, wrRam, ?, updateRep);

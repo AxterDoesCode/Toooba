@@ -382,7 +382,7 @@ module mkTbCHERIL1LL(Empty);
                     addr: req.addr,
                     toState: getToState(req.op),
                     op: getMemOp(req.op),
-                    alloc_policy : 2'b00,
+                    alloc_policy : 2'b10,
                     byteEn: req.byteEn,
                     data: req.data,
                     amoInst: req.amoInst

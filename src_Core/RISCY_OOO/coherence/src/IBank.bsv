@@ -433,7 +433,8 @@ module mkIBank#(
             canUpToE: False,
             id: 0,
             child: ?,
-            isPrefetchRq: True
+            isPrefetchRq: True,
+            alloc_policy: ?
         };
         rqToPQ.enq(cRqToP);
         if (verbose)
@@ -454,7 +455,8 @@ module mkIBank#(
             canUpToE: False,
             id: slot.way,
             child: ?,
-            isPrefetchRq: False
+            isPrefetchRq: False,
+            alloc_policy: ?
         };
         rqToPQ.enq(cRqToP);
        if (verbose)

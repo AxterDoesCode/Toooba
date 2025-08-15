@@ -55,6 +55,7 @@ import ConfigReg::*;
 import RandomReplace::*;
 import Prefetcher::*;
 import ProcTypes::*;
+import BlueBasics::*;
 `ifdef PERFORMANCE_MONITORING
 import PerformanceMonitor::*;
 import StatCounters::*;
@@ -434,7 +435,8 @@ endfunction
             canUpToE: True,
             child: child,
             byteEn: ?,
-            id: Child (?)
+            id: Child (?),
+            alloc_policy:?
         };
         // setup new MSHR entry
         cRqIndexT n <- cRqMshr.transfer.getEmptyEntryInit(cRq, Invalid);
@@ -467,7 +469,8 @@ endfunction
             canUpToE: True,
             child: child,
             byteEn: ?,
-            id: Child (?)
+            id: Child (?),
+            alloc_policy:?
         };
         // setup new MSHR entry
         cRqIndexT n <- cRqMshr.transfer.getEmptyEntryInit(cRq, Invalid);
@@ -519,7 +522,8 @@ endfunction
             canUpToE: False, // DMA should not go to E
             child: ?,
             byteEn: r.byteEn,
-            id: Dma (r.id)
+            id: Dma (r.id),
+            alloc_policy:?
         };
         // setup new MSHR entry and data
         cRqIndexT n <- cRqMshr.transfer.getEmptyEntryInit(cRq, write ? Valid (r.data) : Invalid);
@@ -716,6 +720,16 @@ endfunction
                $display("%t LL %m sendToM: load only: ", $time, fshow(msg));
                
                toMQ.enq(msg);
+            end else if (cRq.alloc_policy == 2'b10) begin 
+                Line poison_cap = Line{tag: replicate(True), data: replicate(vector(64'h12838384,0))};//  unpack(replicate(tagged Valid 128'h123));
+
+                toMemT msg = Wb (WbMemRs {
+                    addr: cRq.addr,
+                    byteEn: replicate(replicate(True)),
+                    data: poison_cap
+                });
+                toMQ.enq(msg);     
+                $display("%t LL %m sendToM: non-temporal poison: ", $time, fshow(msg));
             end else begin 
                 memRsT nwz_msg = MemRsMsg {
                   data: ?,
@@ -1564,7 +1578,7 @@ endfunction
        if (verbose)
         $display("%t LL %m pipelineResp: cRs: ", $time, fshow(child));
         // cs should be not I
-        doAssert(ram.info.cs > I, "cRs should hit on a line");
+        //doAssert(ram.info.cs > I, "cRs should hit on a line");
         // check owner of the line
         if(ram.info.owner matches tagged Valid .cOwner) begin
             cRqT cRq = pipeOutCRq;

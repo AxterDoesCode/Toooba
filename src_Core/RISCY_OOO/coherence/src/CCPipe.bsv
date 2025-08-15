@@ -86,7 +86,7 @@ interface CCPipe#(
     type setAuxT,
     type pipeCmdT
 );
-    method Action enq(pipeCmdT cmd, Maybe#(lineT) respLine, RespState#(msiT) toState);
+    method Action enq(pipeCmdT cmd, Maybe#(lineT) respLine, RespState#(msiT) toState, Bit#(2) alloc_policy);
     method Bool notFull;
     method PipeOut#(Bit#(TLog#(wayNum)), tagT, msiT, dirT, ownerT, otherT, repT, lineT, setAuxT, pipeCmdT) first;
     method PipeOut#(Bit#(TLog#(wayNum)), tagT, msiT, dirT, ownerT, otherT, repT, lineT, setAuxT, pipeCmdT) unguard_first;
@@ -115,6 +115,7 @@ typedef struct {
     // CRs/PRs info
     Maybe#(lineT) respLine;
     RespState#(msiT) toState;
+    Bit #(2) alloc_policy;
     Maybe#(setAuxT) setAuxData;
 } Enq2Match#(
     numeric type wayNum,
@@ -211,10 +212,10 @@ module mkCCPipe#(
         repT repInfo
     ),
     function ActionValue#(UpdateByUpCs#(msiT)) updateByUpCs(
-        pipeCmdT cmd, msiT toState, Bool dataValid, msiT oldCs
+        pipeCmdT cmd, msiT toState, Bool dataValid, msiT oldCs, Bit#(2) alloc_policy
     ),
     function ActionValue#(UpdateByDownDir#(msiT, dirT)) updateByDownDir(
-        pipeCmdT cmd, msiT toState, Bool dataValid, msiT oldCs, dirT oldDir
+        pipeCmdT cmd, msiT toState, Bool dataValid, msiT oldCs, dirT oldDir, Bit#(2) alloc_policy
     ),
     function ActionValue#(repT) updateRepInfo(repT oldRep, wayT hitWay),
     Vector#(wayNum, RWBramCore#(indexT, infoT)) infoRam,
@@ -317,13 +318,13 @@ module mkCCPipe#(
         };
         if(e2m.toState matches tagged UpCs .s) begin
             UpdateByUpCs#(msiT) upd <- updateByUpCs(
-                e2m.cmd, s, isValid(e2m.respLine), m2o.info.cs
+                e2m.cmd, s, isValid(e2m.respLine), m2o.info.cs,  e2m.alloc_policy
             );
             m2o.info.cs = upd.cs;
         end
         else if(e2m.toState matches tagged DownDir .s) begin
             UpdateByDownDir#(msiT, dirT) upd <- updateByDownDir(
-                e2m.cmd, s, isValid(e2m.respLine), m2o.info.cs, m2o.info.dir
+                e2m.cmd, s, isValid(e2m.respLine), m2o.info.cs, m2o.info.dir, e2m.alloc_policy
             );
             m2o.info.cs = upd.cs;
             m2o.info.dir = upd.dir;
@@ -358,7 +359,7 @@ module mkCCPipe#(
     Bool deq_guard = isValid(mat2Out_out) && initDone;
 
     // stage 1: enq req to pipeline: access info+rep RAM & bypass
-    method Action enq(pipeCmdT cmd, Maybe#(lineT) respLine, respStateT toState) if(enq_guard);
+    method Action enq(pipeCmdT cmd, Maybe#(lineT) respLine, respStateT toState, Bit#(2)alloc_policy) if(enq_guard);
         // read ram
         indexT index = getIndex(cmd);
         for(Integer i = 0; i < valueOf(wayNum); i = i+1) begin
@@ -373,7 +374,8 @@ module mkCCPipe#(
             repInfo: Invalid,
             respLine: respLine,
             toState: toState,
-            setAuxData: Invalid
+            setAuxData: Invalid,
+            alloc_policy: alloc_policy
         };
         if(bypass.wget matches tagged Valid .b &&& b.index == index) begin
             e2m.infoVec[b.way] = Valid (b.ram.info);
@@ -457,10 +459,10 @@ module mkCCPipeSingleCycle#(
         repT repInfo
     ),
     function ActionValue#(UpdateByUpCs#(msiT)) updateByUpCs(
-        pipeCmdT cmd, msiT toState, Bool dataValid, msiT oldCs
+        pipeCmdT cmd, msiT toState, Bool dataValid, msiT oldCs, Bit#(2) alloc_policy
     ),
     function ActionValue#(UpdateByDownDir#(msiT, dirT)) updateByDownDir(
-        pipeCmdT cmd, msiT toState, Bool dataValid, msiT oldCs, dirT oldDir
+        pipeCmdT cmd, msiT toState, Bool dataValid, msiT oldCs, dirT oldDir, Bit#(2) alloc_policy
     ),
     function ActionValue#(repT) updateRepInfo(repT oldRep, wayT hitWay),
     Vector#(wayNum, RWBramCore#(indexT, infoT)) infoRam,
@@ -546,13 +548,13 @@ module mkCCPipeSingleCycle#(
         };
         if(e2m.toState matches tagged UpCs .s) begin
             UpdateByUpCs#(msiT) upd <- updateByUpCs(
-                e2m.cmd, s, isValid(e2m.respLine), m2o.info.cs
+                e2m.cmd, s, isValid(e2m.respLine), m2o.info.cs, e2m.alloc_policy
             );
             m2o.info.cs = upd.cs;
         end
         else if(e2m.toState matches tagged DownDir .s) begin
             UpdateByDownDir#(msiT, dirT) upd <- updateByDownDir(
-                e2m.cmd, s, isValid(e2m.respLine), m2o.info.cs, m2o.info.dir
+                e2m.cmd, s, isValid(e2m.respLine), m2o.info.cs, m2o.info.dir, e2m.alloc_policy
             );
             m2o.info.cs = upd.cs;
             m2o.info.dir = upd.dir;
@@ -585,7 +587,7 @@ module mkCCPipeSingleCycle#(
     Bool deq_guard = isValid(mat2Out_out) && initDone;
 
     // stage 1: enq req to pipeline: access info+rep RAM
-    method Action enq(pipeCmdT cmd, Maybe#(lineT) respLine, respStateT toState) if(enq_guard);
+    method Action enq(pipeCmdT cmd, Maybe#(lineT) respLine, respStateT toState, Bit#(2) alloc_policy) if(enq_guard);
         // read ram
         indexT index = getIndex(cmd);
         for(Integer i = 0; i < valueOf(wayNum); i = i+1) begin
@@ -602,7 +604,8 @@ module mkCCPipeSingleCycle#(
             repInfo: Invalid,
             respLine: respLine,
             toState: toState,
-            setAuxData: Invalid
+            setAuxData: Invalid,
+            alloc_policy:alloc_policy
         };
         enq2Mat_enq <= Valid (e2m);
     endmethod

@@ -20,7 +20,6 @@
 # ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
 BLUESTUFFDIR ?= $(CURDIR)/../../../../../libs/BlueStuff
 include $(BLUESTUFFDIR)/bluestuff.inc.mk
 EXTPATH = -p +:../../../../../src_bsc_lib_RTL:../L1LL:../include:../../../../ISA:../../../../CPU:../../../../Core:../../../../BSV_Additional_Libs:../../../../../libs/BlueStuff/BlueBasics:../../../../../libs/BlueStuff/BlueAXI4/AXI4:../../../../../libs/BlueStuff/BlueAXI4:../../../../../libs/:TagController/TagController:../../../../../src_Testbench/SoC:../../../../../libs/cheri-cap-lib:../../../procs/lib:../../../procs/RV64G_OOO:../../src
@@ -56,7 +55,7 @@ LINK_JOBS ?= 8
 
 $(TARGETS): %:
 	mkdir -p build$@Dir
-	bsc -u -sim \
+	/usr/groups/ecad/bluespec/bsc-2023.01-ubuntu-22.04/bin/bsc  -u -sim \
 		-bdir build$@Dir \
 		-info-dir build$@Dir \
 		-simdir build$@Dir \
@@ -69,7 +68,7 @@ $(TARGETS): %:
 		$(MACROS) \
 		$(EXTPATH) Tb$@.bsv
 	grep -n "Blocking rules" build$@Dir/mkTb$@.sched | sed '/(none)/d'
-	bsc -sim -e mkTb$@ \
+	/usr/groups/ecad/bluespec/bsc-2023.01-ubuntu-22.04/bin/bsc  -sim -e mkTb$@ \
 		-bdir build$@Dir \
 		-info-dir build$@Dir \
 		-simdir build$@Dir \

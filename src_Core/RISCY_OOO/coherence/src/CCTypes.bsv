@@ -274,6 +274,7 @@ typedef struct {
     Msi toState;
     Maybe#(Line) data;
     childT child; // from which child
+    Bit #(2) alloc_policy;
 } CRsMsg#(type childT) deriving(Bits, Eq, FShow);
 
 typedef struct {

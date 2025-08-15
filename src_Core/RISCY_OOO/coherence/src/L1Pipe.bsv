@@ -320,7 +320,7 @@ module mkL1Pipe(
     endfunction
 
     function ActionValue#(updateByUpCsT) updateByUpCs(
-        pipeCmdT cmd, Msi toState, Bool dataV, Msi oldCs
+        pipeCmdT cmd, Msi toState, Bool dataV, Msi oldCs, Bit#(2) alloc_policy
     );
     actionvalue
         doAssert(toState > oldCs, "should truly upgrade cs");
@@ -330,7 +330,7 @@ module mkL1Pipe(
     endfunction
 
     function ActionValue#(updateByDownDirT) updateByDownDir(
-        pipeCmdT cmd, Msi toState, Bool dataV, Msi oldCs, dirT oldDir
+        pipeCmdT cmd, Msi toState, Bool dataV, Msi oldCs, dirT oldDir, Bit#(2) alloc_policy
     );
     actionvalue
         doAssert(False, "L1 does not have dir");
@@ -355,16 +355,16 @@ module mkL1Pipe(
     method Action send(pipeInT req);
         case(req) matches
             tagged CRq .rq: begin
-                pipe.enq(CRq (rq), Invalid, Invalid);
+                pipe.enq(CRq (rq), Invalid, Invalid, 2'b00);
             end
             tagged PRq .rq: begin
-                pipe.enq(PRq (rq), Invalid, Invalid);
+                pipe.enq(PRq (rq), Invalid, Invalid, 2'b00);
             end
             tagged PRs .rs: begin
                 pipe.enq(PRs (L1PipePRsCmd {
                     addr: rs.addr,
                     way: rs.way
-                }), rs.data, UpCs (rs.toState));
+                }), rs.data, UpCs (rs.toState),2'b00);
             end
 `ifdef SECURITY_CACHES
             tagged Flush .flush: begin

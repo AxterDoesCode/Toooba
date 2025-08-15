@@ -378,7 +378,8 @@ endfunction
             data: ?,
             amoInst: ?,
             loadTags: ?,
-            pcHash: ?
+            pcHash: ?,
+            alloc_policy:?
         };
         cRqIdxT n <- cRqMshr.cRqTransfer.getEmptyEntryInit(r);
         // send to pipeline
@@ -504,7 +505,8 @@ endfunction
             canUpToE: True,
             id: 0,
             child: ?,
-            isPrefetchRq: True
+            isPrefetchRq: True,
+            alloc_policy:?
         };
         rqToPQ.enq(cRqToP);
         if (verbose)
@@ -776,7 +778,50 @@ endfunction
             );
         endaction
         endfunction
+        function Action cRqNT_Store(procRqT req);
+        action
+            // deq pipeline
+            pipeline.deqWrite(Invalid, RamData {
+                info: CacheInfo {
+                    tag: ?,
+                    cs: I, // downgraded to I
+                    dir: ?,
+                    owner: Invalid, // no successor
+                    other: ?
+                },
+                line: ?
+            }, Invalid, False);
+            // update MSHR: may save replaced line data
+            //cRqMshr.pipelineResp.setStateSlot(n, Depend, defaultValue
+            cRqMshr.pipelineResp.setStateSlot(n, WaitSt, L1CRqSlot {
+                way: pipeOut.way, // use way from pipeline
+                cs: ram.info.cs, // record cs for future rqToPIndexQ.deq
+                repTag: ?, // no replacement
+                waitP: True // we have req parent, so waiting
+            });
+            //);
 
+            let {be, wrLine} <- procResp.respSt(req.id);
+            Line curLine = ram.line;
+
+            Line newLine = getUpdatedLine(curLine, be, wrLine);
+            cRqSlotT slot = cRqMshr.sendRsToP_cRq.getSlot(n);
+            $display("%t L1 cRqNT_Store", $time,fshow(newLine) );
+            cRsToPT resp = CRsMsg {
+                addr: {slot.repTag, truncate(req.addr)}, // get bank id & index from req
+                toState: I,
+                data:  Valid(newLine),
+                child: ?/*,
+                alloc_policy : req.alloc_policy */
+            };
+            rsToPQ.enq(resp);
+
+            cRqMshr.pipelineResp.setData(n, Valid(newLine));
+            // send replacement resp to parent
+            rqToPIndexQ_pipelineResp.enq(n);
+
+        endaction
+        endfunction    
         // function to process cRq miss without replacement (MSHR slot may have garbage)
         function Action cRqMissNoReplacement;
         action
@@ -945,9 +990,15 @@ endfunction
                     cRqScEarlyFail(True);
                 end
                 else begin
-                  if (verbose)
-                   $display("%t L1 %m pipelineResp: cRq: own by itself, miss no replace", $time);
-                  cRqMissNoReplacement;
+                  if(procRq.alloc_policy == 2'b10) begin
+                    $display("%t L1 %m pipelineResp: cRq: own by itself, NT_STORE", $time);
+                    cRqNT_Store(procRq);
+                  end else begin 
+                    if (verbose) begin 
+                     $display("%t L1 %m pipelineResp: cRq: own by itself, miss no replace", $time);
+                    end 
+                    cRqMissNoReplacement;
+                  end 
                 end
             end
         end
@@ -965,9 +1016,15 @@ endfunction
             if(tag_match && enough_cs_to_hit) begin
                 // Hit
                 doAssert(cs_valid, "hit, so cs must > I");
-                if (verbose)
-                $display("%t L1 %m pipelineResp: cRq: no owner, hit", $time);
-                cRqHit(n, procRq);
+                if(procRq.alloc_policy == 2'b10) begin
+                    if (verbose)
+                    $display("%t L1 %m pipelineResp: cRq: no owner, hit. NT store flushes", $time);
+                    cRqNT_Store(procRq);
+                end else begin 
+                    if (verbose)
+                    $display("%t L1 %m pipelineResp: cRq: no owner, hit", $time);
+                    cRqHit(n, procRq);
+                end 
             end
             else if(scFail) begin
                 // Sc already fails, so we don't need to req parent.  Since
@@ -986,10 +1043,17 @@ endfunction
                 cRqReplacement;
             end
             else begin
-                if (verbose)
-                $display("%t L1 %m pipelineResp: cRq: no owner, miss no replace", $time);
-                // Req parent, no replacement needed
-                cRqMissNoReplacement;
+                if(procRq.alloc_policy == 2'b10) begin 
+                    if (verbose)
+                    $display("%t L1 %m pipelineResp: cRq: no owner, miss no replace, NT Store", $time);
+                    // Req parent, no replacement needed
+                    cRqNT_Store(procRq);
+                end else begin 
+                    if (verbose)
+                    $display("%t L1 %m pipelineResp: cRq: no owner, miss no replace", $time);
+                    // Req parent, no replacement needed
+                    cRqMissNoReplacement;
+                end 
             end
         end
     endrule
