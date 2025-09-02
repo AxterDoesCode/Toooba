@@ -58,8 +58,8 @@ import Prefetcher_intf::*;
 import Prefetcher_top::*;
 import ProcTypes::*;
 import ClientServer::*;
-`ifdef PERFORMANCE_MONITORING
 import PerformanceMonitor::*;
+`ifdef PERFORMANCE_MONITORING
 import StatCounters::*;
 import BlueUtils::*;
 `endif
@@ -852,11 +852,13 @@ module mkLLBank#(
         if (!cRqIsPrefetch[n]) begin
             incrMissCnt(cRq, n, False, cRq.child[0] == 1);
         end
+`ifdef PERFORMANCE_MONITORING
         else begin
             EventsLL events = unpack (0);
             events.evt_EVICT = 1;
             perf_events[4] <= events;
         end
+`endif
     endrule
 
     // this mem resp is just for a DMA req, won't go into pipeline to refill cache

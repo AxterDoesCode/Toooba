@@ -53,35 +53,46 @@ module mkAllInCapPrefetcher#(Parameter#(maxCapSizeToPrefetch) _)(CheriPCPrefetch
     Reg#(LineAddr) prefetchNext <- mkReg(0);
     Reg#(LineAddr) prefetchEnd <- mkReg(0); //inclusive
     Reg#(LineAddr) originalMiss <- mkReg(0);
+
+`ifdef PERFORMANCE_MONITORING
     Array #(Reg #(EventsPrefetcher)) perf_events <- mkDRegOR (1, unpack (0));
+`endif
 
     rule skipOriginalMiss if (prefetchNext == originalMiss);
         prefetchNext <= prefetchNext + 1;
     endrule
     method Action reportAccess(Addr addr, PCHash pcHash, HitOrMiss hitMiss, MemOp memOp, Bool isPrefetch, PrefetchAuxData prefetchAuxData, Addr boundsOffset, Addr boundsLength, Addr boundsVirtBase, Bit#(31) capPerms);
         if (!isPrefetch && hitMiss == MISS && memOp == Ld && boundsLength != 0) begin
+`ifdef PERFORMANCE_MONITORING
             EventsPrefetcher evt = unpack(0);
             evt.evt_0 = 1;
+`endif
             LineAddr cLinesInBounds = truncateLSB(boundsLength) + 1;
             Addr boundsBase = addr-boundsOffset;
             Addr boundsTop = addr+(boundsLength-boundsOffset-1);
             if (`VERBOSE) $display("%t Prefetcher report MISS %h (bottom: %h, top: %h)", 
                 $time, addr, boundsBase, boundsTop);
             if (boundsLength <= fromInteger(valueof(maxCapSizeToPrefetch))) begin
+`ifdef PERFORMANCE_MONITORING
                 evt.evt_1 = 1;
                 evt.evt_2 = truncate(boundsLength);
+`endif
                 pageAddressT basePage = truncateLSB(boundsBase);
                 pageAddressT addrPage = truncateLSB(addr);
                 pageAddressT topPage = truncateLSB(boundsTop);
                 if (basePage != addrPage) begin
                     //If base is in a different page, fetch from bottom of this page.
                     boundsBase = Addr'{addrPage, 0};
+`ifdef PERFORMANCE_MONITORING
                     evt.evt_3 = 1;
+`endif
                 end
                 if (topPage != addrPage) begin
                     //If base is in a different page, fetch until the top of this page.
                     boundsTop = Addr'{addrPage, 12'hfff};
+`ifdef PERFORMANCE_MONITORING
                     evt.evt_3 = 1;
+`endif
                 end
                 prefetchNext <= getLineAddr(boundsBase);
                 prefetchEnd <= getLineAddr(boundsTop);
@@ -89,7 +100,9 @@ module mkAllInCapPrefetcher#(Parameter#(maxCapSizeToPrefetch) _)(CheriPCPrefetch
                 if (`VERBOSE) $display("%t Prefetcher MISS bounds length %d, so set up prefetches from %h to %h", 
                     $time, boundsLength, boundsBase, boundsTop);
             end
+`ifdef PERFORMANCE_MONITORING
             perf_events[0] <= evt;
+`endif
         end
         else if (`VERBOSE) begin 
             if(hitMiss == MISS) $display("%t Prefetcher report HIT %h", $time, addr);
@@ -156,7 +169,9 @@ provisos(
     FIFO#(Tuple5#(StrideEntry, Addr, Bit#(16), Addr, Addr)) strideEntryForPrefetch <- mkBypassFIFO();
     Reg#(Maybe#(Bit#(4))) cLinesPrefetchedLatest <- mkReg(?);
     PulseWire holdReadReq <- mkPulseWire;
+`ifdef PERFORMANCE_MONITORING
     Array #(Reg #(EventsPrefetcher)) perf_events <- mkDRegOR (3, unpack (0));
+`endif
 
     rule sendReadReq if (!holdReadReq);
         match {.addr, .boundsHash, .hitMiss, .bot, .top} = memAccesses.first;
@@ -275,6 +290,7 @@ provisos(
 
             //vaddrToTlb.enq(reqAddr);
             addrToPrefetch.enq(reqAddr);
+`ifdef PERFORMANCE_MONITORING
             EventsPrefetcher evt = unpack(0);
             evt.evt_0 = (bot+top >= 4096) ? 1 : 0;
             evt.evt_1 = (bot+top >= 131072) ? 1 : 0;
@@ -284,6 +300,7 @@ provisos(
                 evt.evt_3 = 1;
             end
             perf_events[0] <= evt;
+`endif
             // We will still be processing this StrideEntry next cycle, 
             // so hold off any potential read requests until we do a writeback
             holdReadReq.send();
@@ -322,9 +339,11 @@ provisos(
     endmethod
 
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
+`ifdef PERFORMANCE_MONITORING
         EventsPrefetcher evt = unpack(0);
         evt.evt_4 = 1;
         perf_events[2] <= evt;
+`endif
         addrToPrefetch.deq;
         let addr = addrToPrefetch.first;
         if (`VERBOSE) $display("%t Stride Prefetcher getNextPrefetchAddr paddr %h", $time, addr);
@@ -399,7 +418,9 @@ module mkCapBitmapPrefetcherOld#(Parameter#(maxCapSizeToTrack) _, Parameter#(bit
     Add#(j__, 2, TLog#(bitmapTableSize))
 
 );
+`ifdef PERFORMANCE_MONITORING
     Array #(Reg #(EventsPrefetcher)) perf_events <- mkDRegOR (4, unpack (0));
+`endif
     RWBramCore#(bitmapTableIdxT, bitmapEntryT) bt <- mkRWBramCoreForwarded();
     RWBramCore#(filterTableIdxT, filterEntryT) ft <- mkRWBramCoreForwarded();
     Fifo#(pfQueueSize, LineAddr) pfQueue <- mkOverflowPipelineFifo;
@@ -470,12 +491,14 @@ module mkCapBitmapPrefetcherOld#(Parameter#(maxCapSizeToTrack) _, Parameter#(bit
 
             issuePrefetchesQueue.enq(tuple3(canPrefetchVec, pa, unpack(truncate(accessLineAddr - pageStartAddr))));
 
+`ifdef PERFORMANCE_MONITORING
             EventsPrefetcher evt = unpack(0);
             evt.evt_0 = 1;
             evt.evt_2 = (boundsLength <= 1024) ? 0 : extend(pack(countElem(True, canPrefetchVec)));
             evt.evt_1 = extend(pack(countElem(True, canPrefetchVec)));
             //evt.evt_2 = extend(pack(countElem(True, canPrefetchVec)));
             perf_events[1] <= evt;
+`endif
         end
         
         //NB: Change this for LLC prefetching -- then L1 acts as filter, so can upgrade and downgrade on hits too!
@@ -495,9 +518,11 @@ module mkCapBitmapPrefetcherOld#(Parameter#(maxCapSizeToTrack) _, Parameter#(bit
             end
             //Update state of cache line in bitmap
             //LineAddr accessLineAddr = truncateLSB(addr);
+`ifdef PERFORMANCE_MONITORING
             EventsPrefetcher evt = unpack(0);
             evt.evt_3 = 1;
             perf_events[2] <= evt;
+`endif
 
             bitmapIndexT bitmapIdx = truncate(boundsOffset);
             LineState state = bte.bitmap[bitmapIdx];
@@ -559,9 +584,11 @@ module mkCapBitmapPrefetcherOld#(Parameter#(maxCapSizeToTrack) _, Parameter#(bit
             if (`VERBOSE) $display("%t prefetcher:issuePrefetches %h", $time, Addr'{toPrefetch, '0});
             pfQueue.enq(extend(toPrefetch));
 
+`ifdef PERFORMANCE_MONITORING
             EventsPrefetcher evt = unpack(0);
             evt.evt_4 = 1;
             perf_events[3] <= evt;
+`endif
         end
     endrule
 
@@ -655,7 +682,9 @@ module mkCapBitmapPrefetcher#(Parameter#(maxCapSizeToTrack) _, Parameter#(bitmap
     Add#(3, o__, TLog#(bitmapTableSize))
 
 );
+`ifdef PERFORMANCE_MONITORING
     Array #(Reg #(EventsPrefetcher)) perf_events <- mkDRegOR (4, unpack (0));
+`endif
     RWBramCoreSequential#(TLog#(bitmapTableSize), bitmapEntryT, 2) bt <- mkRWBramCoreSequential();
     RWBramCore#(filterTableIdxT, filterEntryT) ft <- mkRWBramCoreForwarded();
     Fifo#(pfQueueSize, PendingPrefetch) pfQueue <- mkOverflowPipelineFifo;
@@ -745,13 +774,14 @@ module mkCapBitmapPrefetcher#(Parameter#(maxCapSizeToTrack) _, Parameter#(bitmap
             if (`VERBOSE) $display("%t prefetcher:processRdResp MISS offset %h in new cap %h (for cap idx %h), found %d possible prefetches!", 
                 $time, boundsOffset2, ftIdxTag, btIdx, countElem(True, canPrefetchVec));
             
+`ifdef PERFORMANCE_MONITORING
             EventsPrefetcher evt = unpack(0);
             evt.evt_0 = 1;
             evt.evt_2 = (boundsLength <= 131072) ? 0 : extend(pack(countElem(True, canPrefetchVec)));
             evt.evt_1 = extend(pack(countElem(True, canPrefetchVec)));
             //evt.evt_2 = extend(pack(countElem(True, canPrefetchVec)));
             perf_events[1] <= evt;
-            
+`endif
             
             
         end
@@ -782,9 +812,11 @@ module mkCapBitmapPrefetcher#(Parameter#(maxCapSizeToTrack) _, Parameter#(bitmap
             end
             //Update state of cache line in bitmap
             //LineAddr accessLineAddr = truncateLSB(addr);
+`ifdef PERFORMANCE_MONITORING
             EventsPrefetcher evt = unpack(0);
             evt.evt_3 = 1;
             perf_events[2] <= evt;
+`endif
             Bit#(6) accessIdx2 = truncate(accessIdx);
             LineState state = writeBackBitmap[accessIdx2];
             LineState nextState = upgrade(state);
@@ -861,9 +893,11 @@ module mkCapBitmapPrefetcher#(Parameter#(maxCapSizeToTrack) _, Parameter#(bitmap
             if (`VERBOSE) $display("%t -- prefetcher:issuePrefetches %h prefetchOffset %h pageStartOffset %h boundsLength %h cap: ", 
                 $time, toPrefetchAddr, prefetchOffset, pageStartBoundsOffset, boundsLength, fshow(cp3.value));
 
+`ifdef PERFORMANCE_MONITORING
             EventsPrefetcher evt = unpack(0);
             evt.evt_4 = 1;
             perf_events[3] <= evt;
+`endif
         end
         
     endrule
@@ -1007,7 +1041,9 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
     Add#(q__, TAdd#(TLog#(ptrTableSize), 16), 60),
     Add#(r__, TLog#(TDiv#(maxCapSizeToTrack, 64)), 58)
 );
+`ifdef PERFORMANCE_MONITORING
     Array #(Reg #(EventsPrefetcher)) perf_events <- mkDRegOR (5, unpack (0));
+`endif
     RWBramCoreSequential#(ptrTableIdxBits, ptrTableEntryT, 4) pt <- mkRWBramCoreSequential();
     RWBramCore#(trainingTableIdxT, trainingTableEntryT) tt <- mkRWBramCore();
     Fifo#(8, Tuple2#(trainingTableIdxTagT, Bit#(24))) ttLookupQueue <- mkOverflowBypassFifo;
@@ -1095,9 +1131,11 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
             //Match -- upgrade ptrTable
             if (`VERBOSE) $display("%t Prefetcher training table match! Will upgrade ptr table pit %h", $time, te.ptrTableIdxTag);
             ptUpgradeQueue.enq(tuple2(te.ptrTableIdxTag, boundsOffset));
+`ifdef PERFORMANCE_MONITORING
             EventsPrefetcher evt = unpack(0);
             evt.evt_0 = 1;
             perf_events[0] <= evt;
+`endif
             wipeTtEntry.enq(tIdx);
             lastMatchedTit <= tit;
         end
@@ -1196,6 +1234,7 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
                 pt.wrReq(truncate(pit), pte);
                 //if (`VERBOSE) $display("%t Prefetcher processPtReadForLookup %h downgrading to ", $time, pit, fshow(pte.state));
             end
+`ifdef PERFORMANCE_MONITORING
             EventsPrefetcher evt = unpack(0);
             evt.evt_1 = 1;
             /*
@@ -1204,6 +1243,7 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
             end
             */
             perf_events[2] <= evt;
+`endif
         end
     endrule
         
@@ -1277,12 +1317,14 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
                     installTtEntry.enq(tuple2(tIdx, te));
                     tt.wrReq(tIdx, te);
 
+`ifdef PERFORMANCE_MONITORING
                     EventsPrefetcher evt = unpack(0);
                     evt.evt_4 = 1;
                     if (boundsVirtBase != getBase(cap)) begin
                         //evt.evt_2 = 1;
                     end
                     perf_events[4] <= evt;
+`endif
                 end
             end
 
@@ -1305,12 +1347,14 @@ module mkCapPtrPrefetcher#(TlbToPrefetcher toTlb, Parameter#(maxCapSizeToTrack) 
                     if (`VERBOSE) $display("%t Prefetcher reportDataArrival addr %h prefetech %b adding %d caps for prefetch lookups (clinestartoffset %h)", 
                         $time, addr, wasPrefetch, countElem(True, map(tpl_3, v)), clineStartOffset, fshow(v));
                     ptLookupQueue.enq(v);
+`ifdef PERFORMANCE_MONITORING
                     EventsPrefetcher evt = unpack(0);
                     evt.evt_3 = 1;
                     if (wasPrefetch) begin
                         evt.evt_2 = 1;
                     end
                     perf_events[3] <= evt;
+`endif
                     lastLookupLineAddr <= getLineAddr(addr);
                 end
             end
@@ -1398,26 +1442,34 @@ module mkPCCapMeasurer(CheriPCPrefetcher) provisos (
 );
     RWBramCore#(mtIdxT, Vector#(2, mtEntryT)) mt <- mkRWBramCoreForwarded();
     Fifo#(1, Tuple4#(mtIdxT, mtTagT, Bit#(16), Bit#(16))) mtRdFifo <- mkPipelineFifo;
+`ifdef PERFORMANCE_MONITORING
     Array #(Reg #(EventsPrefetcher)) perf_events <- mkDRegOR (3, unpack (0));
+`endif
 
     rule processMtRead;
         Vector#(2, mtEntryT) mteVec = mt.rdResp;
         mt.deqRdResp;
         let {idx, tag, lengthHash, baseHash} = mtRdFifo.first;
         mtRdFifo.deq;
+`ifdef PERFORMANCE_MONITORING
         EventsPrefetcher evt = unpack(0);
+`endif
 
         if (mteVec[0].tag == tag) begin
             mtEntryT mte = mteVec[0];
             if (baseHash != mte.lastBoundsBaseHash && !mte.diffBaseCounted) begin
                 $display ("%t Prefetcher Found PC %h with different bounds bases! (%h and %h)", $time, {tag, idx}, mte.lastBoundsBaseHash, baseHash);
                 mte.diffBaseCounted = True;
+`ifdef PERFORMANCE_MONITORING
                 evt.evt_1 = 1;
+`endif
             end
             if (lengthHash != mte.lastBoundsLenHash && !mte.diffLenCounted) begin
                 $display ("%t Prefetcher Found PC %h with different bounds lengths! (%d and %d)", $time, {tag, idx}, mte.lastBoundsLenHash, lengthHash);
                 mte.diffLenCounted = True;
+`ifdef PERFORMANCE_MONITORING
                 evt.evt_2 = 1;
+`endif
             end
             mte.numLoads = (mte.numLoads == 255) ? 255 : mte.numLoads + 1;
             mte.lruMostRecent = True;
@@ -1429,12 +1481,16 @@ module mkPCCapMeasurer(CheriPCPrefetcher) provisos (
             if (baseHash != mte.lastBoundsBaseHash && !mte.diffBaseCounted) begin
                 $display ("%t Prefetcher Found PC %h with different bounds bases! (%h and %h)", $time, {tag, idx}, mte.lastBoundsBaseHash, baseHash);
                 mte.diffBaseCounted = True;
+`ifdef PERFORMANCE_MONITORING
                 evt.evt_1 = 1;
+`endif
             end
             if (lengthHash != mte.lastBoundsLenHash && !mte.diffLenCounted) begin
                 $display ("%t Prefetcher Found PC %h with different bounds lengths! (%d and %d)", $time, {tag, idx}, mte.lastBoundsLenHash, lengthHash);
                 mte.diffLenCounted = True;
+`ifdef PERFORMANCE_MONITORING
                 evt.evt_2 = 1;
+`endif
             end
             mte.numLoads = (mte.numLoads == 255) ? 255 : mte.numLoads + 1;
             mte.lruMostRecent = True;
@@ -1446,6 +1502,7 @@ module mkPCCapMeasurer(CheriPCPrefetcher) provisos (
             if (mteVec[0].lruMostRecent) replaceIdx = 1;
             else if (mteVec[1].lruMostRecent) replaceIdx = 0;
             mtEntryT mte = mteVec[replaceIdx];
+`ifdef PERFORMANCE_MONITORING
             evt.evt_0 = 1;
             $display ("%t Prefetcher installing new MT entry idx %h replaceIdx %d ", $time, idx, replaceIdx, fshow(mteVec));
             if (mte.numLoads > 4 && mte.diffBaseCounted) begin
@@ -1454,6 +1511,7 @@ module mkPCCapMeasurer(CheriPCPrefetcher) provisos (
             if (mte.numLoads > 4) begin
                 evt.evt_4 = 1;
             end
+`endif
             mte.tag = tag;
             mte.lastBoundsLenHash = lengthHash;
             mte.lastBoundsBaseHash = baseHash;
@@ -1464,7 +1522,9 @@ module mkPCCapMeasurer(CheriPCPrefetcher) provisos (
             mteVec[(replaceIdx == 0) ? 1 : 0].lruMostRecent = False;
             mteVec[replaceIdx] = mte;
         end
+`ifdef PERFORMANCE_MONITORING
         perf_events[1] <= evt;
+`endif
         mt.wrReq(idx, mteVec);
     endrule
 
@@ -1522,28 +1582,37 @@ module mkCapPCMeasurer(CheriPCPrefetcher) provisos (
 );
     RWBramCore#(mtIdxT, mtEntryT) mt <- mkRWBramCore();
     Fifo#(1, Tuple4#(mtIdxT, mtTagT, PCHash, Bit#(32))) mtRdFifo <- mkPipelineFifo;
+`ifdef PERFORMANCE_MONITORING
     Array #(Reg #(EventsPrefetcher)) perf_events <- mkDRegOR (3, unpack (0));
+`endif
 
     rule processMtRead;
         mtEntryT mte = mt.rdResp;
         mt.deqRdResp;
         let {idx, tag, pcHash, baseHash} = mtRdFifo.first;
         mtRdFifo.deq;
+`ifdef PERFORMANCE_MONITORING
         EventsPrefetcher evt = unpack(0);
+`endif
         if (mte.tag == tag) begin
             if (baseHash != mte.lastBoundsBaseHash && !mte.diffBaseCounted) begin
                 $display ("%t Prefetcher Found length %h with different bounds bases! (%h and %h)", $time, {tag, idx}, mte.lastBoundsBaseHash, baseHash);
                 mte.diffBaseCounted = True;
+`ifdef PERFORMANCE_MONITORING
                 evt.evt_1 = 1;
+`endif
             end
             if (pcHash != mte.lastPCHash && !mte.diffPCCounted) begin
                 $display ("%t Prefetcher Found length %h with different PCs! (%d and %d)", $time, {tag, idx}, mte.lastPCHash, pcHash);
                 mte.diffPCCounted = True;
+`ifdef PERFORMANCE_MONITORING
                 evt.evt_2 = 1;
+`endif
             end
             mte.numLoads = (mte.numLoads == 255) ? 255 : mte.numLoads + 1;
         end
         else begin
+`ifdef PERFORMANCE_MONITORING
             evt.evt_0 = 1;
             $display ("%t Prefetcher installing new MT entry", $time);
             if (mte.diffBaseCounted) begin
@@ -1552,6 +1621,7 @@ module mkCapPCMeasurer(CheriPCPrefetcher) provisos (
             else if (mte.numLoads > 4) begin
                 evt.evt_4 = 1;
             end
+`endif
             mte.tag = tag;
             mte.lastPCHash = pcHash;
             mte.lastBoundsBaseHash = baseHash;
@@ -1559,7 +1629,9 @@ module mkCapPCMeasurer(CheriPCPrefetcher) provisos (
             mte.diffBaseCounted = False;
             mte.numLoads = 0;
         end
+`ifdef PERFORMANCE_MONITORING
         perf_events[1] <= evt;
+`endif
         mt.wrReq(idx, mte);
     endrule
 

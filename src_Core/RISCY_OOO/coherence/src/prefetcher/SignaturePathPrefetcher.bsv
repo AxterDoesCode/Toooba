@@ -773,7 +773,9 @@ Add#(1, d__, stWays)
     PatternTable#(ptEntries, 4) pt <- mkPatternTable;
     PrefetchFilter#(1024, 6, 8) filter <- mkPrefetchFilter;
     Fifo#(8, LineAddr) addrToPrefetch <- mkOverflowBypassFifo;
+`ifdef PERFORMANCE_MONITORING
     Array #(Reg #(EventsPrefetcher)) perf_events <- mkDRegOR (3, unpack (0));
+`endif
 
     Bool verbose = False;
 
@@ -801,6 +803,7 @@ Add#(1, d__, stWays)
     rule pfAddrFromCalcToFilter;
         let lineAddr <- calculator.getNextPrefetchAddr;
         let depth <- calculator.getNextPrefetchAddrDepth;
+`ifdef PERFORMANCE_MONITORING
         EventsPrefetcher evt = unpack(0);
         evt.evt_0 = extend(filter.getCurrAlpha);
         if (depth >= 2) begin
@@ -809,6 +812,7 @@ Add#(1, d__, stWays)
         evt.evt_2 = 1;
         evt.evt_3 = extend(depth);
         perf_events[1] <= evt;
+`endif
         filter.canPrefetchReq(lineAddr);
     endrule
 
@@ -826,9 +830,11 @@ Add#(1, d__, stWays)
     endmethod
 
     method ActionValue#(Addr) getNextPrefetchAddr();
+`ifdef PERFORMANCE_MONITORING
         EventsPrefetcher evt = unpack(0);
         evt.evt_4 = 1;
         perf_events[2] <= evt;
+`endif
         let lineAddr = addrToPrefetch.first;
         addrToPrefetch.deq;
         if (verbose) $display("%t Prefetcher:getNextPrefetchAddr %x", $time, Addr'{lineAddr, '0});

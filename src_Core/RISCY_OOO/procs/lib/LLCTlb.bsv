@@ -167,9 +167,11 @@ module mkLLCTlb(LLCTlb);
         tlb.flush;
         flushDone <= True;
 
+`ifdef PERFORMANCE_MONITORING
         EventsLL ev = unpack(0);
         ev.evt_TLB_FLUSH = 1;
         perf_events[2] <= ev;
+`endif
     endrule
 
     // get resp from parent TLB
@@ -252,10 +254,11 @@ module mkLLCTlb(LLCTlb);
             rsFromPQ.deq;
         end
 
-        // Performance monitoring
+`ifdef PERFORMANCE_MONITORING
         EventsLL ev = unpack(0);
         ev.evt_TLB_MISS = 1;
         perf_events[0] <= ev;
+`endif
     endrule
 
     // init freeQ
@@ -401,10 +404,11 @@ module mkLLCTlb(LLCTlb);
             if(verbose) $display("LLCTlb %m req (bare): vaddr: %h", vaddr);
         end
 
-        // Performance monitoring
+`ifdef PERFORMANCE_MONITORING
         EventsLL ev = unpack(0);
         ev.evt_TLB = 1;
         perf_events[1] <= ev;
+`endif
     endrule
     
     interface WriteOnly flush;

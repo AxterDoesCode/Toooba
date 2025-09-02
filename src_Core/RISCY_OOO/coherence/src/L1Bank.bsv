@@ -67,8 +67,8 @@ import LatencyTimer::*;
 import RandomReplace::*;
 import Prefetcher_intf::*;
 import Prefetcher_top::*;
-`ifdef PERFORMANCE_MONITORING
 import PerformanceMonitor::*;
+`ifdef PERFORMANCE_MONITORING
 import StatCounters::*;
 import BlueUtils::*;
 `endif
@@ -331,6 +331,7 @@ action
 endaction
 endfunction
 
+`ifdef PERFORMANCE_MONITORING
     rule transferRegularEvents;
         EventsL1D events = unpack(0);
         if (cRqMshr.isFull)  begin
@@ -343,7 +344,7 @@ endfunction
         //events.evt_TLB_FLUSH = prefetcher.events.evt_4;
         //perf_events[2] <= events;
     endrule
-    
+`endif
 
     function tagT getTag(Addr a) = truncateLSB(a);
 
@@ -527,9 +528,11 @@ endfunction
                     ", op: ",
                     fshow(r.op)
                 );
+`ifdef PERFORMANCE_MONITORING
             EventsL1D events = unpack (0);
             events.evt_AMO_MISS_LAT = 1;
             perf_events[2] <= events;
+`endif
         end        
     endrule
 
@@ -733,9 +736,11 @@ endfunction
         `ifdef PERF_COUNT
             usedPrefetchCnt.incr(1);
         `endif
+`ifdef PERFORMANCE_MONITORING
             EventsL1D events = unpack (0);
             events.evt_AMO = 1;
             perf_events[4] <= events;
+`endif
         end
         case(req.op) matches
             Ld: begin
@@ -1218,11 +1223,13 @@ endfunction
                 incrMissCnt(procRq.op, cOwner, procRq.boundsOffset, procRq.boundsLength);
                 $display("%t L1 incrMissCnt", $time);
             end
+`ifdef PERFORMANCE_MONITORING
             else begin
                 EventsL1D events = unpack (0);
                 events.evt_AMO_MISS = 1;
                 perf_events[3] <= events;
             end
+`endif
         end
         else begin
             doAssert(False, ("pRs owner must match some cRq"));

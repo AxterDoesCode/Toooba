@@ -31,6 +31,7 @@ typedef enum {
     HIT = 1'b0, MISS = 1'b1
 } HitOrMiss deriving (Bits, Eq, FShow);
 
+`ifdef PERFORMANCE_MONITORING
 typedef struct {
 	Bit#(Report_Width) evt_0;
 	Bit#(Report_Width) evt_1;
@@ -38,6 +39,7 @@ typedef struct {
 	Bit#(Report_Width) evt_3;
 	Bit#(Report_Width) evt_4;
 } EventsPrefetcher deriving (Bits, FShow);
+`endif
 
 /* CapChaser auxiliary prefetch data */
 typedef struct {

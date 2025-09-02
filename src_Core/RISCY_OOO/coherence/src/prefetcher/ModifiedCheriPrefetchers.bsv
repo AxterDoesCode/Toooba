@@ -108,7 +108,9 @@ module mkCapPtrPrefetcherNonPC#(
     Add#(q__, TAdd#(TLog#(ptrTableSize), 16), 60),
     Add#(r__, TLog#(TDiv#(maxCapSizeToTrack, 64)), 58)
 );
+`ifdef PERFORMANCE_MONITORING
     Array #(Reg #(EventsPrefetcher)) perf_events <- mkDRegOR (5, unpack (0));
+`endif
     RWBramCoreSequential#(ptrTableIdxBits, ptrTableEntryT, 4) pt <- mkRWBramCoreSequential();
     RWBramCore#(trainingTableIdxT, trainingTableEntryT) tt <- mkRWBramCore();
     Fifo#(8, Tuple2#(trainingTableIdxTagT, Bit#(24))) ttLookupQueue <- mkOverflowBypassFifo;
@@ -199,9 +201,11 @@ module mkCapPtrPrefetcherNonPC#(
             //Match -- upgrade ptrTable
             if (`VERBOSE) $display("%t Prefetcher training table match! Will upgrade ptr table pit %h", $time, te.ptrTableIdxTag);
             ptUpgradeQueue.enq(tuple2(te.ptrTableIdxTag, offsetOffset));
+`ifdef PERFORMANCE_MONITORING
             EventsPrefetcher evt = unpack(0);
             evt.evt_0 = 1;
             perf_events[0] <= evt;
+`endif
             wipeTtEntry.enq(tIdx);
             lastMatchedTit <= tit;
         end
@@ -307,6 +311,7 @@ module mkCapPtrPrefetcherNonPC#(
                     pt.wrReq(truncate(pit), pte);
                     if (`VERBOSE) $display("%t Prefetcher processPtReadForLookup %h downgrading to ", $time, pit, fshow(pte.state));
                 end
+`ifdef PERFORMANCE_MONITORING
                 EventsPrefetcher evt = unpack(0);
                 evt.evt_1 = 1;
                 /*
@@ -315,6 +320,7 @@ module mkCapPtrPrefetcherNonPC#(
                 end
                 */
                 perf_events[2] <= evt;
+`endif
             end else begin
                 if (`VERBOSE) $display("%t Prefetcher processPtReadForLookup %h out of bounds base %h length %h offset %h (original offset %h pTable offset %h)", $time, pit, getBase(cap), getLength(cap), offset, getOffset(tpl_2(ppVec[idx])), pte.lastUsedOffset);
                 pte.state = downgrade(pte.state);
@@ -387,12 +393,14 @@ module mkCapPtrPrefetcherNonPC#(
                     te.pointerOffset = truncate(getOffset(cap));
                     installTtEntry.enq(tuple2(tIdx, te));
                     tt.wrReq(tIdx, te);
+`ifdef PERFORMANCE_MONITORING
                     EventsPrefetcher evt = unpack(0);
                     evt.evt_4 = 1;
                     if (boundsVirtBase != getBase(cap)) begin
                         //evt.evt_2 = 1;
                     end
                     perf_events[4] <= evt;
+`endif
                 end
             end
 
@@ -427,12 +435,14 @@ module mkCapPtrPrefetcherNonPC#(
                     if (`VERBOSE) $display("%t Prefetcher reportDataArrival addr %h prefetech %b adding %d caps for prefetch lookups (clinestartoffset %h)", 
                         $time, addr, wasPrefetch, countElem(True, map(tpl_3, v)), clineStartOffset, fshow(v));
                     ptLookupQueue.enq(v);
+`ifdef PERFORMANCE_MONITORING
                     EventsPrefetcher evt = unpack(0);
                     evt.evt_3 = 1;
                     if (wasPrefetch) begin
                         evt.evt_2 = 1;
                     end
                     perf_events[3] <= evt;
+`endif
                     lastLookupLineAddr <= getLineAddr(addr);
                 end
             end
