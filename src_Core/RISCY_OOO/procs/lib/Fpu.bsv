@@ -907,7 +907,7 @@ module mkFpuExecPipeline(FpuExec);
             FMAdd:  double_fma.request.put(tuple4(tagged Valid in3, in1, in2, fpu_rm));
             FMSub:  double_fma.request.put(tuple4(tagged Valid (-in3), in1, in2, fpu_rm));
             FNMSub: double_fma.request.put(tuple4(tagged Valid in3, (-in1), in2, fpu_rm));
-            FNMAdd: double_fma.request.put(tuple4(tagged Valid in3, in1, in2, fpu_rm));
+            FNMAdd: double_fma.request.put(tuple4(tagged Valid (-in3), (-in1), in2, fpu_rm));
         endcase
 
         // enq to spec fifo
@@ -915,7 +915,7 @@ module mkFpuExecPipeline(FpuExec);
             roundMode: fpu_rm,
             precision: fpu_inst.precision,
             exc_conv_in: exc_conv,
-            negateResult: fpu_inst.func == FNMAdd,
+            negateResult: False,
             dst: dst,
             tag: tag
 `ifdef KONATA
