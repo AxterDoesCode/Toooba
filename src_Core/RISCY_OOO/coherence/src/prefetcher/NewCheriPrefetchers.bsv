@@ -969,6 +969,12 @@ module mkL1CapChaserPrefetcher#(
     method Action sendBroadcastData(PrefetcherBroadcastData data);
     endmethod
 
+`ifdef PERFORMANCE_MONITORING
+    method EventsPrefetcher events;
+        return ?;
+    endmethod
+`endif
+
 endmodule
 
 
@@ -1336,6 +1342,12 @@ module mkLLCapChaserPrefetcher#(
         end
     endmethod
 
+`ifdef PERFORMANCE_MONITORING
+    method EventsPrefetcher events;
+        return ?;
+    endmethod
+`endif
+
 endmodule
 
 
@@ -1510,4 +1522,9 @@ module mkCapChaserAllInPrefetcher#(
     method Action sendBroadcastData(PrefetcherBroadcastData data);
     endmethod
 
+`ifdef PERFORMANCE_MONITORING
+    method EventsPrefetcher events;
+        return ?;
+    endmethod
+`endif
 endmodule
