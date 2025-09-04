@@ -741,7 +741,6 @@ typedef struct {
     FpuRoundMode roundMode;
     FpuPrecision precision;
     FpuException exc_conv_in; // exception during convert single input to double
-    Bool negateResult;
     // generic bookkeeping
     Maybe#(PhyDst) dst;
     InstTag tag;
@@ -798,10 +797,6 @@ module mkFpuExecPipeline(FpuExec);
         if(info.precision == Single) begin
             // convert out back to single
             let {out_f, exc_conv_out} = fcvt_s_d(out, info.roundMode);
-            // negate result if needed
-            if(info.negateResult) begin
-                out_f = -out_f;
-            end
             // canonicalize NaN
             out_f = isNaN(out_f) ? canonicalNaN : out_f;
             res = FpuResult {
@@ -811,10 +806,6 @@ module mkFpuExecPipeline(FpuExec);
         end
         else begin
             // no convert is needed
-            // negate result if needed
-            if(info.negateResult) begin
-                out = -out;
-            end
             // canonicalize NaN
             out = isNaN(out) ? canonicalNaN : out;
             res = FpuResult {
@@ -915,7 +906,6 @@ module mkFpuExecPipeline(FpuExec);
             roundMode: fpu_rm,
             precision: fpu_inst.precision,
             exc_conv_in: exc_conv,
-            negateResult: False,
             dst: dst,
             tag: tag
 `ifdef KONATA
