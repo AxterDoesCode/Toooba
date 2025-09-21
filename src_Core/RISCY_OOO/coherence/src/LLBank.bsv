@@ -634,11 +634,6 @@ endfunction
             fshow(cRq), " ; ",
             fshow(cSlot), " ; "
         );
-        // performance counter: normal miss lat and cnt
-        // Check lowest bit of child ID to determine if this was an ICache access
-        if (!cRqIsPrefetch[n]) begin
-            incrMissCnt(n, False, cRq.child[0] == 1);
-        end
     endrule 
     
     rule mRsTransfer(rsFromMQ.first.id.refill);
