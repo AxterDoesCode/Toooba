@@ -700,21 +700,7 @@ endfunction
         // take actions according to type
         if(t == Ld) begin
             // only load mem: can be child or dma req
-            if(cRq.alloc_policy == 2'b00) begin 
-                toMemT msg = Ld (LdMemRq {
-                   addr: cRq.addr,
-                   child: ?,
-                   id: LdMemRqId {
-                       // child rq needs refill cache line, dma rq does not
-                       refill: isRqFromC(cRq.id),
-                       mshrIdx: n
-                   },
-                   tag_req: cRq.toState == T
-               });
-               $display("%t LL %m sendToM: load only: ", $time, fshow(msg));
-               
-               toMQ.enq(msg);
-            end else begin 
+            if(cRq.alloc_policy == 2'b01) begin 
                 memRsT nwz_msg = MemRsMsg {
                   data: unpack(0),
                   child: ?,
@@ -726,6 +712,19 @@ endfunction
                };
                nwz_rsFromMQ.enq(nwz_msg);
                $display("%t LL %m sendToM: non-write allocate: ", $time, fshow(nwz_msg));
+            end else begin 
+                toMemT msg = Ld (LdMemRq {
+                   addr: cRq.addr,
+                   child: ?,
+                   id: LdMemRqId {
+                       // child rq needs refill cache line, dma rq does not
+                       refill: isRqFromC(cRq.id),
+                       mshrIdx: n
+                   },
+                   tag_req: cRq.toState == T
+               });
+               $display("%t LL %m sendToM: load only: ", $time, fshow(msg));
+               toMQ.enq(msg);
             end 
             toMInfoQ.deq; // deq info
            if (verbose)
