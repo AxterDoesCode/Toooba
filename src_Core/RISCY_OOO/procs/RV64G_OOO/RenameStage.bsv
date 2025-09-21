@@ -131,7 +131,7 @@ interface RenameStage;
 endinterface
 
 module mkRenameStage#(RenameInput inIfc)(RenameStage);
-    Bool verbose = True;
+    Bool verbose = False;
     Integer verbosity = 0;
 
     // func units
