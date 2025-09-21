@@ -721,7 +721,7 @@ endfunction
                toMQ.enq(msg);
             end else begin 
                 memRsT nwz_msg = MemRsMsg {
-                  data: ?,
+                  data: unpack(0),
                   child: ?,
                   id:  LdMemRqId {
                        // child rq needs refill cache line, dma rq does not
