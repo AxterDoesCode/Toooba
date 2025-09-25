@@ -897,8 +897,20 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(res.dst matches tagged Valid .dst) begin
             CapPipe dataUnpacked = fromMem(unpack(pack(res.data)));
             dataUnpacked = setValidCap(dataUnpacked, res.allowCap && isValidCap(dataUnpacked));
-            inIfc.writeRegFile(dst.indx, dataUnpacked);
-
+            $display("%t poison check: ", $time, rule_name, " ", fshow(data));
+            if (data.data[1][46] ==1'b1 && data.tag==True) begin 
+                inIfc.writeRegFile(dst.indx, dataUnpacked);
+                inIfc.rob_setExecuted_deqLSQ(res.instTag, Valid(Exception(excLoadAccessFault)), Invalid
+`ifdef RVFI
+            , ExtraTraceBundle{
+                regWriteData: pack(res.data.data[0]),
+                memByteEn: replicate(False)
+            }
+`endif
+        );
+            end else begin 
+                inIfc.writeRegFile(dst.indx, dataUnpacked);
+            end 
 `ifdef INCLUDE_TANDEM_VERIF
             inIfc.rob_setExecuted_doFinishMem_RegData (res.instTag, res.data);
 `endif
