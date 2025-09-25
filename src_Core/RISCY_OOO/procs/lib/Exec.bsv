@@ -594,7 +594,7 @@ function Bool memAddrMisaligned(Addr addr, ByteOrTagEn byteOrTagEn);
     if (byteOrTagEn == TagMemAccess || byteOrTagEn == CacheLine_NWZ) begin
         return(!isCLineAlignAddr(addr));
     end
-    else if(byteEn[15]) begin
+    else if(byteEn[15]||byteOrTagEn == CapWord_POISON) begin
         return addr[3:0] != 0;
     end
     else if(byteEn[7]) begin

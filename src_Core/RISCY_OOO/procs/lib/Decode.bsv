@@ -192,13 +192,13 @@ function Maybe#(MemInst) decodeExplicitBoundsMemInst(Instruction inst);
     // it doesn't matter if this is set to True for stores
     Bool unsignedLd = unpack(mem_code[2]);
     Bit#(2) width = mem_code[1:0];
-    Bool is_dcnwz = False;
+    Bit#(2) alloc_policy = 2'b00;
 
     Bool capWidth = False;
     if (funct7 == f7_cap_Stores && unsignedLd) begin
         capWidth = True;
-        is_dcnwz = unpack(mem_code[0]);
-        if (width != 0 && !is_dcnwz) illegalInst = True;
+        alloc_policy = mem_code[1:0];
+        //if (width != 0) illegalInst = True;
     end
     if (funct7 == f7_cap_Loads && amo && unsignedLd) begin
         unsignedLd = False;
@@ -248,6 +248,10 @@ function Maybe#(MemInst) decodeExplicitBoundsMemInst(Instruction inst);
                   end
         endcase
     end
+    ByteOrTagEn byteOrTagEn =  DataMemAccess(byteEn);
+    if(alloc_policy ==2'b01) byteOrTagEn = CacheLine_NWZ;
+    else if (alloc_policy == 2'b10) byteOrTagEn = CapWord_POISON;
+    else byteOrTagEn =  DataMemAccess(byteEn);
 
     if (illegalInst) begin
         return tagged Invalid;
@@ -256,7 +260,7 @@ function Maybe#(MemInst) decodeExplicitBoundsMemInst(Instruction inst);
                                 mem_func: mem_func,
                                 amo_func: amo_func,
                                 unsignedLd: unsignedLd,
-                                byteOrTagEn: is_dcnwz? CacheLine_NWZ : DataMemAccess(byteEn),
+                                byteOrTagEn: byteOrTagEn,
                                 aq: amo,
                                 rl: amo,
                                 reg_bounds: bounds_from_register} );

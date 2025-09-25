@@ -608,6 +608,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         end 
         else if(x.origBE == CacheLine_NWZ) begin
             shiftBE = CacheLine_NWZ;
+        end 
+        else if(x.origBE == CapWord_POISON) begin
+            shiftBE = CapWord_POISON;
         end
 
         CapPipe ddc = cast(inIfc.scaprf_rd(scrAddrDDC));
@@ -616,6 +619,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         Bit#(TAdd#(CacheUtils::LogCLineNumMemDataBytes,1)) accessByteCount = zeroExtend(pack(countOnes(pack(x.origBE.DataMemAccess))));
         if (x.origBE == TagMemAccess || x.origBE == CacheLine_NWZ) begin
             accessByteCount = fromInteger(valueOf(CacheUtils::CLineNumMemDataBytes));
+        end else if (x.origBE == CapWord_POISON) begin 
+            accessByteCount = zeroExtend(pack(countOnes(16'hFFFF)));
         end
 
 `ifdef KONATA 
@@ -1229,14 +1234,21 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // send to mem
         Addr addr = lsqDeqSt.paddr;
         Bit#(2) alloc_policy = 2'b00;
-        if(lsqDeqSt.shiftedBE == CacheLine_NWZ) alloc_policy = 2'b01;
-        else alloc_policy = 2'b00;
+        MemTaggedData data = lsqDeqSt.stData;
+        if(lsqDeqSt.shiftedBE == CacheLine_NWZ) begin 
+            alloc_policy = 2'b01;
+        end else if(lsqDeqSt.shiftedBE == CapWord_POISON) begin  
+            alloc_policy = 2'b10;
+            data.data[1][46] = 1'b1; //set poison bit
+        end else begin
+            alloc_policy = 2'b00;
+        end 
         reqStQ.enq(tuple3(addr, alloc_policy,lsqDeqSt.pcHash));
         // record waiting for store resp
         waitStRespQ.enq(WaitStResp {
             offset: getLineMemDataOffset(addr),
             shiftedBE: lsqDeqSt.shiftedBE.DataMemAccess,
-            shiftedData: lsqDeqSt.stData
+            shiftedData: data
         });
         // we leave deq to resp time
         // ROB should have already been set to executed
@@ -1267,6 +1279,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         let {sbIdx, en} <- stb.issue;
         Bit#(2) alloc_policy = 2'b00;
         if( en.shiftedBE == CacheLine_NWZ) alloc_policy = 2'b01;
+        else if(en.shiftedBE == CapWord_POISON) alloc_policy = 2'b10;
         else alloc_policy = 2'b00;
         reqStQ.enq(tuple4(sbIdx, {en.addr, 0}, alloc_policy, en.pcHash));
         // perf: store mem latency

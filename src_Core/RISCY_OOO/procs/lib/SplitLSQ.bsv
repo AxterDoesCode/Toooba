@@ -511,7 +511,7 @@ function Bool checkAddrAlign(Addr addr, ByteOrTagEn byteOrTagEn);
     if (byteOrTagEn == TagMemAccess || byteOrTagEn == CacheLine_NWZ) begin
         return isCLineAlignAddr(addr);
     end
-    else if(byteEn[15]) begin
+    else if(byteEn[15]|| byteOrTagEn == CapWord_POISON) begin
         return addr[3:0] == 0;
     end
     else if(byteEn[7]) begin
@@ -648,7 +648,7 @@ module mkSplitLSQ(SplitLSQ);
     // request faults), we should first copy the MMIO request to a reg, and
     // then kill using the info in reg.
 
-    Bool verbose = False;
+    Bool verbose = True;
 
     // we may simplify things in case of single core
     Bool multicore = valueof(CoreNum) > 1;

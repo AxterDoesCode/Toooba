@@ -621,10 +621,10 @@ endfunction
                 // resp processor, get write data & BE
                 let {be, wrLine} <- procResp.respSt(req.id);
                     // calculate new data to write
-                if(req.alloc_policy != 2'b01) begin
-                    newLine = getUpdatedLine(curLine, be, wrLine);
-                end else begin 
+                if(req.alloc_policy == 2'b01) begin //zeroing
                     newLine = getUpdatedLine(curLine, be, unpack(0));
+                end else begin 
+                    newLine = getUpdatedLine(curLine, be, wrLine);
                 end
             end
             default: begin
