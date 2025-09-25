@@ -621,11 +621,20 @@ endfunction
                 // resp processor, get write data & BE
                 let {be, wrLine} <- procResp.respSt(req.id);
                     // calculate new data to write
-                if(req.alloc_policy == 2'b01) begin //zeroing
-                    newLine = getUpdatedLine(curLine, be, unpack(0));
+                MemTaggedData curData = getTaggedDataAt(curLine, dataSel);
+                if(curData.tag == True && curData.data[1][46] == 1'b1) begin 
+                    newLine = curLine;
+                    $display("%t L1 %m pipelineResp: found poison on store access, cancel store",
+                        $time,
+                        fshow(curData)
+                    );
                 end else begin 
-                    newLine = getUpdatedLine(curLine, be, wrLine);
-                end
+                    if(req.alloc_policy == 2'b01) begin //zeroing
+                        newLine = getUpdatedLine(curLine, be, unpack(0));
+                    end else begin 
+                        newLine = getUpdatedLine(curLine, be, wrLine);
+                    end
+                end 
             end
             default: begin
                 doAssert(False, "unknown mem op");
