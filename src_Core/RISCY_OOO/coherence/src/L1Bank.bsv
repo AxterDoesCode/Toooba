@@ -379,7 +379,8 @@ endfunction
             amoInst: ?,
             loadTags: ?,
             pcHash: ?,
-            alloc_policy: 2'b00
+            alloc_policy: 2'b00,
+            permitPoison: False
         };
         cRqIdxT n <- cRqMshr.cRqTransfer.getEmptyEntryInit(r);
         // send to pipeline
@@ -612,9 +613,17 @@ endfunction
                 // calculate new data to write
                 if(succeed) begin
                     let taggedData = getTaggedDataAt(curLine, dataSel);
-                    let newTaggedData =
-                      mergeMemTaggedDataBE(taggedData, req.data, zeroExtend(pack(req.byteEn)));
-                    newLine = setTaggedDataAt( newLine, dataSel, newTaggedData);
+                    if(taggedData.tag == True && taggedData.data[1][46] == 1'b1 && !req.permitPoison) begin 
+                        newLine = curLine;
+                        $display("%t L1 %m pipelineResp: found poison on store-conditional access, cancel store conditional",
+                            $time,
+                            fshow(taggedData)
+                        );
+                    end else begin 
+                        let newTaggedData =
+                            mergeMemTaggedDataBE(taggedData, req.data, zeroExtend(pack(req.byteEn)));
+                        newLine = setTaggedDataAt( newLine, dataSel, newTaggedData);
+                    end 
                 end
                 // reset link addr
                 linkAddr <= Invalid;

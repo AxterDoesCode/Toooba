@@ -1036,7 +1036,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             amoInst: ?,
             loadTags: False,
             pcHash: ?,
-            alloc_policy: 2'b00
+            alloc_policy: 2'b00,
+            permitPoison : False
         };
         reqLrScAmoQ.enq(req);
         if(verbose) $display("[doDeqLdQ_Lr_issue] ", fshow(lsqDeqLd), "; ", fshow(req));
@@ -1398,7 +1399,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             },
             loadTags: False,
             pcHash: ?,
-            alloc_policy: 2'b00
+            alloc_policy: 2'b00,
+            permitPoison: lsqDeqSt.permitPoison
         };
         reqLrScAmoQ.enq(req);
         if(verbose) $display("[doDeqStQ_ScAmo_issue] ", fshow(lsqDeqSt), "; ", fshow(req));
@@ -1623,7 +1625,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             amoInst: ?,
             loadTags: loadTags,
             pcHash: pcHash,
-            alloc_policy: alloc_policy
+            alloc_policy: alloc_policy,
+            permitPoison: False
         });
     endrule
     (* descending_urgency = "sendLdToMem, sendStToMem" *) // prioritize Ld over St
@@ -1645,7 +1648,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             amoInst: ?,
             loadTags: False,
             pcHash: pcHash,
-            alloc_policy: alloc_policy
+            alloc_policy: alloc_policy,
+            permitPoison: False
         });
     endrule
     (* descending_urgency = "sendLrScAmoToMem, sendStToMem" *) // prioritize Lr/Sc/Amo over St
