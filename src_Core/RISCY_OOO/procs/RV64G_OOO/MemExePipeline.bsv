@@ -134,6 +134,7 @@ typedef struct {
     Bool allowCapLoad;
     Maybe#(CSR_XCapCause) capException;
     Maybe#(BoundsCheck) check;
+    Bool permitPoison; 
 `ifdef KONATA
     Bit#(64) u_id;
 `endif
@@ -644,6 +645,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
                 capStore: isValidCap(x.rVal2) && x.origBE == DataMemAccess(unpack(~0)),
                 allowCapLoad: getHardPerms(x.rVal1).permitLoadCap && x.origBE == DataMemAccess(unpack(~0)),
                 capException: capChecksMem(x.rVal1, x.rVal2, x.cap_checks, x.mem_func, x.origBE),
+                permitPoison: getHardPerms(x.rVal1).permitPoison,
                 check: prepareBoundsCheck(x.rVal1, x.rVal2, almightyCap/*ToDo: pcc*/,
                                           ddc, getAddr(x.vaddr), accessByteCount, x.cap_checks)
 `ifdef KONATA
@@ -764,7 +766,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `endif
         // update LSQ
         LSQUpdateAddrResult updRes <- lsq.updateAddr(
-            x.ldstq_tag, cause, x.allowCapLoad && allowCapPTE, paddr, isMMIO, x.shiftedBE
+            x.ldstq_tag, cause, x.allowCapLoad && allowCapPTE, paddr, isMMIO, x.shiftedBE, x.permitPoison
         );
 
         // issue non-MMIO Ld which has no exception and is not waiting for
@@ -898,8 +900,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             CapPipe dataUnpacked = fromMem(unpack(pack(res.data)));
             dataUnpacked = setValidCap(dataUnpacked, res.allowCap && isValidCap(dataUnpacked));
             $display("%t poison check: ", $time, rule_name, " ", fshow(data));
-            if (data.data[1][46] ==1'b1 && data.tag==True) begin 
-                inIfc.writeRegFile(dst.indx, dataUnpacked);
+            if (data.data[1][46] ==1'b1 && data.tag==True && !res.permitPoison) begin 
                 inIfc.rob_setExecuted_deqLSQ(res.instTag, Valid(Exception(excLoadAccessFault)), Invalid
 `ifdef RVFI
             , ExtraTraceBundle{
