@@ -349,7 +349,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Fifo#(1, WaitStResp) waitStRespQ <- mkCFFifo;
 `endif
     // fifo for req mem
-    Fifo#(1, Tuple4#(LdQTag, Addr, Bool, Bit#(16))) reqLdQ <- mkBypassFifo;
+    Fifo#(1, Tuple5#(LdQTag, Addr, Bool, Bit#(16), Bit#(2))) reqLdQ <- mkBypassFifo;
     Fifo#(1, ProcRq#(DProcReqId)) reqLrScAmoQ <- mkBypassFifo;
 `ifdef TSO_MM
     Fifo#(1, Tuple3#(Addr, Bit#(2), Bit#(16))) reqStQ <- mkBypassFifo;
@@ -613,6 +613,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         end 
         else if(x.origBE == CapWord_POISON) begin
             shiftBE = CapWord_POISON;
+        end 
+        else if (x.origBE == PoisonMemAccess) begin 
+            shiftBE = PoisonMemAccess;
         end
 
         CapPipe ddc = cast(inIfc.scaprf_rd(scrAddrDDC));
@@ -621,7 +624,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         Bit#(TAdd#(CacheUtils::LogCLineNumMemDataBytes,1)) accessByteCount = zeroExtend(pack(countOnes(pack(x.origBE.DataMemAccess))));
         if (x.origBE == TagMemAccess || x.origBE == CacheLine_NWZ) begin
             accessByteCount = fromInteger(valueOf(CacheUtils::CLineNumMemDataBytes));
-        end else if (x.origBE == CapWord_POISON) begin 
+        end else if (x.origBE == CapWord_POISON || x.origBE == PoisonMemAccess ) begin 
             accessByteCount = zeroExtend(pack(countOnes(16'hFFFF)));
         end
 
@@ -842,7 +845,10 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `endif
         end
         else if(issRes == ToCache) begin
-            reqLdQ.enq(tuple4(zeroExtend(info.tag), info.paddr, info.shiftedBE == TagMemAccess, info.pcHash));
+            Bit#(2) alloc_policy = 2'b00;
+            if(info.shiftedBE == PoisonMemAccess) alloc_policy = 2'b11; 
+            else alloc_policy = 2'b00; 
+            reqLdQ.enq(tuple5(zeroExtend(info.tag), info.paddr, info.shiftedBE == TagMemAccess, info.pcHash, alloc_policy));
             // perf: load mem latency
             ldMemLatTimer.start(info.tag);
         end
@@ -1606,7 +1612,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
     // send req to D$
     rule sendLdToMem;
-        let {lsqTag, addr, loadTags, pcHash} <- toGet(reqLdQ).get;
+        let {lsqTag, addr, loadTags, pcHash, alloc_policy} <- toGet(reqLdQ).get;
         dMem.procReq.req(ProcRq {
             id: zeroExtend(lsqTag),
             addr: addr,
@@ -1617,7 +1623,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             amoInst: ?,
             loadTags: loadTags,
             pcHash: pcHash,
-            alloc_policy: 2'b00
+            alloc_policy: alloc_policy
         });
     endrule
     (* descending_urgency = "sendLdToMem, sendStToMem" *) // prioritize Ld over St

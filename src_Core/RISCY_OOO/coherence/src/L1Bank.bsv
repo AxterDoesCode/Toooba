@@ -588,6 +588,8 @@ endfunction
                 if (!cRqIsPrefetch[n]) begin
                     if (req.loadTags) begin
                         procResp.respLd(req.id, getTagsAt(curLine));
+                    end else if (req.alloc_policy == 2'b11) begin 
+                        procResp.respLd(req.id, getPoisonAt(curLine, dataSel));
                     end else begin
                         procResp.respLd(req.id, getTaggedDataAt(curLine, dataSel));
                     end

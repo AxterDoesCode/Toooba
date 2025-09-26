@@ -147,6 +147,7 @@ typedef Vector#(MemDataBytes, Bool) MemDataByteEn;
 
 typedef union tagged {
   void TagMemAccess;
+  void PoisonMemAccess;
   void CacheLine_NWZ; //cache line non-write allocate zeroing
   void CapWord_POISON;
   MemDataByteEn DataMemAccess;

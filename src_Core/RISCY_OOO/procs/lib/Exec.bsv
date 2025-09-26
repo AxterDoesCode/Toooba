@@ -594,7 +594,7 @@ function Bool memAddrMisaligned(Addr addr, ByteOrTagEn byteOrTagEn);
     if (byteOrTagEn == TagMemAccess || byteOrTagEn == CacheLine_NWZ) begin
         return(!isCLineAlignAddr(addr));
     end
-    else if(byteEn[15]||byteOrTagEn == CapWord_POISON) begin
+    else if(byteEn[15]||byteOrTagEn == CapWord_POISON || byteOrTagEn == PoisonMemAccess) begin
         return addr[3:0] != 0;
     end
     else if(byteEn[7]) begin
@@ -617,7 +617,7 @@ function MemTaggedData gatherLoad( Addr addr, ByteOrTagEn byteOrTagEn
     Bit#(IndxShamt) offset = truncate(addr);
 
     MemDataByteEn byteEn = byteOrTagEn.DataMemAccess;
-    if((byteOrTagEn == TagMemAccess) || pack(byteEn) == ~0) return data;
+    if((byteOrTagEn == TagMemAccess) || pack(byteEn) == ~0 || byteOrTagEn == PoisonMemAccess) return data;
     else if(byteEn[7]) begin
         Vector#(2, Bit#(64)) dataVec = unpack(pack(data.data));
         return dataToMemTaggedData(extend(dataVec[offset[3]]));

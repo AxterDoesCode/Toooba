@@ -93,6 +93,10 @@ function MemTaggedData getTaggedDataAt(CLine line, CLineMemTaggedDataSel sel) =
   MemTaggedData { tag: line.tag[sel], data: line.data[sel] };
 function MemTaggedData getTagsAt(CLine line) =
   MemTaggedData { tag: False, data: cons(zeroExtend(pack(line.tag)), unpack(0)) };
+
+function MemTaggedData getPoisonAt(CLine line, CLineMemTaggedDataSel sel) =
+  MemTaggedData { tag: False, data: cons(zeroExtend(pack( getTaggedDataAt(line,sel).data[1][46] ==1'b1&& line.tag[sel])), unpack(0)) };
+
 function CLine setTaggedDataAt(CLine line, CLineMemTaggedDataSel sel, MemTaggedData data);
   let newLine = line;
   newLine.tag[sel] = data.tag;
