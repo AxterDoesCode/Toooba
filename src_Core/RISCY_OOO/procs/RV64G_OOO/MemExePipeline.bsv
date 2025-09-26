@@ -160,6 +160,7 @@ typedef struct {
     LineMemDataOffset offset;
     MemDataByteEn shiftedBE;
     MemTaggedData shiftedData;
+    Bool          permitPoison;
 } WaitStResp deriving(Bits, Eq, FShow);
 
 //SpecFifo#(2,IncorrectSpec,1,1) incorrectSpec_ff <- mkSpecFifoCF(True);
@@ -395,7 +396,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             end
         endmethod
 `ifdef TSO_MM
-        method ActionValue#(Tuple2#(LineByteEn, Line)) respSt(DProcReqId id);
+        method ActionValue#(Tuple3#(LineByteEn, Line, Bool)) respSt(DProcReqId id);
             lsq.deqSt; // deq here
             let waitSt <- toGet(waitStRespQ).get;
             if(verbose) begin
@@ -421,10 +422,10 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             be[waitSt.offset] = waitSt.shiftedBE;
             data.data[waitSt.offset] = waitSt.shiftedData.data;
             data.tag[waitSt.offset] = waitSt.shiftedData.tag;
-            return tuple2(unpack(pack(be)), data);
+            return tuple3(unpack(pack(be)), data, waitSt.permitPoison);
         endmethod
 `else
-        method ActionValue#(Tuple2#(LineByteEn, Line)) respSt(DProcReqId id);
+        method ActionValue#(Tuple3#(LineByteEn, Line, Bool)) respSt(DProcReqId id);
             SBIndex idx = truncate(id);
             let e <- stb.deq(idx); // deq SB
             lsq.wakeupLdStalledBySB(idx); // wake up loads
@@ -442,7 +443,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             events.evt_STORE_WAIT = saturating_truncate(lat);
             events_reg[2] <= events;
 `endif
-            return tuple2(unpack(pack(e.byteEn)), e.line); // return SB entry
+            return tuple3(unpack(pack(e.byteEn)), e.line, e.permitPoison); // return SB entry
         endmethod
 `endif
         method Action evict(LineAddr lineAddr);
@@ -1261,7 +1262,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         waitStRespQ.enq(WaitStResp {
             offset: getLineMemDataOffset(addr),
             shiftedBE: lsqDeqSt.shiftedBE.DataMemAccess,
-            shiftedData: data
+            shiftedData: data,
+            permitPoison: lsqDeqSt.permitPoison
         });
         // we leave deq to resp time
         // ROB should have already been set to executed
@@ -1280,7 +1282,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     );
         lsq.deqSt;
         // send to SB
-        stb.enq(sbIdx, lsqDeqSt.paddr, lsqDeqSt.shiftedBE, lsqDeqSt.stData, lsqDeqSt.pcHash);
+        stb.enq(sbIdx, lsqDeqSt.paddr, lsqDeqSt.shiftedBE, lsqDeqSt.stData, lsqDeqSt.pcHash, lsqDeqSt.permitPoison);
         // ROB should have already been set to executed
         if(verbose) $display("[doDeqStQ_St] ", fshow(lsqDeqSt));
         // normal store should not have .rl, so no need to check SB empty

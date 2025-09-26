@@ -619,10 +619,10 @@ endfunction
             end
             St: begin
                 // resp processor, get write data & BE
-                let {be, wrLine} <- procResp.respSt(req.id);
+                let {be, wrLine, permitPoison} <- procResp.respSt(req.id);
                     // calculate new data to write
                 MemTaggedData curData = getTaggedDataAt(curLine, dataSel);
-                if(curData.tag == True && curData.data[1][46] == 1'b1) begin 
+                if(curData.tag == True && curData.data[1][46] == 1'b1 && !permitPoison) begin 
                     newLine = curLine;
                     $display("%t L1 %m pipelineResp: found poison on store access, cancel store",
                         $time,

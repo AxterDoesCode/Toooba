@@ -340,11 +340,12 @@ typedef struct {
     Maybe#(PhyDst)    dst;
     Addr              paddr;
     Bool              isMMIO;
-    ByteOrTagEn     shiftedBE;
+    ByteOrTagEn       shiftedBE;
     MemTaggedData     stData;
     Bool              allowCapAmoLd;
     Maybe#(Trap)      fault;
     Bit#(16)          pcHash;
+    Bool              permitPoison;
 } StQDeqEntry deriving (Bits, Eq, FShow);
 
 interface SplitLSQ;
@@ -860,6 +861,7 @@ module mkSplitLSQ(SplitLSQ);
     Vector#(StQSize, Ehr#(1, MemTaggedData))        st_stData    <- replicateM(mkEhr(?));
     Vector#(StQSize, Ehr#(2, Maybe#(Trap)))         st_fault     <- replicateM(mkEhr(?));
     Vector#(StQSize, Ehr#(2, Bool))                 st_allowCapAmoLd <- replicateM(mkEhr(?));
+    Vector#(StQSize, Ehr#(2, Bool))                 st_permitPoison <- replicateM(mkEhr(?));
     Vector#(StQSize, Ehr#(2, Bool))                 st_computed  <- replicateM(mkEhr(?));
     Vector#(StQSize, Ehr#(2, Bool))                 st_verified  <- replicateM(mkEhr(?));
     Vector#(StQSize, Ehr#(2, SpecBits))             st_specBits  <- replicateM(mkEhr(?));
@@ -902,6 +904,10 @@ module mkSplitLSQ(SplitLSQ);
     let st_allowCapAmoLd_updAddr = getVEhrPort(st_allowCapAmoLd, 0); // write
     let st_allowCapAmoLd_deqSt   = getVEhrPort(st_allowCapAmoLd, 1);
     let st_allowCapAmoLd_enq     = getVEhrPort(st_allowCapAmoLd, 1); // write
+
+    let st_permitPoison_updAddr  = getVEhrPort(st_permitPoison, 0); // write
+    let st_permitPoison_deqSt   = getVEhrPort(st_permitPoison, 1);
+    let st_permitPoison_enq     = getVEhrPort(st_permitPoison, 1); // write
 
     let st_computed_verify  = getVEhrPort(st_computed, 0);
     let st_computed_updAddr = getVEhrPort(st_computed, 0); // write
@@ -1494,6 +1500,7 @@ module mkSplitLSQ(SplitLSQ);
         st_fault_enq[st_enqP] <= Invalid;
         st_pcHash[st_enqP] <= pcHash;
         st_allowCapAmoLd_enq[st_enqP] <= False;
+        st_permitPoison_enq[st_enqP] <= False;
         st_computed_enq[st_enqP] <= False;
         st_verified_enq[st_enqP] <= False;
         st_specBits_enq[st_enqP] <= spec_bits;
@@ -1584,6 +1591,7 @@ module mkSplitLSQ(SplitLSQ);
             // true only when no fault.
             st_fault_updAddr[tag] <= fault;
             st_allowCapAmoLd_updAddr[tag] <= allowCap;
+            st_permitPoison_updAddr[tag] <= permitPoison;
             st_computed_updAddr[tag] <= !isValid(fault);
             st_paddr_updAddr[tag] <= pa;
             st_isMMIO_updAddr[tag] <= mmio;
@@ -2099,6 +2107,7 @@ module mkSplitLSQ(SplitLSQ);
             shiftedBE: st_shiftedBE_deqSt[deqP],
             stData: st_stData_deqSt[deqP],
             allowCapAmoLd: st_allowCapAmoLd_deqSt[deqP],
+            permitPoison : st_permitPoison_deqSt[deqP],
             fault: st_fault_deqSt[deqP],
             pcHash: st_pcHash[deqP]
         };

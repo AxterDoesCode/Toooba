@@ -216,7 +216,7 @@ endinterface
 interface L1ProcResp#(type idT);
     method Action respLd(idT id, MemTaggedData resp);
     method Action respLrScAmo(idT id, MemTaggedData resp);
-    method ActionValue#(Tuple2#(LineByteEn, Line)) respSt(idT id);
+    method ActionValue#(Tuple3#(LineByteEn, Line, Bool)) respSt(idT id);
     method Action evict(LineAddr a); // called when cache line is evicted
 endinterface
 // General replacement interface
