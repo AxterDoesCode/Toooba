@@ -281,7 +281,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
         if(x.dInst.iType == Csr) begin
             let csr = pack(fromMaybe(csrAddrNone, x.dInst.csr));
             if((csr >= csrAddrCYCLE.addr && csr <= csrAddrHPMCOUNTER31.addr) || (csr >= csrAddrMCYCLE.addr && csr <= csrAddrMHPMCOUNTER31.addr)) begin
-                let addr = csr & 12'b11111;
+                let addr = csr[4:0] & 5'b11111;
                 let s_allowed = mcounteren[addr] == 1'b1;
                 let u_allowed = (mcounteren[addr] & scounteren[addr]) == 1'b1;
                 let prv = csr_state.prv;
