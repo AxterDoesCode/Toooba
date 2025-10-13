@@ -562,6 +562,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // update LSQ data now
         if(x.ldstq_tag matches tagged St .stTag) begin
             MemTaggedData d = x.mem_func == Amo ? toMemData : shiftData; // XXX don't shift for AMO
+            // do cap level check
+            if(getEffectiveCapLevel(vaddr) < getEffectiveStoreLevel(data)) d.tag = False;
             lsq.updateData(stTag, d);
 `ifdef PERFORMANCE_MONITORING
             EventsCore events = unpack(0);

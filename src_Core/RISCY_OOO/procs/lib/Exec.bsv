@@ -307,6 +307,10 @@ function CapPipe capModify(CapPipe a, CapPipe b, CapModifyFunc func);
                 ((getAddr(b) == 0) ? nullCap : a);
             tagged CZeroNez               :
                 ((getAddr(b) != 0) ? nullCap : a);
+            tagged SetF                   :
+                setF(a);
+            tagged ClearF                   :
+                clearF(a);
 `ifdef CHERI_ISAV9
             tagged ClearTag               :
                 setValidCap(a, False);

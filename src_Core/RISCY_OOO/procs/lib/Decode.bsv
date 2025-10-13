@@ -502,6 +502,13 @@ function DecodeResult decode(Instruction inst, Bool cap_mode);
                     regs.src1 = Valid(tagged Gpr (swap ? rs2 : rs1));
                     regs.src2 = mCapFunc matches tagged Valid .f &&& tpl_1(f) == CapModify(Move) ? Invalid : Valid(tagged Gpr (swap ? rs1 : rs2));
                 end
+                opToggle: begin
+                    Maybe#(Tuple2#(CapFunc,Bool)) mCapFunc = case(funct3)
+                        opClearF : Valid(tuple2(CapModify(ClearF),False));
+                        opSetF   : Valid(tuple2(CapModify(SetF),False));
+                        default  : Invalid;
+                    endcase;
+                end
                 opCapBoundsZero: begin
                     legalInst = False;
                     Maybe#(CapFunc) mCapFunc = case (funct3)

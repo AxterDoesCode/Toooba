@@ -360,6 +360,8 @@ typedef union tagged {
 `endif
     void CZeroEqz;
     void CZeroNez;
+    void SetF;
+    void ClearF;
 } CapModifyFunc deriving(Bits, Eq, FShow);
 
 typedef union tagged {
@@ -897,6 +899,9 @@ Bit#(3) opCBLD      = 3'b101;
 Bit#(3) opSCSS      = 3'b110;
 Bit#(3) opSCMODE    = 3'b111;
 
+Bit#(3) opClearF    = 3'b000;
+Bit#(3) opSetF      = 3'b001;
+
 Bit#(3) opSCBNDS    = 3'b000;
 Bit#(3) opSCBNDSR   = 3'b001;
 Bit#(3) fnCADDI     = 3'b010;
@@ -906,6 +911,7 @@ Bit#(7) opCapArith       = 7'b0000110;
 Bit#(7) opCapBoundsZero  = 7'b0000111;
 Bit#(7) opMSWCap         = 7'b0001001;
 Bit#(7) opMSWInt         = 7'b0001010;
+Bit#(7) opToggle         = 7'b0001011;
 
 //MiscMem
 Bit#(3) fnFENCE  = 3'b000;
