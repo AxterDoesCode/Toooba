@@ -87,7 +87,7 @@ endfunction
 // the maximum dir state that a peer can have so that it will not
 // be downgraded to service upgrade req to state x
 function Msi toCompat(Msi x);
-    return x == S ? S : I;
+    return x <= S ? S : I;
 endfunction
 
 typedef TDiv#(DataSz, 8) DataSzBytes;
