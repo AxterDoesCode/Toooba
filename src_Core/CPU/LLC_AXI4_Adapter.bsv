@@ -189,7 +189,7 @@ module mkLLC_AXi4_Adapter #(MemFifoClient #(idT, childT) llc)
         awprot:   fabric_default_prot,
         awqos:    fabric_default_qos,
         awregion: fabric_default_region,
-        awuser:   0});
+        awuser:   4'b0});
       // Expect a fabric response
       ctr_wr_rsps_pending.incr;
       outstandingWrites.insert(wid_reg, hash(wb.addr[63:6]));

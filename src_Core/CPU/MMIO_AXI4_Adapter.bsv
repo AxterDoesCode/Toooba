@@ -220,7 +220,7 @@ module mkMMIO_AXI4_Adapter (MMIO_AXI4_Adapter_IFC);
          // on first flit...
          // ================
          if (first) begin
-            AXI4_AWFlit #(Wd_CoreW_Bus_MId, Wd_Addr, Wd_AW_User)
+            AXI4_AWFlit #(Wd_CoreW_Bus_MId, Wd_Addr, 4)
                 mem_req_wr_addr = AXI4_AWFlit {awid:     fabric_corew_bus_default_mid,
                                                awaddr:   req.addr,
                                                awlen:    (burst) ? 1:0,           // burst len = awlen+1
@@ -231,7 +231,7 @@ module mkMMIO_AXI4_Adapter (MMIO_AXI4_Adapter_IFC);
                                                awprot:   fabric_default_prot,
                                                awqos:    fabric_default_qos,
                                                awregion: fabric_default_region,
-                                               awuser:   0};
+					       awuser:   4'b0};
             master_shim.slave.aw.put (mem_req_wr_addr);
             if (cfg_verbosity > 0) begin
                $display ("%d: %m.rl_handle_write_req: sent aw flit:", cur_cycle);

@@ -165,11 +165,11 @@ module mkSoC_Top #(Reset dm_power_on_reset)
    // AXI4 Narrower Master in front of cached memory master
    NumProxy #(4) proxyInDepth = error ("don't look inside a proxy");
    NumProxy #(4) proxyOutDepth = error ("don't look inside a proxy");
-   Tuple2 #( AXI4_Slave #(TAdd#(Wd_MId,1), Wd_Addr, Wd_Data, 0, 0, 0, 0, 0)
-           , AXI4_Master #(TAdd#(Wd_MId,1), Wd_Addr, Wd_Data_Periph, 0, 0, 0, 0, 0) )
+   Tuple2 #( AXI4_Slave #(TAdd#(Wd_MId,2), Wd_Addr, Wd_Data, 0, 0, 0, 0, 0)
+           , AXI4_Master #(TAdd#(Wd_MId,2), Wd_Addr, Wd_Data_Periph, 0, 0, 0, 0, 0) )
      wideS_narrowM <- mkAXI4DataWidthShim_WideToNarrow (proxyInDepth, proxyOutDepth);
    match {.wideS, .narrowM} = wideS_narrowM;
-   AXI4_Shim#(TAdd #(Wd_MId, 1), Wd_Addr, Wd_Data, 0, 0, 0, 0, 0)
+   AXI4_Shim#(TAdd #(Wd_MId, 2), Wd_Addr, Wd_Data, 0, 0, 0, 0, 0)
        manager_0_deburster <- mkBurstToNoBurst;
    mkConnection(corew.manager_0, manager_0_deburster.slave);
    mkConnection(manager_0_deburster.master, wideS);
@@ -186,7 +186,7 @@ module mkSoC_Top #(Reset dm_power_on_reset)
    // SoC fabric master connections
    // Note: see 'SoC_Map' for 'master_num' definitions
 
-   Vector#(Num_Masters, AXI4_Master #(TAdd#(Wd_MId,1), Wd_Addr, Wd_Data_Periph,
+   Vector#(Num_Masters, AXI4_Master #(TAdd#(Wd_MId,2), Wd_Addr, Wd_Data_Periph,
                                       0, 0, 0, 0, 0))
       master_vector = newVector;
 

@@ -122,9 +122,9 @@ import DM_CPU_Req_Rsp ::*;
 typedef WindCoreMid #( // AXI lite subordinate control port parameters
                        21, 32, 0, 0, 0, 0, 0
                        // AXI manager 0 port parameters
-                     , TAdd #(Wd_MId, 1), Wd_Addr, Wd_Data, 0, 0, 0, 0, 0
+                     , TAdd #(Wd_MId, 2), Wd_Addr, Wd_Data, 0, 0, 0, 0, 0
                        // AXI manager 1 port parameters
-                     , TAdd #(Wd_MId, 1), Wd_Addr, Wd_Data_Periph, 0, 0, 0, 0, 0
+                     , TAdd #(Wd_MId, 2), Wd_Addr, Wd_Data_Periph, 0, 0, 0, 0, 0
                        // AXI subordinate 0 port parameters
                      , Wd_CoreW_Bus_MId, Wd_Addr, Wd_Data_Periph
                      , Wd_AW_User_Periph, Wd_W_User_Periph, Wd_B_User_Periph
@@ -616,7 +616,7 @@ module mkCoreW_reset #(Reset porReset)
    // ================================================================
    // INTERFACE
 
-   let ifc = interface CoreW_IFC;
+   CoreW_IFC#(t_n_irq) ifc = interface CoreW_IFC;
       // debug related signals
       // ---------------------
       interface debug_subordinate = dbgSub;

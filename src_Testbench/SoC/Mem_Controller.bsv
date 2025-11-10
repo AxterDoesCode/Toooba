@@ -197,7 +197,7 @@ Integer status_mem_controller_terminated = 1;
 // ================================================================
 // Interface
 
-typedef Wd_AW_User Wd_User;
+typedef 0 Wd_User;
 export Wd_User;
 interface Mem_Controller_IFC;
    // Reset

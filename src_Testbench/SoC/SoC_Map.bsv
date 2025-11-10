@@ -256,7 +256,7 @@ Integer uart0_slave_num           = 2;
 
 // ================================================================
 // Width of fabric 'id' buses
-typedef TAdd#(TAdd#(Wd_MId, TLog#(Num_Masters)),1) Wd_SId;
+typedef TAdd#(TAdd#(Wd_MId, TLog#(Num_Masters)),2) Wd_SId;
 
 // ================================================================
 // Interrupt request numbers (== index in to vector of
