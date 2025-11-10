@@ -109,6 +109,7 @@ BSC_COMPILATION_FLAGS += \
 	-D DATA_PREFETCHER_$(DATA_PREFETCHER_TYPE) \
 	-D CAP128 \
 	-D MEM512 \
+	-D POISON \
 	-D RISCV \
 	-D TSO_MM \
 	-D RV64 \
@@ -117,7 +118,7 @@ BSC_COMPILATION_FLAGS += \
 	-D ISA_I  -D ISA_M  -D ISA_A  -D ISA_F  -D ISA_D  -D ISA_FD_DIV  -D ISA_C  \
 	-D NO_SPEC_TRAINING -D NO_SPEC_REDIRECT -D NO_SPEC_STRAIGHT_PATH -D SPEC_RSB_FIXUP -D MELTDOWN_CF \
 	-D CheriBusBytes=64 \
-	-D CheriMasterIDWidth=1 \
+	-D CheriMasterIDWidth=2 \
 	-D CheriTransactionIDWidth=6
 
 # TODO:
@@ -141,7 +142,7 @@ WINDCORE_IFC_DIR ?= $(CORE_DIR)/libs/WindCoreInterface
 CHERICAPLIB_DIR ?= $(CORE_DIR)/libs/cheri-cap-lib
 TAG_CONTROLLER_DIR ?= $(CORE_DIR)/libs/TagController
 RISCV_HPM_EVENTS_DIR ?= $(CORE_DIR)/libs/RISCV_HPM_Events
-TAG_CONTROLLER_DIRS = $(TAG_CONTROLLER_DIR)/TagController:$(TAG_CONTROLLER_DIR)/TagController/CacheCore
+TAG_CONTROLLER_DIRS = $(TAG_CONTROLLER_DIR)/PoisonTagController:$(TAG_CONTROLLER_DIR)/TagController:$(TAG_CONTROLLER_DIR)/TagController/CacheCore
 BLUESTUFFDIR ?= $(CORE_DIR)/libs/BlueStuff
 include $(BLUESTUFFDIR)/bluestuff.inc.mk # sets the BLUESTUFF_DIRS variable
 
