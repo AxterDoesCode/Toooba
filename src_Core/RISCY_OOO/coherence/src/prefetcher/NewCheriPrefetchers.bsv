@@ -999,14 +999,9 @@ module mkL1CapChaserPrefetcher#(
     method Action sendBroadcastData(PrefetcherBroadcastData data);
     endmethod
 
-<<<<<<< Updated upstream
 `ifdef PERFORMANCE_MONITORING
     method EventsPrefetcher events() = unpack(0);
 `endif
-=======
-    method events = ?;
-
->>>>>>> Stashed changes
 endmodule
 
 
@@ -1394,13 +1389,9 @@ module mkLLCapChaserPrefetcher#(
         end
     endmethod
 
-<<<<<<< Updated upstream
 `ifdef PERFORMANCE_MONITORING
     method EventsPrefetcher events() = unpack(0);
 `endif
-=======
-    method events = ?;
->>>>>>> Stashed changes
 
 endmodule
 
