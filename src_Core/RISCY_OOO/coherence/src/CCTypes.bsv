@@ -347,6 +347,7 @@ typedef struct {
     Addr addr;
     LineByteEn byteEn;
     Line data;
+    Bit#(2) poison_operation;
 } WbMemRs deriving(Bits, Eq, FShow);
 
 typedef union tagged {

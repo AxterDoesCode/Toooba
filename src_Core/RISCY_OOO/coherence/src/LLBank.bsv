@@ -744,7 +744,8 @@ endfunction
             toMemT msg = Wb (WbMemRs {
                 addr: cRq.addr,
                 byteEn: cRq.byteEn,
-                data: validValue(data)
+                data: validValue(data),
+		poison_operation: 2'b00
             });
             toMQ.enq(msg);
             toMInfoQ.deq; // deq info
@@ -784,7 +785,8 @@ endfunction
                 toMemT msg = Wb (WbMemRs {
                     addr: {cSlot.repTag, truncate(cRq.addr)},
                     byteEn: replicate(replicate(True)),
-                    data: validValue(data)
+                    data: validValue(data),
+	  	    poison_operation: 2'b00
                 });
                 toMQ.enq(msg);
                 // don't deq info, do ld next time
