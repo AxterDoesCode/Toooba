@@ -1566,8 +1566,6 @@ module mkCapChaserAllInPrefetcher#(
 
     method Action sendBroadcastData(PrefetcherBroadcastData data);
     endmethod
-    
-    method events = ?;
 
 `ifdef PERFORMANCE_MONITORING
     method EventsPrefetcher events() = unpack(0);
