@@ -260,6 +260,7 @@ module mkLLBank#(
 
     Count#(Bit#(32)) addedCRqs <- mkCount(0);
     Count#(Bit#(32)) removedCRqs <- mkCount(0);
+    Bit#(TAdd#(TLog#(cRqNum),1)) threeQuartursFull = ~({1'b1,0} >> 3);
 
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
     Vector#(cRqNum, Reg#(PrefetchAuxData)) cRqPrefetchAuxData <- replicateM(mkReg(?));
@@ -329,6 +330,7 @@ module mkLLBank#(
     function Action incrMissCnt(cRqT cRq, cRqIndexT idx, Bool isDma, Bool isInstructionAccess);
     action
         let lat <- latTimer.done(idx);
+        if (prefetchVerbose) $display("LL miss latency %d, op LD", lat);
 `ifdef PERF_COUNT
         if(doStats) begin
             if(isDma) begin
@@ -487,7 +489,7 @@ module mkLLBank#(
     rule cRqTransfer_new_child(!cRqRetryIndexQ.notEmpty && newCRqSrc == Valid (Child));
         rqFromCQ.deq;
         cRqFromCT r = rqFromCQ.first;
-        if (!r.isPrefetchRq || (crqMshrEnqs - crqMshrDeqs < 12)) begin
+        if (!r.isPrefetchRq || (crqMshrEnqs - crqMshrDeqs < threeQuartursFull)) begin
             // setup new MSHR entry
             cRqT cRq = LLRq {
                 addr: r.addr,
@@ -543,7 +545,7 @@ module mkLLBank#(
         end
     endrule
 
-    rule createDataPrefetchRqFromQueue if (crqMshrEnqs - crqMshrDeqs < 12);
+    rule createDataPrefetchRqFromQueue if (crqMshrEnqs - crqMshrDeqs < threeQuartursFull);
         overflowPrefetchQueue.deq;
         cRqFromCT r = overflowPrefetchQueue.first;
         //Request from L1D of cacheIdx-th core
@@ -594,7 +596,7 @@ module mkLLBank#(
 
     // create new request from data prefetcher and send to pipeline
     // Rule only fires when no work from child and DMA
-    rule createDataPrefetchRq(newCRqSrc == Invalid && crqMshrEnqs - crqMshrDeqs < 12);
+    rule createDataPrefetchRq(newCRqSrc == Invalid && crqMshrEnqs - crqMshrDeqs < threeQuartursFull);
         let x <- dataPrefetchers.getNextPrefetchAddr;
         match {.prefetch, .cacheIdx} = x;
         doAssert(!prefetch.nextLevel, "cannot issue a next-level prefetch in the LLCache");
@@ -646,7 +648,7 @@ module mkLLBank#(
 
     // create new request from instruction prefetcher and send to pipeline
     // Rule only fires when no work from child and DMA
-    rule createInstrPrefetchRq(newCRqSrc == Invalid && crqMshrEnqs - crqMshrDeqs < 12);
+    rule createInstrPrefetchRq(newCRqSrc == Invalid && crqMshrEnqs - crqMshrDeqs < threeQuartursFull);
         let x <- instrPrefetchers.getNextPrefetchAddr;
         match {.prefetch, .cacheIdx} = x;
         //Request from L1D of cacheIdx-th core

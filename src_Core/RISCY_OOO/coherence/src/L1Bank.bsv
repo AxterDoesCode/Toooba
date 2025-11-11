@@ -279,6 +279,7 @@ endfunction
 function Action incrMissCnt(MemOp op, cRqIdxT idx, Addr boundsOffset, Addr boundsLength);
 action
     let lat <- latTimer.done(idx);
+    if (prefetchVerbose) $display("L1 miss latency %d, op ", lat, fshow(op));
 `ifdef PERF_COUNT
     if(doStats) begin
         case(op)
@@ -730,6 +731,7 @@ endfunction
         LineMemDataOffset dataSel = getLineMemDataOffset(req.addr);
         if (ram.info.other.wasPrefetch && !cRqIsPrefetch[n] && req.op == Ld) begin
             //Hit on a prefetched cache line!
+            if (prefetchVerbose) $display("%t Hit on a prefetched cache line! ", $time);
         `ifdef PERF_COUNT
             usedPrefetchCnt.incr(1);
         `endif
