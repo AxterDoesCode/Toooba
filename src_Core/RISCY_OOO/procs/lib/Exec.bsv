@@ -308,9 +308,9 @@ function CapPipe capModify(CapPipe a, CapPipe b, CapModifyFunc func);
             tagged CZeroNez               :
                 ((getAddr(b) != 0) ? nullCap : a);
             tagged SetF                   :
-                setF(a);
+                setValidCap(setF(a), getHardPerms(b).permitForeignAuthorisation);
             tagged ClearF                   :
-                clearF(a);
+                setValidCap(clearF(a), getHardPerms(b).permitForeignAuthorisation);
 `ifdef CHERI_ISAV9
             tagged ClearTag               :
                 setValidCap(a, False);
