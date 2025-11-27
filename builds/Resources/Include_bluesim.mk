@@ -12,12 +12,12 @@ TMP_DIRS  = -bdir build_dir  -simdir build_dir  -info-dir build_dir
 build_dir:
 	mkdir -p $@
 
-ifeq (,$(filter clean full_clean,$(MAKECMDGOALS)))
-include .depends.mk
+# ifeq (,$(filter clean full_clean,$(MAKECMDGOALS)))
+# include .depends.mk
 
-.depends.mk: TagTableStructure.bsv StatCounters.bsv GenerateHPMVector.bsv | build_dir
-	if ! bluetcl -exec makedepend -elab -sim  $(TMP_DIRS)  $(RTL_GEN_DIRS)  $(BSC_COMPILATION_FLAGS)  $(BSC_PATH) -o $@ $(TOPFILE); then rm -f $@ && false; fi
-endif
+# .depends.mk: TagTableStructure.bsv StatCounters.bsv GenerateHPMVector.bsv | build_dir
+# 	if ! bluetcl -exec makedepend -elab -sim  $(TMP_DIRS)  $(RTL_GEN_DIRS)  $(BSC_COMPILATION_FLAGS)  $(BSC_PATH) -o $@ $(TOPFILE); then rm -f $@ && false; fi
+# endif
 
 %.bo:
 	$(info building $@)
