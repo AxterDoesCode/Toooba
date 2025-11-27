@@ -17,7 +17,6 @@ help:
 	@echo '                           For Bluesim: generates Bluesim intermediate files'
 	@echo '                           For Verilog simulation: generates RTL'
 	@echo '    make  simulator    Compiles and links intermediate files/RTL to create simulation executable'
-	@echo '    make  tagsparams   Generates the CHERI tag controller parameters source file'
 	@echo '                           (Bluesim, verilator or iverilog)'
 	@echo '    make  all          = make  compile  simulator'
 	@echo ''
