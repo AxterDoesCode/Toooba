@@ -19,15 +19,15 @@ build_dir:
 # 	if ! bluetcl -exec makedepend -elab -sim  $(TMP_DIRS)  $(RTL_GEN_DIRS)  $(BSC_COMPILATION_FLAGS)  $(BSC_PATH) -o $@ $(TOPFILE); then rm -f $@ && false; fi
 # endif
 
-%.bo:
-	$(info building $@)
-	bsc -elab -sim  $(TMP_DIRS)  $(RTL_GEN_DIRS)  $(BSC_COMPILATION_FLAGS)  $(BSC_PATH) $<
+# %.bo:
+# 	$(info building $@)
+# 	bsc -elab -sim  $(TMP_DIRS)  $(RTL_GEN_DIRS)  $(BSC_COMPILATION_FLAGS)  $(BSC_PATH) $<
 
 .PHONY: compile
 compile: build_dir/Top_HW_Side.bo | build_dir
-#	@echo "INFO: Re-compiling Core (CPU, Caches)"
-#	bsc -u -elab -sim  $(TMP_DIRS)  $(BSC_COMPILATION_FLAGS)  -p $(BSC_PATH)  $(TOPFILE)
-#	@echo "INFO: Re-compiled  Core (CPU, Caches)"
+	@echo "INFO: Re-compiling Core (CPU, Caches)"
+	bsc -u -elab -sim  $(TMP_DIRS)  $(BSC_COMPILATION_FLAGS)  -p $(BSC_PATH)  $(TOPFILE)
+	@echo "INFO: Re-compiled  Core (CPU, Caches)"
 
 # ================================================================
 # Compile and link Bluesim intermediate files into a Bluesim executable
@@ -51,7 +51,6 @@ simulator: build_dir/Top_HW_Side.bo
 		$(TMP_DIRS) \
 		-e $(TOPMODULE) -o ./$(SIM_EXE_FILE) \
 		$(BSC_C_FLAGS) \
-		$(REPO)/src_Verifier/BSV-RVFI-DII/SocketPacketUtils/socket_packet_utils.c \
 		$(REPO)/src_Testbench/Top/C_Imported_Functions.c
 	@echo "INFO: linked bsc-compiled objects into Bluesim executable"
 
