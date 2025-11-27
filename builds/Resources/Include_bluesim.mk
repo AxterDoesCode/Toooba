@@ -19,9 +19,9 @@ build_dir:
 # 	if ! bluetcl -exec makedepend -elab -sim  $(TMP_DIRS)  $(RTL_GEN_DIRS)  $(BSC_COMPILATION_FLAGS)  $(BSC_PATH) -o $@ $(TOPFILE); then rm -f $@ && false; fi
 # endif
 
-# %.bo:
-# 	$(info building $@)
-# 	bsc -elab -sim  $(TMP_DIRS)  $(RTL_GEN_DIRS)  $(BSC_COMPILATION_FLAGS)  $(BSC_PATH) $<
+%.bo:
+	$(info building $@)
+	bsc -elab -sim  $(TMP_DIRS)  $(RTL_GEN_DIRS)  $(BSC_COMPILATION_FLAGS)  $(BSC_PATH) $<
 
 .PHONY: compile
 compile: build_dir/Top_HW_Side.bo | build_dir
@@ -45,7 +45,7 @@ BSC_C_FLAGS += \
 # you may have to remove the line: -Xc++ -D_GLIBCXX_USE_CXX11_ABI=0
 
 .PHONY: simulator
-simulator: build_dir/Top_HW_Side.bo
+simulator: build_dir/Top_HW_Side.bo | build_dir
 	@echo "INFO: linking bsc-compiled objects into Bluesim executable"
 	bsc -sim -parallel-sim-link 8 +RTS -K128M -RTS \
 		$(TMP_DIRS) \
