@@ -1,5 +1,8 @@
-[submodule "src_Core/BSV_Additional_Libs/BlueStuff"]
-	path = src_Core/BSV_Additional_Libs/BlueStuff
+[submodule "src_Verifier/BSV-RVFI-DII"]
+	path = src_Verifier/BSV-RVFI-DII
+	url = https://github.com/CTSRD-CHERI/BSV-RVFI-DII.git
+[submodule "libs/BlueStuff"]
+	path = libs/BlueStuff
 	url = https://github.com/CTSRD-CHERI/BlueStuff.git
 [submodule "libs/TagController"]
 	path = libs/TagController

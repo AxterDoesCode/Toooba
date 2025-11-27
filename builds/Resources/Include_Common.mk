@@ -17,6 +17,7 @@ help:
 	@echo '                           For Bluesim: generates Bluesim intermediate files'
 	@echo '                           For Verilog simulation: generates RTL'
 	@echo '    make  simulator    Compiles and links intermediate files/RTL to create simulation executable'
+	@echo '    make  tagsparams   Generates the CHERI tag controller parameters source file'
 	@echo '                           (Bluesim, verilator or iverilog)'
 	@echo '    make  all          = make  compile  simulator'
 	@echo ''
@@ -54,21 +55,12 @@ BSC_COMPILATION_FLAGS += \
 	-D Near_Mem_Caches    \
 	-D FABRIC64    \
 	-D BLUESIM \
-	-D RVFI \
 	-D PERFORMANCE_MONITORING \
 	-keep-fires -aggressive-conditions -no-warn-action-shadowing -check-assert \
 	-suppress-warnings G0020 -steps-max-intervals 10000000   \
 	-steps-warn-interval 1000000 \
 	-promote-warnings T0054 \
 	+RTS -K128M -RTS  -show-range-conflict -show-schedule
-
-# Old compilation flags
-
-# BSC_COMPILATION_FLAGS += \
-# 	-keep-fires -aggressive-conditions -no-warn-action-shadowing -check-assert \
-# 	-suppress-warnings G0020 -steps-max-intervals 10000000   \
-# 	-steps-warn-interval 1000000 \
-# 	+RTS -K128M -RTS  -show-range-conflict
 
 #	-D NO_SPEC_TRAINING -D NO_SPEC_REDIRECT -D NO_SPEC_STRAIGHT_PATH -D SPEC_RSB_FIXUP -D NO_SPEC_RSB_PUSH -D NO_SPEC_STL
 
@@ -116,34 +108,33 @@ benchmarks:
 	$(REPO)/Tests/benchmarks/report_log.sh Logs/*.bin.log
 
 # ================================================================
-# Don't think this is needed for non-CHERI
 # Generate Bluespec CHERI tag controller source file
-# CAPSIZE = 128
-# TAGS_STRUCT = 0 64
-# TAGS_ALIGN = 32
-# .PHONY: tagsparams
-# tagsparams: TagTableStructure.bsv
-# TagTableStructure.bsv: $(REPO)/libs/TagController/tagsparams.py
-# 	@echo "INFO: Re-generating CHERI tag controller parameters"
-# 	$^ -v -c $(CAPSIZE) -s $(TAGS_STRUCT:"%"=%) -a $(TAGS_ALIGN) --data-store-base-addr 0x80000000 -b $@ 0x3fffc000 0xbffff000
-# 	@echo "INFO: Re-generated CHERI tag controller parameters"
-#
-#
-# .PHONY: generate_hpm_vector
-# generate_hpm_vector: GenerateHPMVector.bsv
-# GenerateHPMVector.bsv: $(RISCV_HPM_EVENTS_DIR)/parse_counters.py
-# 	@echo "INFO: Re-generating GenerateHPMVector bluespec file"
-# 	$^ $(RISCV_HPM_EVENTS_DIR)/counters.yaml -m ProcTypes -b $@
-# 	@echo "INFO: Re-generated GenerateHPMVector bluespec file"
-#
-#
-# .PHONY: stat_counters
-# stat_counters: StatCounters.bsv
-# StatCounters.bsv: $(RISCV_HPM_EVENTS_DIR)/parse_counters.py
-# 	@echo "INFO: Re-generating HPM events struct bluepsec file"
-# 	$^ $(RISCV_HPM_EVENTS_DIR)/counters.yaml -m ProcTypes -s $@
-# 	@echo "INFO: Re-generated HPM events struct bluespec file"
-# compile: tagsparams #stat_counters generate_hpm_vector
+CAPSIZE = 128
+TAGS_STRUCT = 0 64
+TAGS_ALIGN = 32
+.PHONY: tagsparams
+tagsparams: TagTableStructure.bsv
+TagTableStructure.bsv: $(REPO)/libs/TagController/tagsparams.py
+	@echo "INFO: Re-generating CHERI tag controller parameters"
+	$^ -v -c $(CAPSIZE) -s $(TAGS_STRUCT:"%"=%) -a $(TAGS_ALIGN) --data-store-base-addr 0x80000000 -b $@ 0x3fffc000 0xbffff000
+	@echo "INFO: Re-generated CHERI tag controller parameters"
+
+
+.PHONY: generate_hpm_vector
+generate_hpm_vector: GenerateHPMVector.bsv
+GenerateHPMVector.bsv: $(RISCV_HPM_EVENTS_DIR)/parse_counters.py
+	@echo "INFO: Re-generating GenerateHPMVector bluespec file"
+	$^ $(RISCV_HPM_EVENTS_DIR)/counters.yaml -m ProcTypes -b $@
+	@echo "INFO: Re-generated GenerateHPMVector bluespec file"
+
+
+.PHONY: stat_counters
+stat_counters: StatCounters.bsv
+StatCounters.bsv: $(RISCV_HPM_EVENTS_DIR)/parse_counters.py
+	@echo "INFO: Re-generating HPM events struct bluepsec file"
+	$^ $(RISCV_HPM_EVENTS_DIR)/counters.yaml -m ProcTypes -s $@
+	@echo "INFO: Re-generated HPM events struct bluespec file"
+compile: tagsparams #stat_counters generate_hpm_vector
 
 # ================================================================
 
