@@ -4,3 +4,4 @@
 [submodule "Tests/benchmarks"]
 	path = Tests/benchmarks
 	url = https://github.com/CTSRD-CHERI/toooba-sim-benchmarks.git
+    branch = main
