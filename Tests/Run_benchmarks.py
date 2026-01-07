@@ -51,7 +51,7 @@ exclude_list = []
 
 n_workers_max = 8
 
-timeout = 6000
+timeout = 12000
 
 def print_hello ():
     print ("hello")

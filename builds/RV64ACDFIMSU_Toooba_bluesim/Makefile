@@ -32,6 +32,8 @@ BSC_COMPILATION_FLAGS += \
 	-D Near_Mem_Caches    \
 	-D FABRIC64    \
 
+# Enable prefetcher through flag here
+
 
 # Default ISA test
 

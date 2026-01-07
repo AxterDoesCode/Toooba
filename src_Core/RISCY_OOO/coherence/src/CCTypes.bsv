@@ -25,6 +25,7 @@ import Types::*; // import from RISCY repo
 import MemoryTypes::*; // import from RISCY repo
 import Vector::*;
 import FShow::*;
+import TlbTypes::*;
 import CacheUtils::*;
 import Assert::*;
 import Connectable::*;
@@ -208,6 +209,7 @@ typedef struct {
 typedef struct {
     idT id;
     Addr addr;
+    Vpn  vpn;
     Msi toState;
     // below are detailed mem op
     MemOp op; // Ld, St, Lr, Sc, Amo

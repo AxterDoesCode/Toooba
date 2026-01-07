@@ -21,6 +21,12 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+/*
+AlexNotes:
+So this pipeline takes the Load/Store request and puts it through the TLB (vaddr -> PhyAddr) then it sends it to dMem (cache) which is wrapped by the L1CoCache module
+I need to just push through the virtual page number which I think is the upper 27 bits of the virtual address through the memory request so that the prefetcher can pick this up
+*/
+
 `include "ProcConfig.bsv"
 import Vector::*;
 import BuildVector::*;
@@ -274,7 +280,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Fifo#(1, WaitStResp) waitStRespQ <- mkCFFifo;
 `endif
     // fifo for req mem
-    Fifo#(1, Tuple3#(LdQTag, Addr, Bit#(16))) reqLdQ <- mkBypassFifo;
+    Fifo#(1, Tuple4#(LdQTag, Addr, Vpn, Bit#(16))) reqLdQ <- mkBypassFifo;
     Fifo#(1, ProcRq#(DProcReqId)) reqLrScAmoQ <- mkBypassFifo;
 `ifdef TSO_MM
     Fifo#(1, Tuple2#(Addr, Bit#(16))) reqStQ <- mkBypassFifo;
@@ -508,11 +514,15 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         });
     endrule
 
+    /* AlexNote: TLB response needs to include the vpn so that we can pass through to cache and prefetcher
+       TODO: the TLB should respond with the vpn now in its response, now need to pass this through to the cache
+        Looks like I need to look into the LSQ implementation and see how the TLB data passes through the LSQ into the cache. Have a rough idea that its in line 576
+    */
     rule doFinishMem;
         dTlb.deqProcResp;
         let dTlbResp = dTlb.procResp;
         let x = dTlbResp.inst;
-        let {paddr, cause} = dTlbResp.resp;
+        let {paddr, vpn, cause} = dTlbResp.resp;
 
         if(verbose) $display("[doFinishMem] ", fshow(dTlbResp));
         if(isValid(cause) && verbose) $display("  [doFinishMem - dTlb response] PAGEFAULT!");
@@ -564,7 +574,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
         // update LSQ
         LSQUpdateAddrResult updRes <- lsq.updateAddr(
-            x.ldstq_tag, cause, paddr, isMMIO, x.shiftedBE
+            x.ldstq_tag, cause, paddr, vpn, isMMIO, x.shiftedBE
         );
 
         // issue non-MMIO Ld which has no exception and is not waiting for
@@ -638,7 +648,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `endif
         end
         else if(issRes == ToCache) begin
-            reqLdQ.enq(tuple3(zeroExtend(info.tag), info.paddr, info.pcHash));
+            reqLdQ.enq(tuple4(zeroExtend(info.tag), info.paddr, info.vpn, info.pcHash));
             // perf: load mem latency
             ldMemLatTimer.start(info.tag);
         end
@@ -1276,12 +1286,17 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doAssert(!isValid(lsqDeqSt.fault), "no fault");
     endrule
 
+    /* AlexNote: Looks like requests to dmem are sent here, need to pipe in the vpn through to the dmem procReq
+       Need to see what this toGet method is and what its doing behind it
+       Okay this toGet thing is simple just dequeues from a FIFO
+    */
     // send req to D$
     rule sendLdToMem;
-        let {lsqTag, addr, pcHash} <- toGet(reqLdQ).get;
+        let {lsqTag, addr, vpn, pcHash} <- toGet(reqLdQ).get;
         dMem.procReq.req(ProcRq {
             id: zeroExtend(lsqTag),
             addr: addr,
+            vpn: vpn,
             toState: multicore ? S : E, // in case of single core, just fetch to E
             op: Ld,
             byteEn: ?,

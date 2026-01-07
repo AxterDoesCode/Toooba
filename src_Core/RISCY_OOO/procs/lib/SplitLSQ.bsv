@@ -23,6 +23,7 @@
 
 `include "ProcConfig.bsv"
 import Types::*;
+import TlbTypes::*;
 import ProcTypes::*;
 import CCTypes::*;
 import Vector::*;
@@ -274,6 +275,7 @@ typedef union tagged {
 typedef struct {
     LdQTag tag;
     Addr paddr;
+    Vpn  vpn;
     ByteEn shiftedBE;
     Bit#(16) pcHash;
 } LSQIssueLdInfo deriving(Bits, Eq, FShow);
@@ -622,6 +624,7 @@ module mkSplitLSQ(SplitLSQ);
     Vector#(LdQSize, Reg#(Maybe#(PhyDst)))          ld_dst             <- replicateM(mkRegU);
     Vector#(LdQSize, Reg#(Bit#(16)))                ld_pcHash          <- replicateM(mkRegU);
     Vector#(LdQSize, Ehr#(2, Addr))                 ld_paddr           <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(2, Vpn))                  ld_vpn             <- replicateM(mkEhr(?)); // Only needed in LQ for CDP
     Vector#(LdQSize, Ehr#(2, Bool))                 ld_isMMIO          <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(2, ByteEn))               ld_shiftedBE       <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(2, Maybe#(Exception)))    ld_fault           <- replicateM(mkEhr(?));
@@ -669,6 +672,9 @@ module mkSplitLSQ(SplitLSQ);
     let ld_paddr_issue   = getVEhrPort(ld_paddr, 1);
     let ld_paddr_enqIss  = getVEhrPort(ld_paddr, 1); // assert
     let ld_paddr_resp    = getVEhrPort(ld_paddr, 1);
+
+    let ld_vpn_findIss   = getVEhrPort(ld_vpn, 0);
+    let ld_vpn_updAddr   = getVEhrPort(ld_vpn, 0); // write
 
     let ld_isMMIO_findIss = getVEhrPort(ld_isMMIO, 0);
     let ld_isMMIO_evict   = getVEhrPort(ld_isMMIO, 0); // assert
@@ -1064,6 +1070,7 @@ module mkSplitLSQ(SplitLSQ);
             let info = LSQIssueLdInfo {
                 tag: tag,
                 paddr: ld_paddr_findIss[tag],
+                vpn: ld_vpn_findIss[tag],
                 shiftedBE: ld_shiftedBE_findIss[tag],
                 pcHash: ld_pcHash[tag]
             };
@@ -1442,7 +1449,7 @@ module mkSplitLSQ(SplitLSQ);
 
     method ActionValue#(LSQUpdateAddrResult) updateAddr(
         LdStQTag lsqTag, Maybe#(Exception) fault,
-        Addr pa, Bool mmio, ByteEn shift_be
+        Addr pa, Vpn vpn, Bool mmio, ByteEn shift_be
     ) if (!wrongSpec_conflict);
         // index vec for vector functions
         Vector#(LdQSize, LdQTag) idxVec = genWith(fromInteger);
@@ -1482,6 +1489,7 @@ module mkSplitLSQ(SplitLSQ);
             ld_fault_updAddr[tag] <= fault;
             ld_computed_updAddr[tag] <= !isValid(fault);
             ld_paddr_updAddr[tag] <= pa;
+            ld_vpn_updAddr[tag] <= vpn;
             ld_isMMIO_updAddr[tag] <= mmio;
             ld_shiftedBE_updAddr[tag] <= shift_be;
 
@@ -1536,7 +1544,7 @@ module mkSplitLSQ(SplitLSQ);
 
         if(verbose) begin
             $display("[LSQ - updateAddr] ", fshow(lsqTag), "; ", fshow(fault),
-                     "; ", fshow(pa), "; ", fshow(mmio), "; ", fshow(shift_be),
+                     "; ", fshow(pa), "; ", fshow(vpn), "; ", fshow(mmio), "; ", fshow(shift_be),
                      "; ", fshow(doKill), "; ", fshow(youngerLds),
                      "; ", fshow(curSt));
         end

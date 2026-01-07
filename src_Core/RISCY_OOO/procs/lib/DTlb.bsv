@@ -453,7 +453,7 @@ module mkDTlb#(
         // (Because we are always non speculative in M mode)
         if (!vm_info.sanctum_authShared && outOfProtectionDomain(vm_info, r.addr))begin
             pendWait[idx] <= None;
-            pendResp[idx] <= tuple2(?, Valid (LoadAccessFault));
+            pendResp[idx] <= tuple3(?, ?, Valid (LoadAccessFault));
         end
 `else
         // No security check
@@ -468,7 +468,7 @@ module mkDTlb#(
                 // page fault
                 Exception fault = r.write ? StorePageFault : LoadPageFault;
                 pendWait[idx] <= None;
-                pendResp[idx] <= tuple2(?, Valid (fault));
+                pendResp[idx] <= tuple3(?, vpn,Valid (fault));
                 if(verbose) $display("[DTLB] req invalid virtual address: idx %d; ", idx, fshow(r));
             end else if (trans_result.hit) begin
                 // TLB hit
@@ -484,7 +484,7 @@ module mkDTlb#(
                     // translate addr
                     Addr trans_addr = translate(r.addr, entry.ppn, entry.level);
                     pendWait[idx] <= None;
-                    pendResp[idx] <= tuple2(trans_addr, Invalid);
+                    pendResp[idx] <= tuple3(trans_addr, vpn, Invalid);
                     if(verbose) begin
                         $display("[DTLB] req (hit): idx %d; ", idx, fshow(r),
                                  "; ", fshow(trans_result));
@@ -500,7 +500,7 @@ module mkDTlb#(
                     // page fault
                     Exception fault = r.write ? StorePageFault : LoadPageFault;
                     pendWait[idx] <= None;
-                    pendResp[idx] <= tuple2(?, Valid (fault));
+                    pendResp[idx] <= tuple3(?, vpn, Valid (fault));
                     if(verbose) $display("[DTLB] req no permission: idx %d; ", idx, fshow(r));
                 end
             end
@@ -540,9 +540,10 @@ module mkDTlb#(
             end
         end
         else begin
+            let vpn = getVpn(r.addr);
             // bare mode
             pendWait[idx] <= None;
-            pendResp[idx] <= tuple2(r.addr, Invalid);
+            pendResp[idx] <= tuple3(r.addr, vpn, Invalid);
             if(verbose) $display("DTLB %m req (bare): ", fshow(r));
         end
 

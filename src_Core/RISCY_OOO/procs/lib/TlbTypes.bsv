@@ -27,12 +27,6 @@ import Vector::*;
 import Types::*;
 import ProcTypes::*;
 
-// processor req/resp with I/D TLB
-typedef struct{
-    Addr  addr;
-    Bool  write;
-} TlbReq deriving(Eq, Bits, FShow);
-typedef Tuple2#(Addr, Maybe#(Exception)) TlbResp;
 
 // non-blocking DTLB
 typedef `DTLB_REQ_NUM DTlbReqNum;
@@ -81,6 +75,13 @@ typedef struct {
     PageWalkLevel level;
     Asid          asid;
 } TlbEntry deriving (Bits, Eq, FShow);
+
+// processor req/resp with I/D TLB
+typedef struct{
+    Addr  addr;
+    Bool  write;
+} TlbReq deriving(Eq, Bits, FShow);
+typedef Tuple3#(Addr, Vpn, Maybe#(Exception)) TlbResp;
 
 // SV39 translate
 function Vpn getVpn(Addr addr) = addr[38:12];

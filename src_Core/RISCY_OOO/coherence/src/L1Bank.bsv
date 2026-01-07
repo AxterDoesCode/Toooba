@@ -145,7 +145,7 @@ module mkL1Bank#(
     Add#(TAdd#(tagSz, indexSz), TAdd#(lgBankNum, LgLineSzBytes), AddrSz)
 );
 
-   Bool verbose = False;
+   Bool verbose = True;
 
     L1CRqMshr#(cRqNum, wayT, tagT, procRqT) cRqMshr <- mkL1CRqMshrLocal;
 
@@ -532,6 +532,11 @@ endfunction
     // (2) overtake cRq (S->M), but such downgrade can be done instaneously without the need of chaining
     // Thus, dependency chain in L1 only contains cRq
 
+    /* AlexNote: The cache line response from parent is found here
+       I think I can ignore remaining code and see if i can process this ram variable separately
+
+       Update: Not really, this is a pipeline of requests from the core and requests/responses from the parent (L2)
+    */
     // pipeline outputs
     pipeOutT pipeOut = pipeline.first;
     ramDataT ram = pipeOut.ram;
