@@ -294,7 +294,7 @@ module mkDTlb#(
                 // fill TLB, and record resp
                 tlb.addEntry(en);
                 let trans_addr = translate(r.addr, en.ppn, en.level);
-                pendResp[idx] <= tuple2(trans_addr, Invalid);
+                pendResp[idx] <= tuple3(trans_addr, ?, Invalid);
                 if(verbose) begin
                     $display("[DTLB] refill: idx %d; ", idx, fshow(r),
                              "; ", fshow(trans_addr));
@@ -303,7 +303,7 @@ module mkDTlb#(
             else begin
                 // page fault
                 Exception fault = r.write ? StorePageFault : LoadPageFault;
-                pendResp[idx] <= tuple2(?, Valid (fault));
+                pendResp[idx] <= tuple3(?, ?, Valid (fault));
                 if(verbose) begin
                     $display("[DTLB] refill no permission: idx %d; ", idx, fshow(r));
                 end
@@ -312,7 +312,7 @@ module mkDTlb#(
         else begin
             // page fault
             Exception fault = r.write ? StorePageFault : LoadPageFault;
-            pendResp[idx] <= tuple2(?, Valid (fault));
+            pendResp[idx] <= tuple3(?, ?, Valid (fault));
             if(verbose) $display("[DTLB] refill page fault: idx %d; ", idx, fshow(r));
         end
 

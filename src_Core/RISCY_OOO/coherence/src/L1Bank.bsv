@@ -304,22 +304,26 @@ endfunction
     // although D$ may not have cRq at every cycle
     // we still make cRq has lower priorty than pRq/pRs
     // we stop accepting cRq when we need to flush for security
+    // AlexNote: Can I just pass the Vpn into the cRqMshr so that when the line gets filled I know the Vpn to reference?
     rule cRqTransfer_new(!cRqRetryIndexQ.notEmpty && flushDone);
         procRqT r <- toGet(rqFromCQ).get;
         cRqIdxT n <- cRqMshr.cRqTransfer.getEmptyEntryInit(r);
         // send to pipeline
         pipeline.send(CRq (L1PipeRqIn {
             addr: r.addr,
+            vpn: tagged Valid r.vpn, // AlexNote: In the case of above then I can remove this stuff
             mshrIdx: n
         }));
         cRqIsPrefetch[n] <= False;
         // performance counter: cRq type
         incrReqCnt(r.op);
-       if (verbose)
+       if (verbose) begin
         $display("%t L1 %m cRqTransfer_new: ", $time,
             fshow(n), " ; ",
             fshow(r)
         );
+        $display ("L1 cRqTransfer_new: Vpn: ", fshow(r.vpn));
+        end
     endrule
 
     (* descending_urgency = "pRqTransfer, cRqTransfer_retry, cRqTransfer_new" *)
@@ -934,6 +938,7 @@ endfunction
             doAssert(ram.info.cs >= procRq.toState && ram.info.tag == getTag(procRq.addr),
                 ("pRs must be a hit")
             );
+            // AlexNote: Virtual address matcher and prefetch issue needs to be inside this rule, on the parent (L2) response.
             cRqHit(cOwner, procRq);
             // performance counter: miss cRq
             if (!cRqIsPrefetch[cOwner]) begin

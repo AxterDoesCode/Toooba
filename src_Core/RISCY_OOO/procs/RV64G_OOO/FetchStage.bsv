@@ -306,7 +306,7 @@ module mkFetchStage(FetchStage);
     ITlb iTlb <- mkITlb;
     ICoCache iMem <- mkICoCache;
     MMIOInst mmio <- mkMMIOInst;
-    Server#(Addr, TlbResp) tlb_server = iTlb.to_proc;
+    Server#(Addr, ITlbResp) tlb_server = iTlb.to_proc;
     Server#(Addr, Vector#(SupSizeX2, Maybe#(Instruction16))) mem_server = iMem.to_proc;
 
     // performance counters
@@ -345,7 +345,7 @@ module mkFetchStage(FetchStage);
     endrule
 
     Reg#(Vector#(PageBuffSize,Maybe#(Addr))) buffered_translation_virt_pc <- mkReg(replicate(Invalid));
-    Reg#(Vector#(PageBuffSize,TlbResp)) buffered_translation_tlb_resp <- mkRegU;
+    Reg#(Vector#(PageBuffSize,ITlbResp)) buffered_translation_tlb_resp <- mkRegU;
     Reg#(Bit#(TLog#(PageBuffSize))) buffered_translation_count <- mkRegU;
 
     function Maybe#(UInt#(TLog#(PageBuffSize))) matchingVpnOrInvalidAddress(Addr pc);
@@ -370,7 +370,7 @@ module mkFetchStage(FetchStage);
     // buffer. If there is an active iTlb flush, clear the buffer.
     rule getTlbResp;
         // Get TLB response
-        TlbResp tr <- tlb_server.response.get;
+        ITlbResp tr <- tlb_server.response.get;
         translateAddress.deq;
         if (iTlb.flush_done) begin
             // Check if, because of pipelining, we already have this vpn.

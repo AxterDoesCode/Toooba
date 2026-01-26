@@ -354,7 +354,7 @@ interface SplitLSQ;
     method ActionValue#(LSQUpdateAddrResult) updateAddr(
         LdStQTag lsqTag, Maybe#(Exception) fault,
         // below are only meaningful wen fault is Invalid
-        Addr paddr, Bool isMMIO, ByteEn shiftedBE
+        Addr paddr, Vpn vpn, Bool isMMIO, ByteEn shiftedBE
     );
     // Issue a load, and remove dependence on this load issue.
     method ActionValue#(LSQIssueLdResult) issueLd(

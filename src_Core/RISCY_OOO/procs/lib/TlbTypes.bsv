@@ -76,12 +76,13 @@ typedef struct {
     Asid          asid;
 } TlbEntry deriving (Bits, Eq, FShow);
 
-// processor req/resp with I/D TLB
+// processor req/resp with D TLB
 typedef struct{
     Addr  addr;
     Bool  write;
 } TlbReq deriving(Eq, Bits, FShow);
 typedef Tuple3#(Addr, Vpn, Maybe#(Exception)) TlbResp;
+typedef Tuple2#(Addr, Maybe#(Exception)) ITlbResp;
 
 // SV39 translate
 function Vpn getVpn(Addr addr) = addr[38:12];

@@ -84,7 +84,7 @@ interface ITlb;
     method Bool noPendingReq;
 
     // req/resp with core
-    interface Server#(Addr, TlbResp) to_proc;
+    interface Server#(Addr, ITlbResp) to_proc;
 
     // req/resp with L2 TLB
     interface ITlbToParent toParent;
@@ -115,7 +115,7 @@ module mkITlb(ITlb::ITlb);
     Reg#(Bool) waitFlushP <- mkReg(False);
 
     // resp FIFO to proc
-    Fifo#(2, TlbResp) hitQ <- mkCFFifo;
+    Fifo#(2, ITlbResp) hitQ <- mkCFFifo;
 
     // current processor VM information
     Reg#(VMInfo) vm_info <- mkReg(defaultValue);
