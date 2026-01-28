@@ -939,7 +939,7 @@ endfunction
             procRqT procRq = pipeOutCRq;
             doAssert(ram.info.cs >= procRq.toState && ram.info.tag == getTag(procRq.addr), ("pRs must be a hit"));
             // AlexNote: Virtual address matcher and prefetch issue needs to be inside this rule, on the parent (L2) response...
-            // The garbage values were from the mkDoNothingPrefetcher..., currently passing ? into the Vpn value on prefetch but I need to explore prefetch depth stuff later so should probably pass the Vpn in.
+            // The garbage values were from the mkDoNothingPrefetcher..., currently passing ? into the Vpn value on prefetch rule but I need to explore prefetch depth stuff later so should probably pass the Vpn in.
             // Also if I want to combine with a stride prefetcher then need to do it that way
             if(!cRqIsPrefetch[cOwner])
                 $display("AlexLog: L1 pipelineResp_pRs (not prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
