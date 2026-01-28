@@ -305,13 +305,13 @@ endfunction
     // we still make cRq has lower priorty than pRq/pRs
     // we stop accepting cRq when we need to flush for security
     // AlexNote: Can I just pass the Vpn into the cRqMshr so that when the line gets filled I know the Vpn to reference?
+    // Looks like the Mshr already just stores the entire procRqT so it should include the vpn
     rule cRqTransfer_new(!cRqRetryIndexQ.notEmpty && flushDone);
         procRqT r <- toGet(rqFromCQ).get;
         cRqIdxT n <- cRqMshr.cRqTransfer.getEmptyEntryInit(r);
         // send to pipeline
         pipeline.send(CRq (L1PipeRqIn {
             addr: r.addr,
-            vpn: tagged Valid r.vpn, // AlexNote: In the case of above then I can remove this stuff
             mshrIdx: n
         }));
         cRqIsPrefetch[n] <= False;
@@ -322,7 +322,7 @@ endfunction
             fshow(n), " ; ",
             fshow(r)
         );
-        $display ("L1 cRqTransfer_new: Vpn: ", fshow(r.vpn));
+        $display ("AlexLog: L1 cRqTransfer_new: Vpn: ", fshow(r.vpn), " Op: ", fshow(r.op));
         end
     endrule
 
@@ -363,6 +363,7 @@ endfunction
         procRqT r = ProcRq {
             id: ?, //Or maybe do 0 here
             addr: addr,
+            vpn: ?, // AlexNote: Do we even need to know the VPN here? Okay this could be the bane of all my issues
             toState: S,
             op: Ld,
             byteEn: ?,
@@ -502,6 +503,7 @@ endfunction
                 fshow(cRqToP)
             );
     endrule
+    // AlexNote: Send request to parent here (like on a refill or replacement)
     rule sendRqToP;
         rqToPIndexQ.deq;
         cRqIdxT n = rqToPIndexQ.first;
@@ -935,10 +937,14 @@ endfunction
 
         if(ram.info.owner matches tagged Valid .cOwner) begin
             procRqT procRq = pipeOutCRq;
-            doAssert(ram.info.cs >= procRq.toState && ram.info.tag == getTag(procRq.addr),
-                ("pRs must be a hit")
-            );
-            // AlexNote: Virtual address matcher and prefetch issue needs to be inside this rule, on the parent (L2) response.
+            doAssert(ram.info.cs >= procRq.toState && ram.info.tag == getTag(procRq.addr), ("pRs must be a hit"));
+            // AlexNote: Virtual address matcher and prefetch issue needs to be inside this rule, on the parent (L2) response...
+            // The garbage values were from the mkDoNothingPrefetcher..., currently passing ? into the Vpn value on prefetch but I need to explore prefetch depth stuff later so should probably pass the Vpn in.
+            // Also if I want to combine with a stride prefetcher then need to do it that way
+            if(!cRqIsPrefetch[cOwner])
+                $display("AlexLog: L1 pipelineResp_pRs (not prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
+            else 
+                $display("AlexLog: L1 pipelineResp_pRs (prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
             cRqHit(cOwner, procRq);
             // performance counter: miss cRq
             if (!cRqIsPrefetch[cOwner]) begin
@@ -1123,6 +1129,7 @@ endfunction
 
     interface L1ProcReq procReq;
         method Action req(procRqT r);
+            $display("AlexLog: L1 bank procReq.req vpn: ", fshow(r.vpn));
             rqFromCQ.enq(r);
         endmethod
     endinterface

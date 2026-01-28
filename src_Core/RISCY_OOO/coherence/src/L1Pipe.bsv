@@ -25,7 +25,6 @@
 import Vector::*;
 import FShow::*;
 import Types::*;
-import TlbTypes::*;
 import CCTypes::*;
 import CCPipe::*;
 import RWBramCore::*;
@@ -50,7 +49,6 @@ export mkL1Pipe;
 typedef struct {
     Addr addr;
     rqIdxT mshrIdx;
-    Maybe#(Vpn) vpn;
 } L1PipeRqIn#(type rqIdxT) deriving(Bits, Eq, FShow);
 
 typedef struct {

@@ -497,6 +497,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         end
 
         // go to next stage by sending to TLB
+        $display("AlexLog: dTLB procReq vaddr: ", fshow(vaddr), "VPN:", fshow(getVpn(vaddr)));
         dTlb.procReq(DTlbReq {
             inst: MemExeToFinish {
                 mem_func: x.mem_func,
@@ -523,7 +524,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         let dTlbResp = dTlb.procResp;
         let x = dTlbResp.inst;
         let {paddr, vpn, cause} = dTlbResp.resp;
-
+        $display("AlexLog: dTLB procResp Vpn: ", fshow(vpn));
         if(verbose) $display("[doFinishMem] ", fshow(dTlbResp));
         if(isValid(cause) && verbose) $display("  [doFinishMem - dTlb response] PAGEFAULT!");
 
@@ -591,6 +592,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             issueLd.wset(LSQIssueLdInfo {
                 tag: ldTag,
                 paddr: paddr,
+                vpn: vpn,
                 shiftedBE: x.shiftedBE,
                 pcHash: hash(pc)
             });
@@ -628,6 +630,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if (pack(info.shiftedBE) == -1) events.evt_MEM_CAP_LOAD = 1;
 `endif
         // search LSQ
+        // AlexNote: Think I need to make the VPN prop through LSQ fully
         LSQIssueLdResult issRes <- lsq.issueLd(info.tag, info.paddr, info.shiftedBE, sbRes);
         if(verbose) begin
             $display("%t : [doIssueLd] fromIssueQ: ", $time, fshow(fromIssueQ), " ; ",
@@ -648,6 +651,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `endif
         end
         else if(issRes == ToCache) begin
+            $display("AlexLog: ToCache vpn: ", fshow(info.vpn));
             reqLdQ.enq(tuple4(zeroExtend(info.tag), info.paddr, info.vpn, info.pcHash));
             // perf: load mem latency
             ldMemLatTimer.start(info.tag);
@@ -1293,6 +1297,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // send req to D$
     rule sendLdToMem;
         let {lsqTag, addr, vpn, pcHash} <- toGet(reqLdQ).get;
+        $display("AlexLog: MemExPipeline sendLdToMem vpn: ", fshow(vpn));
         dMem.procReq.req(ProcRq {
             id: zeroExtend(lsqTag),
             addr: addr,

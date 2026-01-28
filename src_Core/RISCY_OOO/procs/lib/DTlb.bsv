@@ -294,7 +294,7 @@ module mkDTlb#(
                 // fill TLB, and record resp
                 tlb.addEntry(en);
                 let trans_addr = translate(r.addr, en.ppn, en.level);
-                pendResp[idx] <= tuple3(trans_addr, ?, Invalid);
+                pendResp[idx] <= tuple3(trans_addr, getVpn(r.addr), Invalid);
                 if(verbose) begin
                     $display("[DTLB] refill: idx %d; ", idx, fshow(r),
                              "; ", fshow(trans_addr));
@@ -303,7 +303,7 @@ module mkDTlb#(
             else begin
                 // page fault
                 Exception fault = r.write ? StorePageFault : LoadPageFault;
-                pendResp[idx] <= tuple3(?, ?, Valid (fault));
+                pendResp[idx] <= tuple3(?, getVpn(r.addr), Valid (fault));
                 if(verbose) begin
                     $display("[DTLB] refill no permission: idx %d; ", idx, fshow(r));
                 end
@@ -312,7 +312,7 @@ module mkDTlb#(
         else begin
             // page fault
             Exception fault = r.write ? StorePageFault : LoadPageFault;
-            pendResp[idx] <= tuple3(?, ?, Valid (fault));
+            pendResp[idx] <= tuple3(?, getVpn(r.addr), Valid (fault));
             if(verbose) $display("[DTLB] refill page fault: idx %d; ", idx, fshow(r));
         end
 
@@ -453,7 +453,7 @@ module mkDTlb#(
         // (Because we are always non speculative in M mode)
         if (!vm_info.sanctum_authShared && outOfProtectionDomain(vm_info, r.addr))begin
             pendWait[idx] <= None;
-            pendResp[idx] <= tuple3(?, ?, Valid (LoadAccessFault));
+            pendResp[idx] <= tuple3(?, getVpn(r.addr), Valid (LoadAccessFault));
         end
 `else
         // No security check
@@ -463,12 +463,13 @@ module mkDTlb#(
 `endif
         else if (vm_info.sv39) begin
             let vpn = getVpn(r.addr);
+            $display("AlexLog: DTlb sv39 vpn from vaddr: ", fshow(vpn));
             let trans_result = tlb.translate(vpn, vm_info.asid);
             if (!validVirtualAddress(r.addr)) begin
                 // page fault
                 Exception fault = r.write ? StorePageFault : LoadPageFault;
                 pendWait[idx] <= None;
-                pendResp[idx] <= tuple3(?, vpn,Valid (fault));
+                pendResp[idx] <= tuple3(?, vpn, Valid (fault));
                 if(verbose) $display("[DTLB] req invalid virtual address: idx %d; ", idx, fshow(r));
             end else if (trans_result.hit) begin
                 // TLB hit

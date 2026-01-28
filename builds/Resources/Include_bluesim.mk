@@ -34,7 +34,7 @@ BSC_C_FLAGS += \
 .PHONY: simulator
 simulator:
 	@echo "INFO: linking bsc-compiled objects into Bluesim executable"
-	bsc -sim -parallel-sim-link 8 +RTS -K128M -RTS \
+	bsc -sim -parallel-sim-link 16 +RTS -K128M -RTS \
 		$(TMP_DIRS) \
 		-e $(TOPMODULE) -o ./$(SIM_EXE_FILE) \
 		$(BSC_C_FLAGS) \
