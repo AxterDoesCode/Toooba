@@ -51,6 +51,7 @@ import Performance::*;
 import LatencyTimer::*;
 import RandomReplace::*;
 import Prefetcher::*;
+import CDP::*;
 `ifdef PERFORMANCE_MONITORING
 import PerformanceMonitor::*;
 import SpecialRegs::*;
@@ -146,6 +147,8 @@ module mkL1Bank#(
 );
 
    Bool verbose = True;
+
+    CDP#(procRqT) cdp <- mkCDP;
 
     L1CRqMshr#(cRqNum, wayT, tagT, procRqT) cRqMshr <- mkL1CRqMshrLocal;
 
@@ -943,8 +946,13 @@ endfunction
             // Also if I want to combine with a stride prefetcher then need to do it that way
             if(!cRqIsPrefetch[cOwner])
                 $display("AlexLog: L1 pipelineResp_pRs (not prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
+                // If memory operation is load then forward the line to the CDP module
+                Line curLine = ram.line;
+                cdp.enqLineL1(procRq.vpn, curLine);
             else 
+                // For now disregard chaining prefetches
                 $display("AlexLog: L1 pipelineResp_pRs (prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
+
             cRqHit(cOwner, procRq);
             // performance counter: miss cRq
             if (!cRqIsPrefetch[cOwner]) begin
