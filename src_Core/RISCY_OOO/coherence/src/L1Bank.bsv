@@ -944,11 +944,12 @@ endfunction
             // AlexNote: Virtual address matcher and prefetch issue needs to be inside this rule, on the parent (L2) response...
             // The garbage values were from the mkDoNothingPrefetcher..., currently passing ? into the Vpn value on prefetch rule but I need to explore prefetch depth stuff later so should probably pass the Vpn in.
             // Also if I want to combine with a stride prefetcher then need to do it that way
-            if(!cRqIsPrefetch[cOwner])
+            if(!cRqIsPrefetch[cOwner]) begin
                 $display("AlexLog: L1 pipelineResp_pRs (not prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
-                // If memory operation is load then forward the line to the CDP module
+                // TODO: If memory operation is load then forward the line to the CDP module
                 Line curLine = ram.line;
-                cdp.enqLineL1(procRq.vpn, curLine);
+                cdp.enqLineL1(procRq, curLine);
+            end
             else 
                 // For now disregard chaining prefetches
                 $display("AlexLog: L1 pipelineResp_pRs (prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));

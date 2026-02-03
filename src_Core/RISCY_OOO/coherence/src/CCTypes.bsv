@@ -52,6 +52,12 @@ typedef struct {
 typedef TDiv#(SizeOf#(EventsCache),8) EventsCacheElements;
 `endif
 
+typeclass IsProcRq#(type t);
+    function Vpn getReqVpn(t x);
+    function Addr getReqAddr(t x);
+    function MemOp getReqOp(t x);
+endtypeclass
+
 typedef enum {
     I = 2'd0,
     S = 2'd1,
@@ -218,6 +224,12 @@ typedef struct {
     AmoInst amoInst; // valid when op == Amo
     Bit#(16) pcHash; // hash of instruction pc sending the request
 } ProcRq#(type idT) deriving(Bits, Eq, FShow);
+
+instance IsProcRq#(ProcRq#(t));
+    function Vpn getReqVpn(ProcRq#(t) x) = x.vpn;
+    function Addr getReqAddr(ProcRq#(t) x) = x.addr;
+    function MemOp getReqOp(ProcRq#(t) x) = x.op;
+endinstance
 
 interface L1ProcReq#(type idT);
     method Action req(ProcRq#(idT) r);
