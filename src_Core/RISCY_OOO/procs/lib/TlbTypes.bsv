@@ -86,6 +86,7 @@ typedef Tuple2#(Addr, Maybe#(Exception)) ITlbResp;
 
 // SV39 translate
 function Vpn getVpn(Addr addr) = addr[38:12];
+function Ppn getPpn(Addr addr) = addr[55:12];
 
 function PageOffset getPageOffset(Addr addr) = truncate(addr);
 

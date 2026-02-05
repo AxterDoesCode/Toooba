@@ -524,7 +524,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         let dTlbResp = dTlb.procResp;
         let x = dTlbResp.inst;
         let {paddr, vpn, cause} = dTlbResp.resp;
-        $display("AlexLog: dTLB procResp Vpn: ", fshow(vpn));
+        $display("%t AlexLog: dTLB procResp Vpn: ", $time, fshow(vpn));
         if(verbose) $display("[doFinishMem] ", fshow(dTlbResp));
         if(isValid(cause) && verbose) $display("  [doFinishMem - dTlb response] PAGEFAULT!");
 

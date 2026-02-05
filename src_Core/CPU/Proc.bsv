@@ -122,6 +122,7 @@ module mkProc (Proc_IFC);
       l1[i + valueof(CoreNum)] = core[i].iCacheToParent;
    end
    mkL1LLConnect(llc.to_child, l1);
+   // AlexNote: Maybe here I can instantiate some connector thing to the CDP and keep the CDP module inside of the L1
 
    // ================================================================
    // LLC's DMA connections

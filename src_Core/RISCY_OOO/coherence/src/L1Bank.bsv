@@ -125,8 +125,9 @@ module mkL1Bank#(
     Alias#(cRqIdxT, Bit#(TLog#(cRqNum))),
     Alias#(pRqIdxT, Bit#(TLog#(pRqNum))),
     Alias#(cacheOwnerT, Maybe#(cRqIdxT)), // actually owner cannot be pRq
-    Alias#(cacheInfoT, CacheInfo#(tagT, Msi, void, cacheOwnerT, void)),
-    Alias#(ramDataT, RamData#(tagT, Msi, void, cacheOwnerT, void, Line)),
+    Alias#(cacheOtherT, PrefetchInfo),
+    Alias#(cacheInfoT, CacheInfo#(tagT, Msi, void, cacheOwnerT, cacheOtherT)),
+    Alias#(ramDataT, RamData#(tagT, Msi, void, cacheOwnerT, cacheOtherT, Line)),
     Alias#(procRqT, ProcRq#(procRqIdT)),
     Alias#(cRqToPT, CRqMsg#(wayT, void)),
     Alias#(cRsToPT, CRsMsg#(void)),
@@ -135,7 +136,7 @@ module mkL1Bank#(
     Alias#(pRqRsFromPT, PRqRsMsg#(wayT, void)),
     Alias#(cRqSlotT, L1CRqSlot#(wayT, tagT)), // cRq MSHR slot
     Alias#(l1CmdT, L1Cmd#(indexT, cRqIdxT, pRqIdxT)),
-    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, void, RandRepInfo, Line, l1CmdT)),
+    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, l1CmdT)),
     // requirements
     Bits#(procRqIdT, _procRqIdT),
     FShow#(procRqIdT),
@@ -180,7 +181,8 @@ module mkL1Bank#(
     Reg#(Maybe#(AmoHitInfo#(cRqIdxT, procRqT))) processAmo <- mkReg(Invalid);
 
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
-    let prefetcher <- mkL1DPrefetcher;
+    // let prefetcher <- mkL1DPrefetcher;
+    let prefetcher = cdp.prefetcher;
     let llcPrefetcher <- mkLLDPrefetcherInL1D;
 
     // security flush
@@ -578,6 +580,16 @@ endfunction
         Line curLine = ram.line;
         Line newLine = curLine;
         LineDataOffset dataSel = getLineDataOffset(req.addr);
+        if (ram.info.other.wasPrefetch && !cRqIsPrefetch[n] && req.op == Ld) begin
+            //Hit on a prefetched cache line!
+            if $display("%t AlexLog: Hit on a prefetched cache line! ", $time);
+        //`ifdef PERF_COUNT
+        //    usedPrefetchCnt.incr(1);
+        //`endif
+        //    EventsL1D events = unpack (0);
+        //    events.evt_AMO = 1;
+        //    perf_events[4] <= events;
+        end
         case(req.op) matches
             Ld: begin
                 if (!cRqIsPrefetch[n]) procResp.respLd(req.id, curLine[dataSel]);

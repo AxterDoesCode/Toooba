@@ -211,6 +211,10 @@ typedef struct {
     type lineT
 ) deriving(Bits, Eq, FShow);
 
+typedef struct {
+    Bool wasPrefetch;
+} PrefetchInfo deriving (Bits, Eq, FShow);
+
 // processor req/resp
 typedef struct {
     idT id;
