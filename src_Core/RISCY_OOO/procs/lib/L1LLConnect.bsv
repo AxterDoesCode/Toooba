@@ -85,7 +85,8 @@ module mkL1LLConnect#(
                 toState: rs.toState,
                 child: ?,
                 data: rs.data,
-                id: rs.id
+                id: rs.id,
+                cameFromPrefetch: rs.cameFromPrefetch
             }));
         endrule
     end

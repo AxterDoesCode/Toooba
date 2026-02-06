@@ -82,18 +82,18 @@ interface LLPipe#(
     method PipeOut#(
         Bit#(TLog#(wayNum)),
         tagT, Msi, Vector#(childNum, Msi),
-        Maybe#(CRqOwner#(cRqIdxT)), void, RandRepInfo, // no other
+        Maybe#(CRqOwner#(cRqIdxT)), PrefetchInfo, RandRepInfo, // no other
         Line, LLCmd#(Bit#(TLog#(childNum)), cRqIdxT)
     ) first;
     method PipeOut#(
         Bit#(TLog#(wayNum)),
         tagT, Msi, Vector#(childNum, Msi),
-        Maybe#(CRqOwner#(cRqIdxT)), void, RandRepInfo, // no other
+        Maybe#(CRqOwner#(cRqIdxT)), PrefetchInfo, RandRepInfo, // no other
         Line, LLCmd#(Bit#(TLog#(childNum)), cRqIdxT)
     ) unguard_first;
     method Action deqWrite(
         Maybe#(cRqIdxT) swapRq,
-        RamData#(tagT, Msi, Vector#(childNum, Msi), Maybe#(CRqOwner#(cRqIdxT)), void, Line) wrRam, // always write BRAM
+        RamData#(tagT, Msi, Vector#(childNum, Msi), Maybe#(CRqOwner#(cRqIdxT)), PrefetchInfo, Line) wrRam, // always write BRAM
         Bool updateRep
     );
 endinterface
@@ -126,7 +126,7 @@ module mkLLPipe(
     Alias#(wayT, Bit#(TLog#(wayNum))),
     Alias#(dirT, Vector#(childNum, Msi)),
     Alias#(ownerT, Maybe#(CRqOwner#(cRqIdxT))),
-    Alias#(otherT, void), // no other cache info
+    Alias#(otherT, PrefetchInfo), // no other cache info
     Alias#(repT, RandRepInfo), // use random replace
     Alias#(pipeInT, LLPipeIn#(childT, wayT, cRqIdxT)),
     Alias#(pipeCmdT, LLPipeCmd#(childT, wayT, cRqIdxT)),
@@ -165,7 +165,7 @@ module mkLLPipe(
                 cs: I,
                 dir: replicate(I),
                 owner: Invalid,
-                other: ?
+                other: PrefetchInfo {wasPrefetch: False}
             });
         end
         repRam.wrReq(initIndex, randRepInitInfo); // useless for random replace

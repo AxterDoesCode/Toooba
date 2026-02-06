@@ -36,10 +36,7 @@ module mkCDP(
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
 
     // 8 for now because in one line there is potentially 8 candidate vaddr?
-    // Need to think about this more
-    // SUPAFIFOTIME
     SupFifo#(8, 8, NextCandT) nextCandidateBuffer <- mkSupFifo;
-    //Ehr#(8, Bit#(TLog#(8))) supFifoInsertIndex <- mkEhr(0);
 
     rule deqLineL1;
         L1ToCDPT#(reqT) x = l1ToCDP.first;
@@ -50,8 +47,11 @@ module mkCDP(
         $display("%t AlexLog: CDP deqLineL1", $time);
         for (Integer i = 0; i < 8; i = i + 1) begin
             if (getVpn(x.line[i]) == reqVpn &&& getReqOp(x.req) == Ld) begin
-                nextCandidateBuffer.enqS[enqIdx].enq(NextCandT{paddr: getReqAddr(x.req), vaddr: x.line[i]});
-                // Probably change logging here to just see the candidate vaddr -> candidate paddr?, In that case can change what I'm buffering into the nextCandidate buffer?
+                nextCandidateBuffer.enqS[enqIdx].enq(
+                    NextCandT{
+                        paddr: getReqAddr(x.req), 
+                        vaddr: x.line[i]});
+                // Probably change logging here to just see the candidate vaddr -> candidate paddr?
                 $display("%t AlexLog: CDP candidate vaddr found, offset: %d, LineDataOffset: ", $time, i, fshow(dataSel), fshow(x.line[i]), fshow(reqVpn), fshow(x.req));
                 enqIdx = enqIdx + 1;
             end
@@ -70,10 +70,10 @@ module mkCDP(
     interface PCPrefetcher prefetcher;
         method Action reportAccess(Addr addr,Bit#(16) pcHash, HitOrMiss hitMiss);
             if (hitMiss == HIT) begin
-                $display("%t AlexLog: CDPrefetcher report HIT %h", $time, addr);
+                $display("%t AlexLog: prefetcher report HIT %h", $time, addr);
             end
             else begin
-                $display("%t AlexLog: CDPrefetcher report MISS %h", $time, addr);
+                $display("%t AlexLog: prefetcher report MISS %h", $time, addr);
             end
         endmethod
 

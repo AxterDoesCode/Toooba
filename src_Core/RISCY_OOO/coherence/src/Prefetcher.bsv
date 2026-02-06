@@ -42,6 +42,11 @@ typedef enum {
     HIT = 1'b0, MISS = 1'b1
 } HitOrMiss deriving (Bits, Eq, FShow);
 
+typedef struct {
+    Addr addr;
+    Bool nextLevel;
+} PendingPrefetch deriving (Bits, Eq, FShow);
+
 interface Prefetcher;
     (* always_ready *)
     method Action reportAccess(Addr addr, HitOrMiss hitMiss);
@@ -1191,6 +1196,39 @@ interface PCPrefetcher;
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
     method ActionValue#(Addr) getNextPrefetchAddr();
 endinterface
+
+interface SudoPrefetcher;
+    (* always_ready *)
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr();
+endinterface
+
+
+// Usually would pass in the module but I am passing through the CDP's prefetcher instead
+module mkSudoPrefetcherAdapter#(PCPrefetcher p)(SudoPrefetcher);
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
+        p.reportAccess(addr, pcHash, hitMiss);
+    endmethod
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
+        let addr <- p.getNextPrefetchAddr;
+        return PendingPrefetch {
+            addr: addr,
+            nextLevel: False
+        };
+    endmethod
+endmodule
+
+module mkNextLevelPrefetcherAdapter#(module#(SudoPrefetcher) mkPrefetcher)(SudoPrefetcher);
+    let p <- mkPrefetcher;
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
+        p.reportAccess(addr, pcHash, hitMiss);
+    endmethod
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
+        let x <- p.getNextPrefetchAddr;
+        x.nextLevel = True;
+        return x;
+    endmethod
+endmodule
 
 module mkPCPrefetcherAdapter#(module#(Prefetcher) mkPrefetcher)(PCPrefetcher);
     let p <- mkPrefetcher;

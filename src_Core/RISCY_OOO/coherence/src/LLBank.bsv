@@ -152,8 +152,8 @@ module mkLLBank#(
     Alias#(tagT, Bit#(tagSz)),
     Alias#(cRqIndexT, Bit#(TLog#(cRqNum))),
     Alias#(cacheOwnerT, Maybe#(CRqOwner#(cRqIndexT))),
-    Alias#(cacheInfoT, CacheInfo#(tagT, Msi, dirT, cacheOwnerT, void)),
-    Alias#(ramDataT, RamData#(tagT, Msi, dirT, cacheOwnerT, void, Line)),
+    Alias#(cacheInfoT, CacheInfo#(tagT, Msi, dirT, cacheOwnerT, PrefetchInfo)),
+    Alias#(ramDataT, RamData#(tagT, Msi, dirT, cacheOwnerT, PrefetchInfo, Line)),
     Alias#(cRqFromCT, CRqMsg#(cRqIdT, childT)),
     Alias#(cRsFromCT, CRsMsg#(childT)),
     Alias#(pRqRsToCT, PRqRsMsg#(cRqIdT, childT)),
@@ -166,7 +166,7 @@ module mkLLBank#(
     Alias#(cRqT, LLRq#(cRqIdT, dmaRqIdT, childT)),
     Alias#(cRqSlotT, LLCRqSlot#(wayT, tagT, Vector#(childNum, DirPend))), // cRq MSHR slot
     Alias#(llCmdT, LLCmd#(childT, cRqIndexT)),
-    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, dirT, cacheOwnerT, void, RandRepInfo, Line, llCmdT)),
+    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, dirT, cacheOwnerT, PrefetchInfo, RandRepInfo, Line, llCmdT)),
     // requirements
     Bits#(cRqIdT, _cRqIdSz),
     Bits#(dmaRqIdT, _dmaRqIdSz),
@@ -221,12 +221,16 @@ module mkLLBank#(
     // performance
     LatencyTimer#(cRqNum, 10) latTimer <- mkLatencyTimer; // max 1K cycle latency
 
-    Count#(Bit#(32)) addedCRqs <- mkCount(0);
+    Count#(Bit#(32)) addedCRqs <- mkCount(0); // Do we even need these?
     Count#(Bit#(32)) removedCRqs <- mkCount(0);
+    Bit#(TAdd#(TLog#(cRqNum),1)) threeQuartursFull = ~({1'b1,0} >> 3);
 
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
     PrefetcherVector#(TDiv#(childNum, 2)) dataPrefetchers <- mkPrefetcherVector(mkLLDPrefetcher);
     PrefetcherVector#(TDiv#(childNum, 2)) instrPrefetchers <- mkPrefetcherVector(mkLLIPrefetcher);
+    Reg#(Bit#(TAdd#(TLog#(cRqNum),1))) crqMshrEnqs <- mkConfigReg(0);
+    Reg#(Bit#(TAdd#(TLog#(cRqNum),1))) crqMshrDeqs <- mkConfigReg(0);
+
 
 `ifdef PERF_COUNT
     Reg#(Bool) doStats <- mkConfigReg(True);
@@ -379,36 +383,44 @@ endfunction
     rule cRqTransfer_new_child(!cRqRetryIndexQ.notEmpty && newCRqSrc == Valid (Child));
         rqFromCQ.deq;
         cRqFromCT r = rqFromCQ.first;
-        cRqT cRq = LLRq {
-            addr: r.addr,
-            fromState: r.fromState,
-            toState: r.toState,
-            canUpToE: r.canUpToE,
-            child: r.child,
-            byteEn: ?,
-            id: Child (r.id)
-        };
-        // setup new MSHR entry
-        cRqIndexT n <- cRqMshr.transfer.getEmptyEntryInit(cRq, Invalid);
-        // send to pipeline
-        pipeline.send(CRq (LLPipeCRqIn {
-            addr: cRq.addr,
-            mshrIdx: n
-        }));
-        cRqIsPrefetch[n] <= r.isPrefetchRq;
-        // change round robin
-        flipPriorNewCRqSrc;
-       if (verbose)
-        $display("%t LL %m cRqTransfer_new_child: ", $time,
-            fshow(n), " ; ",
-            fshow(r), " ; ",
-            fshow(cRq)
-        );
+        if (!r.isPrefetchRq || (crqMshrEnqs - crqMshrDeqs < threeQuartursFull)) begin
+            cRqT cRq = LLRq {
+                addr: r.addr,
+                fromState: r.fromState,
+                toState: r.toState,
+                canUpToE: r.canUpToE,
+                child: r.child,
+                byteEn: ?,
+                id: Child (r.id)
+            };
+            // setup new MSHR entry
+            cRqIndexT n <- cRqMshr.transfer.getEmptyEntryInit(cRq, Invalid);
+            crqMshrEnqs <= crqMshrEnqs + 1;
+            // send to pipeline
+            pipeline.send(CRq (LLPipeCRqIn {
+                addr: cRq.addr,
+                mshrIdx: n
+            }));
+            cRqIsPrefetch[n] <= r.isPrefetchRq;
+            // change round robin
+            flipPriorNewCRqSrc;
+            if (verbose)
+                $display("%t LL %m cRqTransfer_new_child: ", $time,
+                    fshow(n), " ; ",
+                    fshow(r), " ; ",
+                    fshow(cRq)
+                );
+        end
+        else begin
+            $display ("%t LL crqTransfer_new_child: postponing prefetch rq, mshr entries: %d", $time, crqMshrEnqs - crqMshrDeqs);
+            //overflowPrefetchQueue.enq(r); //In CHERIToooba there is an overflow prefetch queue and a rule which dequeues it
+        end
+
     endrule
 
     // create new request from data prefetcher and send to pipeline
     // Rule only fires when no work from child and DMA
-    rule createDataPrefetchRq(newCRqSrc == Invalid);
+    rule createDataPrefetchRq(newCRqSrc == Invalid && crqMshrEnqs - crqMshrDeqs < threeQuartursFull);
         let x <- dataPrefetchers.getNextPrefetchAddr;
         match {.addr, .cacheIdx} = x;
         //Request from L1D of cacheIdx-th core
@@ -424,6 +436,7 @@ endfunction
         };
         // setup new MSHR entry
         cRqIndexT n <- cRqMshr.transfer.getEmptyEntryInit(cRq, Invalid);
+        crqMshrEnqs <= crqMshrEnqs + 1;
         // send to pipeline
         pipeline.send(CRq (LLPipeCRqIn {
             addr: cRq.addr,
@@ -457,6 +470,7 @@ endfunction
         };
         // setup new MSHR entry
         cRqIndexT n <- cRqMshr.transfer.getEmptyEntryInit(cRq, Invalid);
+        crqMshrEnqs <= crqMshrEnqs + 1;
         // send to pipeline
         pipeline.send(CRq (LLPipeCRqIn {
             addr: cRq.addr,
@@ -509,6 +523,7 @@ endfunction
         };
         // setup new MSHR entry and data
         cRqIndexT n <- cRqMshr.transfer.getEmptyEntryInit(cRq, write ? Valid (r.data) : Invalid);
+        crqMshrEnqs <= crqMshrEnqs + 1;
         // send to pipeline
         cRqIsPrefetch[n] <= False;
         pipeline.send(CRq (LLPipeCRqIn {
@@ -768,6 +783,7 @@ endfunction
         });
         // release MSHR entry
         cRqMshr.sendRsToDmaC.releaseEntry(n);
+        crqMshrDeqs <= crqMshrDeqs + 1;
     endrule
 
     rule sendRsStToDma;
@@ -788,6 +804,7 @@ endfunction
         rsStToDmaQ.enq(dmaId);
         // release MSHR entry
         cRqMshr.sendRsToDmaC.releaseEntry(n);
+        crqMshrDeqs <= crqMshrDeqs + 1;
     endrule
 
     // send upgrade resp to child
@@ -813,10 +830,12 @@ endfunction
             toState: toState, // we may upgrade to E for req S, don't use toState in cRq
             child: cRq.child,
             data: rsData,
-            id: cRqId
+            id: cRqId,
+            cameFromPrefetch: cRqIsPrefetch[n]
         }));
         // release MSHR entry
         cRqMshr.sendRsToDmaC.releaseEntry(n);
+        crqMshrDeqs <= crqMshrDeqs + 1;
 `ifdef PERF_COUNT
         if(doStats) begin
             upRespCnt.incr(1);
@@ -937,7 +956,7 @@ endfunction
     cRqT pipeOutCRq = cRqMshr.pipelineResp.getRq(pipeOutCRqIdx);
 
     // function to process cRq hit (MSHR slot may have garbage)
-    function Action cRqFromCHit(cRqIndexT n, cRqT cRq, Bool isMRs);
+    function Action cRqFromCHit(cRqIndexT n, cRqT cRq, Bool isMRs, Bool wasMiss);
     action
        if (verbose)
         $display("%t LL %m pipelineResp: cRq from child Hit func: ", $time,
@@ -952,6 +971,10 @@ endfunction
             // tag has been written into cache before sending req to parent
             ("cRqHit but tag or cs incorrect")
         );
+        if (ram.info.other.wasPrefetch && !cRqIsPrefetch[n]) begin
+            if (verbose) $display("%t AlexLog: LL demand hit on prefetched cache line %h", $time, cRq.addr);
+        end
+
         // decide upgrade state
         Msi toState = cRq.toState;
         if(cRq.toState == S && cRq.canUpToE && ram.info.dir == replicate(I) && respLoadWithE(isMRs)) begin
@@ -991,7 +1014,9 @@ endfunction
                     });
                     default: return Invalid;
                 endcase),
-                other: ?
+                other: PrefetchInfo {
+                    wasPrefetch: wasMiss && cRqIsPrefetch[n]
+                }
             },
             line: ram.line // use line in ram
         }, True); // hit, so update rep info
@@ -1047,7 +1072,7 @@ endfunction
                     });
                     default: return Invalid;
                 endcase),
-                other: ?
+                other: ram.info.other
             },
             line: newLine // use new line
         }, True); // hit, so update rep info
@@ -1195,7 +1220,7 @@ endfunction
                     cs: ram.info.cs,
                     dir: ram.info.dir,
                     owner: Valid (CRqOwner {mshrIdx: n, replacing: False}), // owner is req itself
-                    other: ?
+                    other: ram.info.other
                 },
                 line: ram.line
             }, False);
@@ -1237,7 +1262,7 @@ endfunction
                     cs: ram.info.cs,
                     dir: ram.info.dir,
                     owner: Valid (CRqOwner {mshrIdx: n, replacing: False}), // owner is req itself
-                    other: ?
+                    other: ram.info.other
                 },
                 line: ram.line
             }, False);
@@ -1266,7 +1291,7 @@ endfunction
                             mshrIdx: n,
                             replacing: True // replacement is ongoing
                         }),
-                        other: ?
+                        other: ram.info.other
                     },
                     line: ram.line // keep data the same
                 }, False);
@@ -1350,7 +1375,7 @@ endfunction
                     if(dirPend == replicate(Invalid)) begin
 		       if (verbose)
                         $display("%t LL %m pipelineResp: cRq from child: own by itself, hit", $time);
-                        cRqFromCHit(n, cRq, False);
+                        cRqFromCHit(n, cRq, False, False);
                     end
                     else begin
 		       if (verbose)
@@ -1403,7 +1428,7 @@ endfunction
                         if(ram.info.cs > I && dirPend == replicate(Invalid)) begin
 			   if (verbose)
                             $display("%t LL %m pipelineResp: cRq: no owner, hit", $time);
-                            cRqFromCHit(n, cRq, False);
+                            cRqFromCHit(n, cRq, False, False);
                         end
                         else begin
 			   if (verbose)
@@ -1486,7 +1511,7 @@ endfunction
             "cRq that needs mRs should not have children to wait for"
         );
         // cRq hits since all children are I
-        cRqFromCHit(cOwner.mshrIdx, cRq, True);
+        cRqFromCHit(cOwner.mshrIdx, cRq, True, True);
     endrule
 
     // handle cRs
@@ -1574,7 +1599,7 @@ endfunction
                 // check hit or miss
                 if(newDirPend == replicate(Invalid)) begin
                     if(cRq.id matches tagged Child ._i) begin
-                        cRqFromCHit(cOwner.mshrIdx, cRq, False);
+                        cRqFromCHit(cOwner.mshrIdx, cRq, False, False);
                     end
                     else begin
                         cRqFromDmaHit(cOwner.mshrIdx, cRq);

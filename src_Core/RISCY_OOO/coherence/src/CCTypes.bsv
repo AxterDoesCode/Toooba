@@ -303,6 +303,7 @@ typedef struct {
     childT child; // to which child
     Maybe#(Line) data;
     idT id; // slot id in cache
+    Bool cameFromPrefetch;
 } PRsMsg#(type idT, type childT) deriving(Bits, Eq, FShow);
 
 typedef union tagged {

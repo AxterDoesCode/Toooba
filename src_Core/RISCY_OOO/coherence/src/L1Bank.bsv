@@ -149,8 +149,6 @@ module mkL1Bank#(
 
    Bool verbose = True;
 
-    CDP#(procRqT) cdp <- mkCDP;
-
     L1CRqMshr#(cRqNum, wayT, tagT, procRqT) cRqMshr <- mkL1CRqMshrLocal;
 
     L1PRqMshr#(pRqNum) pRqMshr <- mkL1PRqMshrLocal;
@@ -177,13 +175,29 @@ module mkL1Bank#(
     Reg#(Maybe#(LineAddr)) linkAddr = linkAddrEhr[0]; // normal processing use port 0
     Reg#(Maybe#(LineAddr)) linkAddrRst = linkAddrEhr[1]; // reset by outside use port 1
 
+    Reg#(Bit#(TAdd#(TLog#(cRqNum),1))) crqMshrEnqs <- mkConfigReg(0);
+    Reg#(Bit#(TAdd#(TLog#(cRqNum),1))) crqMshrDeqs <- mkConfigReg(0);
+
+
     // we process AMO resp in a new cycle to cut critical path
     Reg#(Maybe#(AmoHitInfo#(cRqIdxT, procRqT))) processAmo <- mkReg(Invalid);
 
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
+
+    // A queue for responses from LL prefetches
+    // We should inform the prefetcher that its prefetch to the LLC hit, but that might conflict with telling the prefetcher
+    // about a hit in the L1. Therefore we need to queue up the responses and tell the prefetcher about them
+    // when it doesn't hold up the pipeline.
+    Fifo#(4, pRsFromPT) llcDataArrivalQ <- mkOverflowBypassFifo;
+
     // let prefetcher <- mkL1DPrefetcher;
-    let prefetcher = cdp.prefetcher;
-    let llcPrefetcher <- mkLLDPrefetcherInL1D;
+    CDP#(procRqT) cdp <- mkCDP;
+`ifdef DATA_PREFETCHER_IN_L1_FORWARDING
+    let prefetcher <- mkNextLevelPrefetcherAdapter(mkSudoPrefetcherAdapter(cdp.prefetcher));
+`else
+    let prefetcher <- mkSudoPrefetcherAdapter(cdp.prefetcher);
+    //let prefetcher <- mkSudoPrefetcherAdapter(cdp.prefetcher);
+`endif
 
     // security flush
 `ifdef SECURITY_CACHES
@@ -314,6 +328,7 @@ endfunction
     rule cRqTransfer_new(!cRqRetryIndexQ.notEmpty && flushDone);
         procRqT r <- toGet(rqFromCQ).get;
         cRqIdxT n <- cRqMshr.cRqTransfer.getEmptyEntryInit(r);
+        crqMshrEnqs <= crqMshrEnqs + 1;
         // send to pipeline
         pipeline.send(CRq (L1PipeRqIn {
             addr: r.addr,
@@ -350,46 +365,123 @@ endfunction
     (* descending_urgency = "pRsTransfer, cRqTransfer_retry, cRqTransfer_new" *)
     rule pRsTransfer(fromPQ.first matches tagged PRs .resp);
         fromPQ.deq;
-        pipeline.send(PRs (L1PipePRsIn {
-            addr: resp.addr,
-            toState: resp.toState,
-            data: resp.data,
-            way: resp.id
-        }));
-       if (verbose)
-        $display("%t L1 %m pRsTransfer: ", $time, fshow(resp));
+        if (!resp.cameFromPrefetch) begin
+            pipeline.send(PRs (L1PipePRsIn {
+                addr: resp.addr,
+                toState: resp.toState,
+                data: resp.data,
+                way: resp.id
+            }));
+        end else begin
+            if (isValid(resp.data)) begin
+                llcDataArrivalQ.enq(resp);
+            end
+        end
+        if (verbose) $display("%t L1 %m pRsTransfer: ", $time, fshow(resp));
+    endrule
+
+    (* descending_urgency = "pipelineResp_cRq, notifyPrefetcherOfLlcHit" *)
+    (* descending_urgency = "pipelineResp_pRs, notifyPrefetcherOfLlcHit" *)
+    rule notifyPrefetcherOfLlcHit;
+        let resp = llcDataArrivalQ.first;
+        llcDataArrivalQ.deq;
+        $display("AlexLog: Prefetch arrived from L2 cache");
+        //prefetcher.reportCacheDataArrival(fromMaybe(?, resp.data), resp.addr, /* pcHash */ 0, Ld, /* count as miss */ False, 
+            ///* This is a prefetch */ True, /* From the next level cache */ True, /* No successor (that we know about) */ False, 
+            //resp.prefetchAuxData, resp.boundsOffset, resp.boundsLength, resp.boundsVirtBase, /*capPerms */ unpack(0));
+    endrule
+
+    (* descending_urgency = "pRqTransfer, cRqTransfer_retry, cRqTransfer_new, sendRqToP, createPrefetchRq" *)
+    rule createPrefetchRq(flushDone && crqMshrEnqs - crqMshrDeqs < 6);
+        let prefetch <- prefetcher.getNextPrefetchAddr;
+        if (prefetch.nextLevel) begin
+            cRqToPT cRqToP = CRqMsg {
+                addr: prefetch.addr,
+                fromState: ?,
+                toState: S,
+                //op: Ld,
+                canUpToE: True,
+                id: 0,
+                child: ?,
+                isPrefetchRq: True
+            };
+            rqToPQ.enq(cRqToP);
+            if (verbose) $display("%t L1 %m sendPrefetchRqToP: ", $time, fshow(cRqToP));
+        end else begin
+            procRqT r = ProcRq {
+                id: ?, //Or maybe do 0 here
+                addr: prefetch.addr,
+                vpn: ?, // TODO: I think it may be worthwhile passing this through, need to make getNextPrefetchAddr return some struct?
+                toState: S,
+                op: Ld,
+                byteEn: ?,
+                data: ?,
+                amoInst: ?,
+                //loadTags: ?,
+                pcHash: ?
+            };
+            cRqIdxT n <- cRqMshr.cRqTransfer.getEmptyEntryInit(r);
+            crqMshrEnqs <= crqMshrEnqs + 1;
+            pipeline.send(CRq (L1PipeRqIn {
+                addr: r.addr,
+                mshrIdx: n
+            }));
+            cRqIsPrefetch[n] <= True;
+            if (verbose)
+                $display("%t L1 %m createPrefetchRq: ", $time,
+                    fshow(n), " ; ",
+                    fshow(r));
+        end        
     endrule
 
 
-    (* descending_urgency = "pRsTransfer, cRqTransfer_retry, cRqTransfer_new, createPrefetchRq" *)
-    (* descending_urgency = "pRqTransfer, cRqTransfer_retry, cRqTransfer_new, createPrefetchRq" *)
-    rule createPrefetchRq(flushDone);
-        Addr addr <- prefetcher.getNextPrefetchAddr;
-        procRqT r = ProcRq {
-            id: ?, //Or maybe do 0 here
-            addr: addr,
-            vpn: ?, // AlexNote: Do we even need to know the VPN here? Okay this could be the bane of all my issues
-            toState: S,
-            op: Ld,
-            byteEn: ?,
-            data: ?,
-            amoInst: ?,
-            pcHash: ?
-        };
-        cRqIdxT n <- cRqMshr.cRqTransfer.getEmptyEntryInit(r);
-        // send to pipeline
-        pipeline.send(CRq (L1PipeRqIn {
-            addr: r.addr,
-            mshrIdx: n
-        }));
-        cRqIsPrefetch[n] <= True;
-        // performance counter: cRq type
-       if (verbose)
-        $display("%t L1 %m createPrefetchRq: ", $time,
-            fshow(n), " ; ",
-            fshow(r)
-        );
-    endrule
+    //(* descending_urgency = "pRsTransfer, cRqTransfer_retry, cRqTransfer_new, createPrefetchRq" *)
+    //(* descending_urgency = "pRqTransfer, cRqTransfer_retry, cRqTransfer_new, createPrefetchRq" *)
+    //rule createPrefetchRq(flushDone);
+    //    Addr addr <- prefetcher.getNextPrefetchAddr;
+    //    procRqT r = ProcRq {
+    //        id: ?, //Or maybe do 0 here
+    //        addr: addr,
+    //        vpn: ?, // AlexNote: Do we even need to know the VPN here? Okay this could be the bane of all my issues
+    //        toState: S,
+    //        op: Ld,
+    //        byteEn: ?,
+    //        data: ?,
+    //        amoInst: ?,
+    //        pcHash: ?
+    //    };
+    //    cRqIdxT n <- cRqMshr.cRqTransfer.getEmptyEntryInit(r);
+    //    // send to pipeline
+    //    pipeline.send(CRq (L1PipeRqIn {
+    //        addr: r.addr,
+    //        mshrIdx: n
+    //    }));
+    //    cRqIsPrefetch[n] <= True;
+    //    // performance counter: cRq type
+    //   if (verbose)
+    //    $display("%t L1 %m createPrefetchRq: ", $time,
+    //        fshow(n), " ; ",
+    //        fshow(r)
+    //    );
+    //endrule
+    //(* descending_urgency = "sendRqToP, sendPrefetchRqToP" *)
+    //rule sendPrefetchRqToP;
+    //    let addr <- llcPrefetcher.getNextPrefetchAddr;
+    //    cRqToPT cRqToP = CRqMsg {
+    //        addr: addr,
+    //        fromState: ?,
+    //        toState: S,
+    //        canUpToE: True,
+    //        id: 0,
+    //        child: ?,
+    //        isPrefetchRq: True
+    //    };
+    //    rqToPQ.enq(cRqToP);
+    //    if (verbose)
+    //        $display("%t L1 %m sendPrefetchRqToP: ", $time,
+    //            fshow(cRqToP)
+    //        );
+    //endrule
 
 `ifdef SECURITY_CACHES
     // start flush when cRq MSHR is empty
@@ -490,24 +582,6 @@ endfunction
         );
     endrule
 
-    (* descending_urgency = "sendRqToP, sendPrefetchRqToP" *)
-    rule sendPrefetchRqToP;
-        let addr <- llcPrefetcher.getNextPrefetchAddr;
-        cRqToPT cRqToP = CRqMsg {
-            addr: addr,
-            fromState: ?,
-            toState: S,
-            canUpToE: True,
-            id: 0,
-            child: ?,
-            isPrefetchRq: True
-        };
-        rqToPQ.enq(cRqToP);
-        if (verbose)
-            $display("%t L1 %m sendPrefetchRqToP: ", $time,
-                fshow(cRqToP)
-            );
-    endrule
     // AlexNote: Send request to parent here (like on a refill or replacement)
     rule sendRqToP;
         rqToPIndexQ.deq;
@@ -522,6 +596,7 @@ endfunction
             id: slot.way,
             child: ?,
             isPrefetchRq: False
+            // Doesn't this mean that PC prefetches aren't detected?
         };
         rqToPQ.enq(cRqToP);
        if (verbose)
@@ -563,7 +638,7 @@ endfunction
     Maybe#(cRqIdxT) pipeOutSucc = cRqMshr.pipelineResp.getSucc(pipeOutCRqIdx);
 
     // function to process cRq hit (MSHR slot may have garbage)
-    function Action cRqHit(cRqIdxT n, procRqT req);
+    function Action cRqHit(cRqIdxT n, procRqT req, Bool wasMiss);
     action
        if (verbose)
         $display("%t L1 %m pipelineResp: Hit func: ", $time,
@@ -579,10 +654,12 @@ endfunction
         // TODO when we have MESI, cache state may also need update
         Line curLine = ram.line;
         Line newLine = curLine;
+        Bool lineTouched = True; // assume touched and set to false in a few cases
         LineDataOffset dataSel = getLineDataOffset(req.addr);
+        if (ram.info.other.wasPrefetch) $display("AlexLog: Prefetched line detected");
         if (ram.info.other.wasPrefetch && !cRqIsPrefetch[n] && req.op == Ld) begin
             //Hit on a prefetched cache line!
-            if $display("%t AlexLog: Hit on a prefetched cache line! ", $time);
+            $display("%t AlexLog: Hit on a prefetched cache line! ", $time);
         //`ifdef PERF_COUNT
         //    usedPrefetchCnt.incr(1);
         //`endif
@@ -592,7 +669,11 @@ endfunction
         end
         case(req.op) matches
             Ld: begin
-                if (!cRqIsPrefetch[n]) procResp.respLd(req.id, curLine[dataSel]);
+                if (!cRqIsPrefetch[n]) begin
+                    procResp.respLd(req.id, curLine[dataSel]);
+                end else begin
+                    lineTouched = False;
+                end
             end
             Lr: begin
                 procResp.respLrScAmo(req.id, curLine[dataSel]);
@@ -605,6 +686,7 @@ endfunction
             Sc: begin
                 // check Sc succeeds or not
                 Bool succeed = linkAddr == Valid (getLineAddr(req.addr));
+                lineTouched = succeed;
                 // resp to proc
                 Data respVal = succeed ? fromInteger(valueof(ScSuccVal)) : fromInteger(valueof(ScFailVal));
                 procResp.respLrScAmo(req.id, respVal);
@@ -639,13 +721,14 @@ endfunction
                     cs: max(ram.info.cs, req.toState),
                     dir: ?,
                     owner: succ,
-                    other: ?
+                    other: PrefetchInfo {
+                        wasPrefetch: wasMiss ? cRqIsPrefetch[n] : (ram.info.other.wasPrefetch && !lineTouched)
+                    }
                 },
                 line: newLine // write new data into cache
             }, True); // hit, so update rep info
             if (!cRqIsPrefetch[n]) begin
                 prefetcher.reportAccess(req.addr, req.pcHash, HIT);
-                llcPrefetcher.reportAccess(req.addr, req.pcHash, HIT);
             end
             if (verbose)
                 $display("%t L1 %m pipelineResp: Hit func: update ram: ", $time,
@@ -654,6 +737,7 @@ endfunction
                 );
             // release MSHR entry
             cRqMshr.pipelineResp.releaseEntry(n);
+            crqMshrDeqs <= crqMshrDeqs + 1;
         end
         else begin
             processAmo <= Valid (AmoHitInfo {
@@ -692,7 +776,7 @@ endfunction
                 cs: M, // AMO always gets to M
                 dir: ?,
                 owner: succ,
-                other: ?
+                other: PrefetchInfo {wasPrefetch: False}
             },
             line: newLine // write new data into cache
         }, True); // hit, so update rep info
@@ -704,6 +788,7 @@ endfunction
         );
         // release MSHR entry
         cRqMshr.pipelineResp.releaseEntry(n);
+        crqMshrDeqs <= crqMshrDeqs + 1;
         // reset state
         processAmo <= Invalid;
     endrule
@@ -745,6 +830,7 @@ endfunction
             end
             // release MSHR entry
             cRqMshr.pipelineResp.releaseEntry(n);
+            crqMshrDeqs <= crqMshrDeqs + 1;
             if (verbose)
                 $display("%t L1 %m pipelineResp: Sc early fail func: ", $time,
                     fshow(resetOwner), " ; ",
@@ -781,13 +867,12 @@ endfunction
                     cs: ram.info.cs,
                     dir: ?,
                     owner: Valid (n), // owner is req itself
-                    other: ?
+                    other: ram.info.other
                 },
                 line: ram.line
             }, False);
             if (!cRqIsPrefetch[n]) begin
                 prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS);
-                llcPrefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS);
             end
         endaction
         endfunction
@@ -816,7 +901,6 @@ endfunction
             cRqMshr.pipelineResp.setData(n, ram.info.cs == M ? Valid (ram.line) : Invalid);
             if (!cRqIsPrefetch[n]) begin
                 prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS);
-                llcPrefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS);
             end
             // send replacement resp to parent
             rsToPIndexQ.enq(CRq (n));
@@ -873,7 +957,7 @@ endfunction
                 if(enough_cs) begin
 		   if (verbose)
                     $display("%t L1 %m pipelineResp: cRq: own by itself, hit", $time);
-                    cRqHit(n, procRq);
+                    cRqHit(n, procRq, False);
                 end
                 else if(scFail) begin
                     // Sc already fails, so we don't need to req parent.  Since
@@ -916,7 +1000,7 @@ endfunction
                     doAssert(cs_valid, "hit, so cs must > I");
 		   if (verbose)
                     $display("%t L1 %m pipelineResp: cRq: no owner, hit", $time);
-                    cRqHit(n, procRq);
+                    cRqHit(n, procRq, False);
                 end
                 else if(scFail) begin
                     // Sc already fails, so we don't need to req parent.  Since
@@ -953,6 +1037,7 @@ endfunction
         if(ram.info.owner matches tagged Valid .cOwner) begin
             procRqT procRq = pipeOutCRq;
             doAssert(ram.info.cs >= procRq.toState && ram.info.tag == getTag(procRq.addr), ("pRs must be a hit"));
+            cRqHit(cOwner, procRq, True);
             // AlexNote: Virtual address matcher and prefetch issue needs to be inside this rule, on the parent (L2) response...
             // The garbage values were from the mkDoNothingPrefetcher..., currently passing ? into the Vpn value on prefetch rule but I need to explore prefetch depth stuff later so should probably pass the Vpn in.
             // Also if I want to combine with a stride prefetcher then need to do it that way
@@ -966,7 +1051,6 @@ endfunction
                 // For now disregard chaining prefetches
                 $display("AlexLog: L1 pipelineResp_pRs (prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
 
-            cRqHit(cOwner, procRq);
             // performance counter: miss cRq
             if (!cRqIsPrefetch[cOwner]) begin
                 incrMissCnt(procRq.op, cOwner);
@@ -1054,7 +1138,7 @@ endfunction
                     cs: pRq.toState,
                     dir: ?,
                     owner: Invalid, // no successor
-                    other: ?
+                    other: ram.info.other
                 },
                 line: ram.line
             }, False);
@@ -1310,12 +1394,13 @@ module mkL1Cache#(
     Alias#(cRqIdxT, Bit#(TLog#(cRqNum))),
     Alias#(pRqIdxT, Bit#(TLog#(pRqNum))),
     Alias#(cacheOwnerT, Maybe#(cRqIdxT)),
+    Alias#(cacheOtherT, PrefetchInfo),
     Alias#(procRqT, ProcRq#(procRqIdT)),
     Alias#(cRqToPT, CRqMsg#(wayT, void)),
     Alias#(cRsToPT, CRsMsg#(void)),
     Alias#(pRqRsFromPT, PRqRsMsg#(wayT, void)),
     Alias#(l1CmdT, L1Cmd#(indexT, cRqIdxT, pRqIdxT)),
-    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, void, RandRepInfo, Line, l1CmdT)),
+    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, l1CmdT)),
     // requirements
     Bits#(procRqIdT, _procRqIdT),
     FShow#(procRqIdT),
