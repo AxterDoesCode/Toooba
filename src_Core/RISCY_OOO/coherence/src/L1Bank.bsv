@@ -218,6 +218,7 @@ module mkL1Bank#(
     Count#(Data) stCnt <- mkCount(0);
     Count#(Data) amoCnt <- mkCount(0);
     Count#(Data) ldMissCnt <- mkCount(0);
+    Count#(Data) usedPrefetchCnt <- mkCount(0);
     Count#(Data) stMissCnt <- mkCount(0);
     Count#(Data) amoMissCnt <- mkCount(0);
     Count#(Data) ldMissLat <- mkCount(0);
@@ -433,54 +434,6 @@ endfunction
         end        
     endrule
 
-    //(* descending_urgency = "pRsTransfer, cRqTransfer_retry, cRqTransfer_new, createPrefetchRq" *)
-    //(* descending_urgency = "pRqTransfer, cRqTransfer_retry, cRqTransfer_new, createPrefetchRq" *)
-    //rule createPrefetchRq(flushDone);
-    //    Addr addr <- prefetcher.getNextPrefetchAddr;
-    //    procRqT r = ProcRq {
-    //        id: ?, //Or maybe do 0 here
-    //        addr: addr,
-    //        vpn: ?, // AlexNote: Do we even need to know the VPN here? Okay this could be the bane of all my issues
-    //        toState: S,
-    //        op: Ld,
-    //        byteEn: ?,
-    //        data: ?,
-    //        amoInst: ?,
-    //        pcHash: ?
-    //    };
-    //    cRqIdxT n <- cRqMshr.cRqTransfer.getEmptyEntryInit(r);
-    //    // send to pipeline
-    //    pipeline.send(CRq (L1PipeRqIn {
-    //        addr: r.addr,
-    //        mshrIdx: n
-    //    }));
-    //    cRqIsPrefetch[n] <= True;
-    //    // performance counter: cRq type
-    //   if (verbose)
-    //    $display("%t L1 %m createPrefetchRq: ", $time,
-    //        fshow(n), " ; ",
-    //        fshow(r)
-    //    );
-    //endrule
-    //(* descending_urgency = "sendRqToP, sendPrefetchRqToP" *)
-    //rule sendPrefetchRqToP;
-    //    let addr <- llcPrefetcher.getNextPrefetchAddr;
-    //    cRqToPT cRqToP = CRqMsg {
-    //        addr: addr,
-    //        fromState: ?,
-    //        toState: S,
-    //        canUpToE: True,
-    //        id: 0,
-    //        child: ?,
-    //        isPrefetchRq: True
-    //    };
-    //    rqToPQ.enq(cRqToP);
-    //    if (verbose)
-    //        $display("%t L1 %m sendPrefetchRqToP: ", $time,
-    //            fshow(cRqToP)
-    //        );
-    //endrule
-
 `ifdef SECURITY_CACHES
     // start flush when cRq MSHR is empty
     rule startFlushReq(!flushDone && !flushReqStart && cRqMshr.emptyForFlush);
@@ -594,7 +547,6 @@ endfunction
             id: slot.way,
             child: ?,
             isPrefetchRq: False
-            // AlexNote: Doesn't this mean that L1 prefetches aren't detected?
         };
         rqToPQ.enq(cRqToP);
        if (verbose)
@@ -657,10 +609,9 @@ endfunction
         if (ram.info.other.wasPrefetch) $display("AlexLog: Prefetched line detected");
         if (ram.info.other.wasPrefetch && !cRqIsPrefetch[n] && req.op == Ld) begin
             //Hit on a prefetched cache line!
-            $display("%t AlexLog: Hit on a prefetched cache line! ", $time);
-        //`ifdef PERF_COUNT
-        //    usedPrefetchCnt.incr(1);
-        //`endif
+        `ifdef PERF_COUNT
+            usedPrefetchCnt.incr(1);
+        `endif
         //    EventsL1D events = unpack (0);
         //    events.evt_AMO = 1;
         //    perf_events[4] <= events;

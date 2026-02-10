@@ -35,7 +35,7 @@ module mkCDP(
 
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
 
-    // 8 for now because in one line there is potentially 8 candidate vaddr?
+    // 8 used, one line there is potentially 8 candidate vaddr
     SupFifo#(8, 8, NextCandT) nextCandidateBuffer <- mkSupFifo;
 
     rule deqLineL1;
