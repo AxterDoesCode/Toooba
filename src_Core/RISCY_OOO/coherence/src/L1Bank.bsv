@@ -196,7 +196,6 @@ module mkL1Bank#(
     let prefetcher <- mkNextLevelPrefetcherAdapter(mkSudoPrefetcherAdapter(cdp.prefetcher));
 `else
     let prefetcher <- mkSudoPrefetcherAdapter(cdp.prefetcher);
-    //let prefetcher <- mkSudoPrefetcherAdapter(cdp.prefetcher);
 `endif
 
     // security flush
@@ -434,7 +433,6 @@ endfunction
         end        
     endrule
 
-
     //(* descending_urgency = "pRsTransfer, cRqTransfer_retry, cRqTransfer_new, createPrefetchRq" *)
     //(* descending_urgency = "pRqTransfer, cRqTransfer_retry, cRqTransfer_new, createPrefetchRq" *)
     //rule createPrefetchRq(flushDone);
@@ -596,7 +594,7 @@ endfunction
             id: slot.way,
             child: ?,
             isPrefetchRq: False
-            // Doesn't this mean that PC prefetches aren't detected?
+            // AlexNote: Doesn't this mean that L1 prefetches aren't detected?
         };
         rqToPQ.enq(cRqToP);
        if (verbose)

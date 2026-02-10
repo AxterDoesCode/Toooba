@@ -228,6 +228,8 @@ module mkLLBank#(
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
     PrefetcherVector#(TDiv#(childNum, 2)) dataPrefetchers <- mkPrefetcherVector(mkLLDPrefetcher);
     PrefetcherVector#(TDiv#(childNum, 2)) instrPrefetchers <- mkPrefetcherVector(mkLLIPrefetcher);
+    Fifo#(16, cRqFromCT) overflowPrefetchQueue <- mkOverflowPipelineFifo;
+
     Reg#(Bit#(TAdd#(TLog#(cRqNum),1))) crqMshrEnqs <- mkConfigReg(0);
     Reg#(Bit#(TAdd#(TLog#(cRqNum),1))) crqMshrDeqs <- mkConfigReg(0);
 
@@ -413,10 +415,44 @@ endfunction
         end
         else begin
             $display ("%t LL crqTransfer_new_child: postponing prefetch rq, mshr entries: %d", $time, crqMshrEnqs - crqMshrDeqs);
-            //overflowPrefetchQueue.enq(r); //In CHERIToooba there is an overflow prefetch queue and a rule which dequeues it
+            overflowPrefetchQueue.enq(r); //In CHERIToooba there is an overflow prefetch queue and a rule which dequeues it
         end
 
     endrule
+
+    rule createDataPrefetchRqFromQueue if (crqMshrEnqs - crqMshrDeqs < threeQuartursFull);
+        overflowPrefetchQueue.deq;
+        cRqFromCT r = overflowPrefetchQueue.first;
+        //Request from L1D of cacheIdx-th core
+        cRqT cRq = LLRq {
+            addr: r.addr,
+            fromState: I,
+            toState: S,
+            canUpToE: True,
+            child: r.child,
+            byteEn: ?,
+            id: Child (?)
+        };
+        // setup new MSHR entry
+        cRqIndexT n <- cRqMshr.transfer.getEmptyEntryInit(cRq, Invalid);
+        crqMshrEnqs <= crqMshrEnqs + 1;
+        // send to pipeline
+        pipeline.send(CRq (LLPipeCRqIn {
+            addr: cRq.addr,
+            mshrIdx: n
+        }));
+        cRqIsPrefetch[n] <= True;
+        //incrPrefectchCnt; // CHERITOOBA Prefetch performance monitoring stuff
+
+        // change round robin
+        //flipPriorNewCRqSrc;
+       if (verbose)
+        $display("%t LL %m createDataPrefetchRqFromQueue: ", $time,
+            fshow(n), " ; ",
+            fshow(cRq)
+        );
+    endrule
+
 
     // create new request from data prefetcher and send to pipeline
     // Rule only fires when no work from child and DMA
