@@ -992,13 +992,20 @@ endfunction
             // Also if I want to combine with a stride prefetcher then need to do it that way
             if(!cRqIsPrefetch[cOwner]) begin
                 $display("AlexLog: L1 pipelineResp_pRs (not prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
-                // TODO: If memory operation is load then forward the line to the CDP module
-                Line curLine = ram.line;
-                cdp.enqLineL1(procRq, curLine);
+                // If memory operation is load then forward the line to the CDP module
+                if(procRq.op == Ld) begin
+                    Line curLine = ram.line;
+                    cdp.enqLineL1(procRq, curLine);
+                end
             end
-            else 
-                // For now disregard chaining prefetches
+            else begin
                 $display("AlexLog: L1 pipelineResp_pRs (prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
+                // AlexNote: Chaining prefetches
+                if(procRq.op == Ld) begin
+                    Line curLine = ram.line;
+                    cdp.enqLineL1(procRq, curLine);
+                end
+            end
 
             // performance counter: miss cRq
             if (!cRqIsPrefetch[cOwner]) begin

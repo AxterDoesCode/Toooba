@@ -51,7 +51,6 @@ module mkCDP(
                     NextCandT{
                         paddr: getReqAddr(x.req), 
                         vaddr: x.line[i]});
-                // Probably change logging here to just see the candidate vaddr -> candidate paddr?
                 $display("%t AlexLog: CDP candidate vaddr found, offset: %d, LineDataOffset: ", $time, i, fshow(dataSel), fshow(x.line[i]), fshow(reqVpn), fshow(x.req));
                 enqIdx = enqIdx + 1;
             end
