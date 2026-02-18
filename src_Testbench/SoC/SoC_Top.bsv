@@ -28,14 +28,17 @@ import Clocks        :: *;
 
 import Cur_Cycle   :: *;
 import GetPut_Aux  :: *;
+import Routable    :: *;
+import BlueBasics  :: *;
+import BlueAXI4    :: *;
 
 // ================================================================
 // Project imports
 
 // Main fabric
-import AXI4_Types     :: *;
-import AXI4_Fabric    :: *;
-import AXI4_Deburster :: *;
+//import AXI4_Types     :: *;
+//import AXI4_Fabric    :: *;
+//import AXI4_Deburster :: *;
 
 import Fabric_Defs :: *;
 import SoC_Map     :: *;
