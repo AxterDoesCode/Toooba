@@ -37,11 +37,13 @@ all: compile  simulator
 
 CORE_DIRS = $(REPO)/src_Core/CPU:$(REPO)/src_Core/ISA:$(REPO)/src_Core/Core:$(REPO)/src_Core/PLIC:$(REPO)/src_Core/Debug_Module:$(REPO)/src_Core/BSV_Additional_Libs
 
-TESTBENCH_DIRS = $(REPO)/src_Testbench/Top:$(REPO)/src_Testbench/SoC:$(REPO)/src_Testbench/Fabrics/AXI4
+TESTBENCH_DIRS = $(REPO)/src_Testbench/Top:$(REPO)/src_Testbench/SoC
 
-BLUESTUFF_DIRS = $(REPO)/src_Core/BSV_Additional_Libs/BlueStuff:$(REPO)/src_Core/BSV_Additional_Libs/BlueStuff/BlueUtils:$(REPO)/src_Core/BSV_Additional_Libs/BlueStuff/BlueBasics
+# BLUESTUFF_DIRS = $(REPO)/src_Core/BSV_Additional_Libs/BlueStuff:$(REPO)/src_Core/BSV_Additional_Libs/BlueStuff/BlueUtils:$(REPO)/src_Core/BSV_Additional_Libs/BlueStuff/BlueBasics:$(REPO)/src_Core/BSV_Additional_Libs/BlueStuff/BlueAXI4:$(REPO)/src_Core/BSV_Additional_Libs/BlueStuff/BlueAvalon::$(REPO)/src_Core/BSV_Additional_Libs/BlueStuff/BlueAXI4/AXI4
+BLUESTUFFDIR ?= $(REPO)/src_Core/BSV_Additional_Libs/BlueStuff
+include $(BLUESTUFFDIR)/bluestuff.inc.mk # sets the BLUESTUFF_DIRS variable
 
-BSC_PATH = $(ALL_RISCY_DIRS):$(CORE_DIRS):$(TESTBENCH_DIRS):$(BLUESTUFF_DIRS):+
+BSC_PATH += $(ALL_RISCY_DIRS):$(CORE_DIRS):$(TESTBENCH_DIRS):$(BLUESTUFF_DIRS):+
 
 # ----------------
 # Top-level file and module

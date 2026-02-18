@@ -17,12 +17,11 @@ package Fabric_Defs;
 // ================================================================
 // BSV lib imports
 
-// None
+import AXI4 :: *;
 
 // ================================================================
 // Project imports
 
-import AXI4_Types :: *;
 
 // ================================================================
 // Fabric parameters
@@ -74,11 +73,11 @@ Integer  zlsbs_aligned_fabric_addr = valueOf (ZLSBs_Aligned_Fabric_Addr);
 // AXI4 defaults for this project
 
 Fabric_Id    fabric_default_id       = 0;
-AXI4_Burst   fabric_default_burst    = axburst_incr;
-AXI4_Lock    fabric_default_lock     = axlock_normal;
+AXI4_Burst   fabric_default_burst    = INCR;
+AXI4_Lock    fabric_default_lock     = NORMAL;
 AXI4_Cache   fabric_default_arcache  = arcache_dev_nonbuf;
 AXI4_Cache   fabric_default_awcache  = awcache_dev_nonbuf;
-AXI4_Prot    fabric_default_prot     = { axprot_2_data, axprot_1_secure, axprot_0_unpriv };
+AXI4_Prot    fabric_default_prot    = axi4Prot(DATA, SECURE, UNPRIV);
 AXI4_QoS     fabric_default_qos      = 0;
 AXI4_Region  fabric_default_region   = 0;
 Fabric_User  fabric_default_user     = ?;
