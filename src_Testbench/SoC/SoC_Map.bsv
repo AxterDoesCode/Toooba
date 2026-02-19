@@ -31,6 +31,7 @@ export  imem_master_num;
 export  dmem_master_num;
 
 export  Num_Slaves;
+export  Wd_SId;
 export  boot_rom_slave_num;
 export  mem0_controller_slave_num;
 export  uart0_slave_num;
@@ -284,6 +285,10 @@ typedef 3 Num_Slaves;
 Integer boot_rom_slave_num        = 0;
 Integer mem0_controller_slave_num = 1;
 Integer uart0_slave_num           = 2;
+
+// ================================================================
+// Width of fabric 'id' buses
+typedef TAdd#(TAdd#(Wd_MId, TLog#(Num_Masters)),1) Wd_SId;
 
 // ================================================================
 // Interrupt request numbers (== index in to vector of

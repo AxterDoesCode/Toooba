@@ -35,18 +35,11 @@ import BlueAXI4    :: *;
 // ================================================================
 // Project imports
 
-// Main fabric
-//import AXI4_Types     :: *;
-//import AXI4_Fabric    :: *;
-//import AXI4_Deburster :: *;
-
 import Fabric_Defs :: *;
 import SoC_Map     :: *;
-import SoC_Fabric  :: *;
 
 // SoC components (CPU, mem, and IPs)
 
-import CoreW_IFC :: *;
 import CoreW     :: *;
 import PLIC      :: *;    // For interface to PLIC interrupt sources, in CoreW_IFC
 
