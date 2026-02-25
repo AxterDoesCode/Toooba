@@ -73,7 +73,6 @@ ifeq (,$(filter $(INSTR_PREFETCHER_TYPE),NEXT_LINE_ON_MISS NEXT_LINE_ON_ALL SING
 	$(error unsupported INSTR_PREFETCHER_TYPE)
 endif
 
-
 ifeq (,$(filter $(DATA_PREFETCHER_LOCATION),NONE L1 L1LL LL L1_FORWARDING))
 	$(error unsupported DATA_PREFETCHER_LOCATION)
 endif

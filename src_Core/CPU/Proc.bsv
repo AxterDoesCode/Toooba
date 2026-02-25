@@ -41,7 +41,6 @@ import ConfigReg    :: *;
 
 import Cur_Cycle      :: *;
 import GetPut_Aux     :: *;
-import AXI4_DelayShim :: *;
 
 // ================================================================
 // Project imports
@@ -77,6 +76,7 @@ import MMIO_AXI4_Adapter :: *;
 
 import SoC_Map      :: *;
 import AXI4_Types   :: *;
+import AXI4_DelayShim :: *;
 import Fabric_Defs  :: *;
 
 `ifdef INCLUDE_GDB_CONTROL
