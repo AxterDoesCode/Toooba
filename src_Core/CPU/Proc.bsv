@@ -41,6 +41,8 @@ import ConfigReg    :: *;
 
 import Cur_Cycle      :: *;
 import GetPut_Aux     :: *;
+//import BlueBasics :: *;
+import AXI4_DelayShimAlex :: *;
 
 // ================================================================
 // Project imports
@@ -250,6 +252,18 @@ module mkProc (Proc_IFC);
 `endif
 
    // ================================================================
+   // DRAM latency injection
+
+   //NumProxy#(128) depthProxy = error("Do not look inside proxy");
+   let master_0_delay = llc_axi4_adapter.mem_master;
+   if (valueOf(DramLatency) != 0) begin
+      let delayshim <- mkAXI4_DelayShim(fromInteger(valueOf(DramLatency)));
+      //mkConnection(delayshim.from_master, llc_axi4_adapter.mem_master);
+      mkConnection(llc_axi4_adapter.mem_master, delayshim.from_master);
+      master_0_delay = delayshim.to_slave;
+   end
+
+   // ================================================================
    // ================================================================
    // ================================================================
    // INTERFACE
@@ -273,7 +287,7 @@ module mkProc (Proc_IFC);
    // SoC fabric connections
 
    // Fabric master interface for memory (from LLC)
-   interface  master0 = llc_axi4_adapter.mem_master;
+   interface  master0 = master_0_delay;
 
    // Fabric master interface for IO (from MMIOPlatform)
    interface  master1 = mmio_axi4_adapter.mmio_master;
