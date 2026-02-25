@@ -41,6 +41,7 @@ import ConfigReg    :: *;
 
 import Cur_Cycle      :: *;
 import GetPut_Aux     :: *;
+import AXI4_DelayShim :: *;
 
 // ================================================================
 // Project imports
@@ -248,6 +249,17 @@ module mkProc (Proc_IFC);
 `endif
    function proj_csr_mem_server (x) = x.hart_csr_mem_server;
 `endif
+
+   // ================================================================
+   // DRAM latency injection
+
+   NumProxy#(64) depthProxy = error("Do not look inside proxy");
+   let master_0_delay = llc_axi4_adapter.mem_master;
+   if (valueOf(DramLatency) != 0) begin
+      let delayshim <- mkAXI4_DelayShim(depthProxy, fromInteger(valueOf(DramLatency)));
+      mkConnection(delayshim.slave, llc_axi4_adapter.mem_master);
+      master_0_delay = delayshim.master;
+   end
 
    // ================================================================
    // ================================================================
