@@ -16,7 +16,7 @@ import ProcTypes :: *;
 
 import ISA_Decls  :: *;
 
-import AXI4_Types  :: *;
+import AXI4  :: *;
 import Fabric_Defs :: *;
 import SoC_Map :: *;
 import CCTypes :: *;
@@ -48,10 +48,14 @@ interface Proc_IFC;
    // SoC fabric connections
 
    // Fabric master interface for memory (from LLC)
-   interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  master0;
+   interface AXI4_Master #(Wd_MId, Wd_Addr, Wd_Data,
+                           Wd_AW_User, Wd_W_User, Wd_B_User,
+                           Wd_AR_User, Wd_R_User) master0;
 
    // Fabric master interface for IO (from MMIOPlatform)
-   interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  master1;
+   interface AXI4_Master #( Wd_CoreW_Bus_MId, Wd_Addr, Wd_Data_Periph
+                          , Wd_AW_User, Wd_W_User, Wd_B_User
+                          , Wd_AR_User, Wd_R_User) master1;
 
    // ----------------
    // External interrupts
@@ -76,7 +80,11 @@ interface Proc_IFC;
    // ----------------
    // Coherent port into LLC (used by Debug Module, DMA engines, ... to read/write memory)
 
-   interface AXI4_Slave_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)   debug_module_mem_server;
+   interface AXI4_Slave #( Wd_CoreW_Bus_SId, Wd_Addr, Wd_Data_Periph
+                         , Wd_AW_User_Periph, Wd_W_User_Periph, Wd_B_User_Periph
+                         , Wd_AR_User_Periph, Wd_R_User_Periph)
+   debug_module_mem_server;
+
 
    // ----------------
    // Optional interface to Debug Module

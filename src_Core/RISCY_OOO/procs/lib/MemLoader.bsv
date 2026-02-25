@@ -113,6 +113,7 @@ module mkMemLoader#(Clock portalClk, Reset portalRst)(MemLoader);
     Reg#(LineDataOffset) reqSel <- mkRegU;
     Reg#(LineAddr) reqAddr <- mkRegU;
     Reg#(Line) reqData <- mkRegU;
+    // AlexNote: Do I need to make this like in CHERI-TOOOBA?
     Reg#(Vector#(LineSzData, Bit#(DataSzBytes))) reqBE <- mkRegU;
 
     // sync FIFOs to cross to portal clk
@@ -159,7 +160,7 @@ module mkMemLoader#(Clock portalClk, Reset portalRst)(MemLoader);
         // merge with req data & BE
         Line newData = reqData;
         Vector#(LineSzData, Bit#(DataSzBytes)) newBE = reqBE;
-        newData[reqSel] = wr.data;
+        newData.data[reqSel] = wr.data;
         newBE[reqSel] = wr.byteEn;
         // common state update
         expectWrData <= !wr.last;
@@ -186,7 +187,7 @@ module mkMemLoader#(Clock portalClk, Reset portalRst)(MemLoader);
             // reset BE for next fresh LLC req
             reqBE <= replicate(0);
             // only send real write to LLC, otherwise may spawn orphan read resp
-            if(req.byteEn != replicate(False)) begin
+            if(req.byteEn != replicate(replicate(False))) begin
                 memReqQ.enq(req);
                 pendStCnt <= pendStCnt + 1;
             end

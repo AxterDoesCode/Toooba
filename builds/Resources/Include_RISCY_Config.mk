@@ -10,7 +10,7 @@ PROC := RV64G_OOO
 # core size
 CORE_SIZE ?= SMALL
 # cache size
-CACHE_SIZE ?= LARGE
+CACHE_SIZE ?= ALEX
 # always include perf counter
 PERF_COUNT := true
 # dram type in simulation: VC707 or AWSF1
@@ -18,10 +18,19 @@ SIM_DRAM_TYPE := AWSF1
 # use Xilinx FPU IP cores
 USE_XILINX_FPU ?= false
 
+# default to not including RVFI at all.
+# setting this to true enables debug-displaying of executed instructions using the RVFI trace format. See Core.bsv.
+RVFI ?= false
+# Adding "-D RVFI_DII", linking $(CORE_DIR)/src_Verifier/BSV-RVFI-DII/SocketPacketUtils/socket_packet_utils.c
+# into simulation, and adding $(CORE_DIR)/src_Verifier to the include path allows injecting instructions
+# *and* retrieving those RVFI traces over a socket, which is used for TestRIG. See <https://github.com/CTSRD-CHERI/TestRIG/blob/master/RVFI-DII.md>.
+# See the builds/*_RVFI_DII_*/ Makefiles.
+
 # default 1 core
 CORE_NUM ?= 1
 # TSO or WEAK
-TSO_MM ?= false
+TSO_MM ?= true
+TSO_MM ?= true
 # Lr upgrades line to E (no forward progress guarantee)
 LR_UP_TO_E ?= false
 # Forbid LLC from respoding a load (toS) request with E state
@@ -47,8 +56,8 @@ CHECK_DEADLOCK ?= true
 RENAME_DEBUG ?= false
 INSTR_PREFETCHER_LOCATION ?= NONE
 INSTR_PREFETCHER_TYPE ?= SINGLE_WINDOW_TARGET
-DATA_PREFETCHER_LOCATION ?= NONE
-DATA_PREFETCHER_TYPE ?= STRIDE
+DATA_PREFETCHER_LOCATION ?= L1LL
+DATA_PREFETCHER_TYPE ?= CAP_CHASER
 
 # clk frequency depends on core size
 ifneq (,$(filter $(CORE_SIZE),TINY SMALL BOOM MEDIUM))
@@ -61,23 +70,23 @@ else
 $(error unsupported CORE_SIZE)
 endif
 
-ifeq (,$(filter $(CACHE_SIZE),SMALL LARGE MC_1MB MC_2MB))
+ifeq (,$(filter $(CACHE_SIZE),TEST SMALL STUMPY LARGE MC_1MB MC_2MB ALEX))
 $(error unsupported CACHE_SIZE)
 endif
 
 
-ifeq (,$(filter $(INSTR_PREFETCHER_LOCATION),NONE L1 L1LL LL))
+ifeq (,$(filter $(INSTR_PREFETCHER_LOCATION),NONE L1 LL L1LL))
 	$(error unsupported INSTR_PREFETCHER_LOCATION)
 endif
-ifeq (,$(filter $(INSTR_PREFETCHER_TYPE),NEXT_LINE_ON_MISS NEXT_LINE_ON_ALL SINGLE_WINDOW MULTI_WINDOW SINGLE_WINDOW_TARGET MULTI_WINDOW_TARGET))
+ifeq (,$(filter $(INSTR_PREFETCHER_TYPE),NONE NEXT_LINE_ON_MISS NEXT_LINE_ON_ALL SINGLE_WINDOW MULTI_WINDOW SINGLE_WINDOW_TARGET MULTI_WINDOW_TARGET))
 	$(error unsupported INSTR_PREFETCHER_TYPE)
 endif
 
 
-ifeq (,$(filter $(DATA_PREFETCHER_LOCATION),NONE L1 L1LL LL L1_FORWARDING))
+ifeq (,$(filter $(DATA_PREFETCHER_LOCATION),NONE L1 LL L1LL L1_FORWARDING))
 	$(error unsupported DATA_PREFETCHER_LOCATION)
 endif
-ifeq (,$(filter $(DATA_PREFETCHER_TYPE),MARKOV MARKOV_ON_HIT MARKOV_ON_HIT_2 BLOCK STRIDE STRIDE_ADAPTIVE))
+ifeq (,$(filter $(DATA_PREFETCHER_TYPE),NONE MARKOV MARKOV_ON_HIT MARKOV_ON_HIT_2 BLOCK STRIDE STRIDE_ADAPTIVE ALL_IN_CAP CHERI_STRIDE CHERI_STRIDE_MIX SPP CAP_SPATIAL CAP_PTR CAP_PTR_NEW CAP_PTR_NEW_ONHIT CAP_PTR_NEW_EXACTCAP CAP_PTR_NEW_EXACTCAP_ONHIT MEASURER CAP_SPATIAL_PTR CAP_CHASER CAP_CHASER_FILTER CAP_CHASER_SPLIT CAP_CHASER_SPLIT_STRIDE CAP_CHASER_ALLIN_H_ALWAYS_M_ALWAYS CAP_CHASER_ALLIN_H_50_M_50 CAP_CHASER_ALLIN_H_50_M_ALWAYS CAP_CHASER_ALLIN_H_75_M_75 CAP_CHASER_ALLIN_H_75_M_50 CAP_CHASER_ALLIN_H_75_M_ALWAYS CAP_CHASER_ALLIN_H_NEVER_M_NEVER CAP_CHASER_ALLIN_H_NEVER_M_75 CAP_CHASER_ALLIN_H_NEVER_M_50 CAP_CHASER_ALLIN_H_NEVER_M_ALWAYS))
 	$(error unsupported DATA_PREFETCHER_TYPE)
 endif
 
@@ -91,14 +100,28 @@ XILINX_INT_MUL_LATENCY = 2
 BSC_COMPILATION_FLAGS += \
 	-D CORE_$(CORE_SIZE) \
 	-D NUM_CORES=$(CORE_NUM) \
-	-D CACHE_$(CACHE_SIZE) \
+	-D CACHE_ALEX \
         -D XILINX_FP_FMA_LATENCY=$(XILINX_FP_FMA_LATENCY) \
         -D XILINX_INT_MUL_LATENCY=$(XILINX_INT_MUL_LATENCY) \
 	-D USE_BSV_BRAM_SYNC_FIFO \
 	-D INSTR_PREFETCHER_IN_$(INSTR_PREFETCHER_LOCATION) \
 	-D INSTR_PREFETCHER_$(INSTR_PREFETCHER_TYPE) \
 	-D DATA_PREFETCHER_IN_$(DATA_PREFETCHER_LOCATION) \
-	-D DATA_PREFETCHER_$(DATA_PREFETCHER_TYPE)
+	-D DATA_PREFETCHER_$(DATA_PREFETCHER_TYPE) \
+	-D CAP128 \
+	-D MEM512 \
+	-D RISCV \
+	-D TSO_MM \
+	-D RV64 \
+	-D ISA_PRIV_M  -D ISA_PRIV_S  -D ISA_PRIV_U  \
+	-D SV39 \
+	-D ISA_I  -D ISA_M  -D ISA_A  -D ISA_F  -D ISA_D  -D ISA_FD_DIV  -D ISA_C  \
+	-D NO_SPEC_TRAINING -D NO_SPEC_REDIRECT -D NO_SPEC_STRAIGHT_PATH -D SPEC_RSB_FIXUP -D MELTDOWN_CF \
+	# -D CheriBusBytes=64 \
+	# -D CheriMasterIDWidth=1 \
+	# -D CheriTransactionIDWidth=6 	
+
+#BSC_COMPILATION_FLAGS += -D CAP_CHASER_COUNT_DEPTH
 
 # TODO:
 #    -D SELF_INV_CACHE -D L1D_MAX_HITS=$(SELF_INV_CACHE)
@@ -107,7 +130,41 @@ BSC_COMPILATION_FLAGS += \
 #    -D NO_LOAD_RESP_E
 # various SECURITY related flags
 #    -D PERF_COUNT    -D CHECK_DEADLOCK    -D RENAME_DEBUG ...
+#    -D NO_SPEC_RSB_PUSH -D NO_SPEC_STL
 
 # +RTS -K1G -RTS " --bscflags=" -steps-max-intervals 200  -check-assert
 
 # ================================================================
+
+# ================================================================
+# Search path for bsc for .bsv files
+CORE_DIR ?= $(REPO)
+COREW_DIRS = $(CORE_DIR)/src_Core/Core:$(CORE_DIR)/src_Core/CPU:$(CORE_DIR)/src_Core/ISA:$(CORE_DIR)/src_Core/PLIC:$(CORE_DIR)/src_Core/Debug_Module:$(CORE_DIR)/src_Core/BSV_Additional_Libs:$(CORE_DIR)/src_Core/RISCY_OOO/procs/RV64G_OOO:$(CORE_DIR)/src_Core/RISCY_OOO/procs/lib:$(CORE_DIR)/src_Core/RISCY_OOO/coherence/src:$(CORE_DIR)/src_Core/RISCY_OOO/fpgautils/lib
+WINDCORE_IFC_DIR ?= $(CORE_DIR)/libs/WindCoreInterface
+# CHERICAPLIB_DIR ?= $(CORE_DIR)/libs/cheri-cap-lib
+# TAG_CONTROLLER_DIR ?= $(CORE_DIR)/libs/TagController
+RISCV_HPM_EVENTS_DIR ?= $(CORE_DIR)/libs/RISCV_HPM_Events
+# TAG_CONTROLLER_DIRS = $(TAG_CONTROLLER_DIR)/TagController:$(TAG_CONTROLLER_DIR)/TagController/CacheCore
+BLUESTUFFDIR ?= $(CORE_DIR)/libs/BlueStuff
+# PREFETCHER_DIRS = $(CORE_DIR)/src_Core/RISCY_OOO/coherence/src/prefetcher
+
+# ALL_RISCY_DIRS = $(RISCY_DIRS)
+ALL_RISCY_DIRS = $(RISCY_DIRS):$(CONNECTAL_DIRS)
+
+include $(BLUESTUFFDIR)/bluestuff.inc.mk # sets the BLUESTUFF_DIRS variable
+
+# search path for bsc imports
+# ifdef BSC_CONTRIB_DIR
+# BSC_CONTRIB_LIB_DIR = $(BSC_CONTRIB_DIR)/lib/Libraries
+# else
+# BSC_CONTRIB_LIB_DIR = %/Libraries
+# endif
+# BSC_CONTRIB_DIRS = $(BSC_CONTRIB_LIB_DIR)/Bus
+
+BSC_PATH += -p +:$(WINDCORE_IFC_DIR):$(RISCV_HPM_EVENTS_DIR):$(COREW_DIRS):$(BLUESTUFF_DIRS)
+
+# ifeq ($(RVFI),true)
+# BSC_COMPILATION_FLAGS += \
+# 	-D RVFI
+# BSC_PATH += -p +:$(CORE_DIR)/src_Verifier/BSV-RVFI-DII
+# endif

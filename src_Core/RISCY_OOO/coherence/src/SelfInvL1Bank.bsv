@@ -397,6 +397,7 @@ module mkSelfInvL1Bank#(
             toState: req.toState,
             canUpToE: True,
             id: slot.way,
+            isPrefetchRq: False,
             child: ?
         };
         rqToPQ.enq(cRqToP);
@@ -456,10 +457,10 @@ module mkSelfInvL1Bank#(
         LineDataOffset dataSel = getLineDataOffset(req.addr);
         case(req.op) matches
             Ld: begin
-                procResp.respLd(req.id, curLine[dataSel]);
+                procResp.respLd(req.id, curLine.data[dataSel]);
             end
             Lr: begin
-                procResp.respLrScAmo(req.id, curLine[dataSel]);
+                procResp.respLrScAmo(req.id, curLine.data[dataSel]);
                 // set link addr
                 linkAddr <= Valid (getLineAddr(req.addr));
             end
@@ -474,7 +475,7 @@ module mkSelfInvL1Bank#(
                 procResp.respLrScAmo(req.id, respVal);
                 // calculate new data to write
                 if(succeed) begin
-                    newLine[dataSel] = getUpdatedData(curLine[dataSel], req.byteEn, req.data);
+                    newLine.data[dataSel] = getUpdatedData(curLine.data[dataSel], req.byteEn, req.data);
                 end
                 // reset link addr
                 linkAddr <= Invalid;
@@ -561,14 +562,14 @@ module mkSelfInvL1Bank#(
         Line newLine = curLine;
         LineDataOffset dataSel = getLineDataOffset(req.addr);
         Bool upper32 = req.addr[2] == 1;
-        Data curData = curLine[dataSel];
+        Data curData = curLine.data[dataSel];
         // resp processor
         Data resp = req.amoInst.doubleWord ? curData : signExtend(
             upper32 ? curData[63:32] : curData[31:0]
         );
         procResp.respLrScAmo(req.id, resp);
         // calculate new data to write
-        newLine[dataSel] = amoExec(req.amoInst, curData, req.data, upper32);
+        newLine.data[dataSel] = amoExec(req.amoInst, curData, req.data, upper32);
         // deq pipeline or swap in successor
         // Since AMO always hits in M, hit count is 0 and never self inv
         pipeline.deqWrite(succ, RamData {

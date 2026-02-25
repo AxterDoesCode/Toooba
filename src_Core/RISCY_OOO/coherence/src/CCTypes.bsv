@@ -1,4 +1,3 @@
-
 // Copyright (c) 2017 Massachusetts Institute of Technology
 //
 // Permission is hereby granted, free of charge, to any person
@@ -124,7 +123,7 @@ typedef CacheUtils::CLineByteEn LineByteEn;
 typedef TDiv#(LineSzBytes, InstSzBytes) LineSzInst;
 typedef Bit#(TLog#(LineSzInst)) LineInstOffset;
 
-typedef Vector#(LineSzData, Data) Line;
+typedef CacheUtils::CLine Line;
 
 function LineAddr getLineAddr(Addr addr) = truncateLSB(addr);
 
@@ -136,15 +135,25 @@ function LineInstOffset getLineInstOffset(Addr a);
     return truncate(a >> valueof(LgInstSzBytes));
 endfunction
 
+//function Line getUpdatedLine(Line curLine, LineByteEn wrBE, Line wrLine);
+//    Vector#(LineSzBytes, Bit#(8)) curVec = unpack(pack(curLine));
+//    Vector#(LineSzBytes, Bit#(8)) wrVec = unpack(pack(wrLine));
+//    function Bit#(8) getNewByte(Integer i);
+//        return wrBE[i] ? wrVec[i] : curVec[i];
+//    endfunction
+//    Vector#(LineSzBytes, Bit#(8)) newVec = map(getNewByte, genVector);
+//    return unpack(pack(newVec));
+//endfunction
+
 function Line getUpdatedLine(Line curLine, LineByteEn wrBE, Line wrLine);
-    Vector#(LineSzBytes, Bit#(8)) curVec = unpack(pack(curLine));
-    Vector#(LineSzBytes, Bit#(8)) wrVec = unpack(pack(wrLine));
-    function Bit#(8) getNewByte(Integer i);
-        return wrBE[i] ? wrVec[i] : curVec[i];
-    endfunction
-    Vector#(LineSzBytes, Bit#(8)) newVec = map(getNewByte, genVector);
-    return unpack(pack(newVec));
+    //let curLineMem = clineToMemTaggedDataVector(curLine);
+    //let wrLineMem  = clineToMemTaggedDataVector(wrLine);
+    // AlexNote seems like I can just update the line instead without needing to do any tag bit stuff
+    let newLineMem = zipWith3(mergeDataBE, curLine.data, wrLine.data, wrBE);
+    return CLine{data: newLineMem};
+    //return memTaggedDataVectorToCline(newLineMem);
 endfunction
+
 
 function Data getUpdatedData(Data curData, ByteEn wrBE, Data wrData);
     Vector#(DataSzBytes, Bit#(8)) curVec = unpack(pack(curData));

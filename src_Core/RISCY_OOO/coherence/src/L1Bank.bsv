@@ -619,13 +619,13 @@ endfunction
         case(req.op) matches
             Ld: begin
                 if (!cRqIsPrefetch[n]) begin
-                    procResp.respLd(req.id, curLine[dataSel]);
+                    procResp.respLd(req.id, curLine.data[dataSel]);
                 end else begin
                     lineTouched = False;
                 end
             end
             Lr: begin
-                procResp.respLrScAmo(req.id, curLine[dataSel]);
+                procResp.respLrScAmo(req.id, curLine.data[dataSel]);
                 // set link addr
                 linkAddr <= Valid (getLineAddr(req.addr));
             end
@@ -641,7 +641,7 @@ endfunction
                 procResp.respLrScAmo(req.id, respVal);
                 // calculate new data to write
                 if(succeed) begin
-                    newLine[dataSel] = getUpdatedData(curLine[dataSel], req.byteEn, req.data);
+                    newLine.data[dataSel] = getUpdatedData(curLine.data[dataSel], req.byteEn, req.data);
                 end
                 // reset link addr
                 linkAddr <= Invalid;
@@ -710,14 +710,14 @@ endfunction
         Line newLine = curLine;
         LineDataOffset dataSel = getLineDataOffset(req.addr);
         Bool upper32 = req.addr[2] == 1;
-        Data curData = curLine[dataSel];
+        Data curData = curLine.data[dataSel];
         // resp processor
         Data resp = req.amoInst.doubleWord ? curData : signExtend(
             upper32 ? curData[63:32] : curData[31:0]
         );
         procResp.respLrScAmo(req.id, resp);
         // calculate new data to write
-        newLine[dataSel] = amoExec(req.amoInst, curData, req.data, upper32);
+        newLine.data[dataSel] = amoExec(req.amoInst, curData, req.data, upper32);
         // deq pipeline or swap in successor
         pipeline.deqWrite(succ, RamData {
             info: CacheInfo {

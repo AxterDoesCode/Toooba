@@ -5,6 +5,7 @@ import Prefetcher::*;
 import FIFO::*;
 import Fifos::*;
 import Ehr::*;
+import CacheUtils::*;
 
 import Types::*;
 
@@ -46,12 +47,12 @@ module mkCDP(
         Integer enqIdx = 0;
         $display("%t AlexLog: CDP deqLineL1", $time);
         for (Integer i = 0; i < 8; i = i + 1) begin
-            if (getVpn(x.line[i]) == reqVpn &&& getReqOp(x.req) == Ld) begin
+            if (getVpn(x.line.data[i]) == reqVpn &&& getReqOp(x.req) == Ld) begin
                 nextCandidateBuffer.enqS[enqIdx].enq(
                     NextCandT{
                         paddr: getReqAddr(x.req), 
-                        vaddr: x.line[i]});
-                $display("%t AlexLog: CDP candidate vaddr found, offset: %d, LineDataOffset: ", $time, i, fshow(dataSel), fshow(x.line[i]), fshow(reqVpn), fshow(x.req));
+                        vaddr: x.line.data[i]});
+                $display("%t AlexLog: CDP candidate vaddr found, offset: %d, LineDataOffset: ", $time, i, fshow(dataSel), fshow(x.line.data[i]), fshow(reqVpn), fshow(x.req));
                 enqIdx = enqIdx + 1;
             end
         end

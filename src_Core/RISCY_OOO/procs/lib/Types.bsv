@@ -51,6 +51,18 @@ typedef TDiv#(DataSz, Inst16_Sz) MemDataSzInst;
 typedef TLog#(DataSzInst) LgMemDataSzInst;
 typedef Bit#(LgMemDataSzInst) MemDataInstOffset;
 
+function data_res mergeDataBE(data_t0 oldData, data_t1 newData, be_t be)
+  provisos( Bits#(data_t0, data_sz), Bits#(data_t1, data_sz), Bits#(be_t, be_sz)
+          , Bits#(data_res, data_sz)
+          , Mul#(be_sz, 8, data_sz));
+  Vector#(be_sz, Bit#(8)) oldVec = unpack(pack(oldData));
+  Vector#(be_sz, Bit#(8)) newVec = unpack(pack(newData));
+  Vector#(be_sz, Bool) beVec = unpack(pack(be));
+  function Bit#(8) getNewByte(Integer i) = beVec[i] ? newVec[i] : oldVec[i];
+  Vector#(be_sz, Bit#(8)) finalVec = map(getNewByte, genVector);
+  return unpack(pack(finalVec));
+endfunction
+
 // These types show up in many places so they are defined here
 typedef enum {Swap, Add, Xor, And, Or, Min, Max, Minu, Maxu, None} AmoFunc deriving(Bits, Eq, FShow, Bounded);
 typedef enum { Ld, St, Lr, Sc, Amo, Fence } MemFunc deriving(Bits, Eq, FShow);

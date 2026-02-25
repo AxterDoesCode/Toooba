@@ -29,7 +29,8 @@ import CCTypes     :: *;
 // ----------------
 // From Bluespec Pipes
 
-import AXI4_Types   :: *;
+import AXI4   :: *;
+import SourceSink :: *;
 import Fabric_Defs  :: *;
 
 // ================================================================
@@ -38,7 +39,9 @@ interface LLC_AXI4_Adapter_IFC;
    method Action reset;
 
    // Fabric master interface for memory
-   interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) mem_master;
+   interface AXI4_Master #(Wd_MId, Wd_Addr, Wd_Data,
+                           Wd_AW_User, Wd_W_User, Wd_B_User,
+                           Wd_AR_User, Wd_R_User) mem_master;
 endinterface
 
 // ================================================================
@@ -58,7 +61,8 @@ module mkLLC_AXi4_Adapter #(MemFifoClient #(idT, childT) llc)
    // ================================================================
    // Fabric request/response
 
-   AXI4_Master_Xactor_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) master_xactor <- mkAXI4_Master_Xactor_2;
+   //AXI4_Master_Xactor_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) master_xactor <- mkAXI4_Master_Xactor_2;
+   let masterPortShim <- mkAXI4ShimFF;
 
    // For discarding write-responses
    CreditCounter_IFC #(4) ctr_wr_rsps_pending <- mkCreditCounter; // Max 15 writes outstanding
@@ -69,25 +73,25 @@ module mkLLC_AXi4_Adapter #(MemFifoClient #(idT, childT) llc)
    // Send a read-request into the fabric
    function Action fa_fabric_send_read_req (Fabric_Addr  addr);
       action
-         AXI4_Size  size = axsize_8;
-         let mem_req_rd_addr = AXI4_Rd_Addr {arid:     fabric_default_id,
+         AXI4_Size  size = toAXI4_Size(8).Valid;
+         let mem_req_rd_addr = AXI4_ARFlit {arid:     0,
                                              araddr:   addr,
                                              arlen:    7,           // burst len = arlen+1
                                              arsize:   size,
-                                             arburst:  axburst_incr,
+                                             arburst:  INCR,
                                              arlock:   fabric_default_lock,
                                              arcache:  fabric_default_arcache,
                                              arprot:   fabric_default_prot,
                                              arqos:    fabric_default_qos,
                                              arregion: fabric_default_region,
-                                             aruser:   fabric_default_user};
+                                             aruser:   0};
 
-         master_xactor.i_rd_addr.enq (mem_req_rd_addr);
+         masterPortShim.slave.ar.put(mem_req_rd_addr);
 
          // Debugging
-         if (cfg_verbosity > 1) begin
-            $display ("    ", fshow (mem_req_rd_addr));
-         end
+         //if (cfg_verbosity > 1) begin
+         //   $display ("    ", fshow (mem_req_rd_addr));
+         //end
       endaction
    endfunction
 
@@ -117,14 +121,15 @@ module mkLLC_AXi4_Adapter #(MemFifoClient #(idT, childT) llc)
    endrule
 
    rule rl_handle_read_rsps;
-      let  mem_rsp <- pop_o (master_xactor.o_rd_data);
+      let mem_rsp <- get(masterPortShim.slave.r);
+
 
       if (cfg_verbosity > 1) begin
          $display ("%0d: LLC_AXI4_Adapter.rl_handle_read_rsps: beat %0d ", cur_cycle, rg_rd_rsp_beat);
          $display ("    ", fshow (mem_rsp));
       end
 
-      if (mem_rsp.rresp != axi4_resp_okay) begin
+      if (mem_rsp.rresp != OKAY) begin
          // TODO: need to raise a non-maskable interrupt (NMI) here
          $display ("%0d: LLC_AXI4_Adapter.rl_handle_read_rsp: fabric response error; exit", cur_cycle);
          $display ("    ", fshow (mem_rsp));
@@ -169,12 +174,12 @@ module mkLLC_AXi4_Adapter #(MemFifoClient #(idT, childT) llc)
       // ================
       if (rg_wr_req_beat == 0) begin
          // send AXI4 AW flit
-         master_xactor.i_wr_addr.enq (AXI4_Wr_Addr {
-           awid:     fabric_default_id,
+         masterPortShim.slave.aw.put (AXI4_AWFlit {
+           awid:     0,
            awaddr:   { wb.addr [63:6], 6'h0 },
            awlen:    7, // burst len = awlen+1
-           awsize:   axsize_8,
-           awburst:  axburst_incr,
+           awsize:   toAXI4_Size(8).Valid,
+           awburst:  INCR,
            awlock:   fabric_default_lock,
            awcache:  fabric_default_awcache,
            awprot:   fabric_default_prot,
@@ -198,18 +203,18 @@ module mkLLC_AXi4_Adapter #(MemFifoClient #(idT, childT) llc)
       Vector #(8, Bit #(8)) line_strb = unpack(pack(wb.byteEn));
       Vector #(8, Data) line_data = unpack(pack(wb.data));
       // send AXI4 W flit
-      master_xactor.i_wr_data.enq(AXI4_Wr_Data {
+      masterPortShim.slave.w.put(AXI4_WFlit {
         wdata:  line_data[rg_wr_req_beat],
         wstrb:  line_strb[rg_wr_req_beat],
         wlast:  rg_wr_req_beat == 7,
-        wuser:  fabric_default_user});
+        wuser:  0});
    endrule
 
    // ----------------
    // Discard write-responses from the fabric
 
    rule rl_discard_write_rsp;
-      let wr_resp <- pop_o (master_xactor.o_wr_resp);
+      let wr_resp <- get(masterPortShim.slave.b);
 
       if (ctr_wr_rsps_pending.value == 0) begin
          $display ("%0d: ERROR: LLC_AXI4_Adapter.rl_discard_write_rsp: unexpected Wr response (ctr_wr_rsps_pending.value == 0)",
@@ -220,7 +225,7 @@ module mkLLC_AXi4_Adapter #(MemFifoClient #(idT, childT) llc)
 
       ctr_wr_rsps_pending.decr;
 
-      if (wr_resp.bresp != axi4_resp_okay) begin
+      if (wr_resp.bresp != OKAY) begin
          // TODO: need to raise a non-maskable interrupt (NMI) here
          $display ("%0d: LLC_AXI4_Adapter.rl_discard_write_rsp: fabric response error: exit", cur_cycle);
          $display ("    ", fshow (wr_resp));
@@ -236,7 +241,7 @@ module mkLLC_AXi4_Adapter #(MemFifoClient #(idT, childT) llc)
    endmethod
 
    // Fabric interface for memory
-   interface mem_master = master_xactor.axi_side;
+   interface mem_master = masterPortShim.master;
 endmodule
 
 // ================================================================

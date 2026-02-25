@@ -244,6 +244,7 @@ module mkSelfInvIBank#(
             toState: S, // I$ upgrade to S
             canUpToE: False,
             id: slot.way,
+            isPrefetchRq: False,
             child: ?
         };
         rqToPQ.enq(cRqToP);

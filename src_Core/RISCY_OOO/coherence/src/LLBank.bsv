@@ -547,7 +547,7 @@ endfunction
     rule cRqTransfer_new_dma(!cRqRetryIndexQ.notEmpty && newCRqSrc == Valid (Dma));
         rqFromDmaQ.deq;
         dmaRqT r = rqFromDmaQ.first;
-        Bool write = r.byteEn != replicate(False);
+        Bool write = r.byteEn != replicate(replicate(False));
         cRqT cRq = LLRq {
             addr: r.addr,
             fromState: I,
@@ -772,7 +772,7 @@ endfunction
             else begin // do write back part
                 toMemT msg = Wb (WbMemRs {
                     addr: {cSlot.repTag, truncate(cRq.addr)},
-                    byteEn: replicate(True),
+                    byteEn: replicate(replicate(True)),
                     data: validValue(data)
                 });
                 toMQ.enq(msg);
@@ -809,7 +809,7 @@ endfunction
         doAssert(isValid(data), "dma read req always has valid data");
         // send DMA resp
         doAssert(isRqFromDma(cRq.id), "cRq should be DMA req");
-        doAssert(cRq.byteEn == replicate(False) && cRq.toState == S,
+        doAssert(cRq.byteEn == replicate(replicate(False)) && cRq.toState == S,
             "cRq should be DMA read"
         );
         dmaRqIdT dmaId = getIdFromDma(cRq.id);
@@ -833,7 +833,7 @@ endfunction
         );
         // send DMA resp
         doAssert(isRqFromDma(cRq.id), "cRq should be DMA req");
-        doAssert(cRq.byteEn != replicate(False) && cRq.toState == M,
+        doAssert(cRq.byteEn != replicate(replicate(False)) && cRq.toState == M,
             "cRq should be DMA write"
         );
         dmaRqIdT dmaId = getIdFromDma(cRq.id);
@@ -1082,7 +1082,7 @@ endfunction
         doAssert(ram.info.tag == getTag(cRq.addr) && ram.info.cs > I,
             "cRqHit but tag or cs incorrect"
         );
-        doAssert((cRq.byteEn != replicate(False)) == (cRq.toState == M), "toState should match byteEn");
+        doAssert((cRq.byteEn != replicate(replicate(False))) == (cRq.toState == M), "toState should match byteEn");
         // update cs (may have E -> M)
         Msi newCs = ram.info.cs;
         if(cRq.toState == M) begin
@@ -1090,7 +1090,7 @@ endfunction
         end
         // update cache line
         Maybe#(Line) wrData = cRqMshr.pipelineResp.getData(n);
-        doAssert(isValid(wrData) == (cRq.byteEn != replicate(False)),
+        doAssert(isValid(wrData) == (cRq.byteEn != replicate(replicate(False))),
             "dma write should carry valid data"
         );
         Line newLine = getUpdatedLine(ram.line, cRq.byteEn, validValue(wrData));

@@ -342,15 +342,15 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `endif
 `ifdef PERFORMANCE_MONITORING
             EventsCoreMem events = unpack(0);
-            if (waitSt.shiftedBE == -1) events.evt_MEM_CAP_STORE = 1;
+            if (pack(waitSt.shiftedBE) == -1) events.evt_MEM_CAP_STORE = 1;
             events.evt_STORE_WAIT = saturating_truncate(lat);
             events_reg[2] <= events;
 `endif
             // now figure out the data to be written
-            Vector#(LineSzData, ByteEn) be = replicate(replicate(False));
-            Line data = replicate(0);
+            CLineByteEn be = replicate(replicate(False));
+            Line data = unpack(0);
             be[waitSt.offset] = waitSt.shiftedBE;
-            data[waitSt.offset] = waitSt.shiftedData; //XXX I guess this doesn't work with capabilities?  Maybe we don't build TSO?
+            data.data[waitSt.offset] = waitSt.shiftedData; //XXX I guess this doesn't work with capabilities?  Maybe we don't build TSO?
             return tuple2(unpack(pack(be)), data);
         endmethod
 `else
@@ -803,6 +803,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             op: Lr,
             byteEn: ?,
             data: ?,
+            vpn: ?,
             amoInst: ?,
             pcHash: ?
         };
@@ -1099,6 +1100,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             // data (firstSt.stData is shifted for Sc).
             byteEn: lsqDeqSt.shiftedBE,
             data: lsqDeqSt.stData,
+            vpn: ?,
             amoInst: AmoInst {
                 func: lsqDeqSt.amoFunc,
                 doubleWord: lsqDeqSt.shiftedBE == replicate(True),
@@ -1326,6 +1328,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             op: St,
             byteEn: ?,
             data: ?,
+            vpn: ?,
             amoInst: ?,
             pcHash: pcHash
         });

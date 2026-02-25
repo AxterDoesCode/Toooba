@@ -1,4 +1,16 @@
 // Copyright (c) 2018-2019 Bluespec, Inc. All Rights Reserved
+//-
+// RVFI_DII + CHERI modifications:
+//     Copyright (c) 2020 Alexandre Joannou
+//     All rights reserved.
+//
+//     This software was developed by SRI International and the University of
+//     Cambridge Computer Laboratory (Department of Computer Science and
+//     Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+//     DARPA SSITH research programme.
+//
+//     This work was supported by NCSC programme grant 4212611/RFA 15971 ("SafeBet").
+//-
 
 package Fabric_Defs;
 
@@ -18,9 +30,7 @@ package Fabric_Defs;
 // BSV lib imports
 
 import AXI4 :: *;
-
-// ================================================================
-// Project imports
+import ISA_Decls :: *;
 
 // ================================================================
 // Core local Fabric parameters
@@ -30,7 +40,6 @@ typedef 3  CoreW_Bus_Num_Slaves;
 
 typedef Bit#(TLog #(CoreW_Bus_Num_Masters))  CoreW_Bus_Master_Num;
 typedef Bit#(TLog #(CoreW_Bus_Num_Slaves))   CoreW_Bus_Slave_Num;
-
 
 // ----------------
 // Width of fabric 'Id' buses
@@ -52,6 +61,13 @@ typedef  TDiv #(Wd_Addr, 8)  Bytes_per_Fabric_Addr;
 Integer  bytes_per_fabric_addr = valueOf (Bytes_per_Fabric_Addr);
 
 // ----------------
+// Widths of the main bus data are 128 bits. Peripherals each have a shim
+// converting this down to 64 bits (and stripping tags).
+// (caches <==> Bus <==> (tag controller) <==> main memory
+//               |
+//             Periph
+
+// ----------------
 // Width of fabric 'data' buses
 `ifdef FABRIC64
 typedef 64   Wd_Data;
@@ -59,19 +75,32 @@ typedef 64   Wd_Data;
 typedef 32   Wd_Data;
 `endif
 
-typedef  Bit #(Wd_Data)             Fabric_Data;
-typedef  Bit #(TDiv #(Wd_Data, 8))  Fabric_Strb;
+// ----------------
+// Width of fabric 'user' datapaths. Carry capability tags on data lines.
+typedef 0 Wd_AW_User;
+typedef 0 Wd_B_User;
+typedef 1 Wd_AR_User;
+typedef TMax#(TDiv#(Wd_Data, XLEN),1) Wd_W_User;
+typedef TMax#(TDiv#(Wd_Data, XLEN),1) Wd_R_User;
 
 typedef  TDiv #(Wd_Data, 8)         Bytes_per_Fabric_Data;
 Integer  bytes_per_fabric_data = valueOf (Bytes_per_Fabric_Data);
 
-// ----------------
-// Width of fabric 'user' datapaths
-typedef  0               Wd_User;
-typedef  Bit #(Wd_User)  Fabric_User;
+typedef  Bit #(Wd_Data)             Fabric_Data;
+typedef  Bit #(TDiv #(Wd_Data, 8))  Fabric_Strb;
 
 // ----------------
 typedef 64   Wd_Data_Periph;
+
+typedef 0    Wd_AW_User_Periph;
+typedef 0    Wd_W_User_Periph;
+typedef 0    Wd_B_User_Periph;
+typedef 0    Wd_AR_User_Periph;
+typedef 0    Wd_R_User_Periph;
+
+typedef  Bit #(Wd_Data_Periph)             Fabric_Data_Periph;
+typedef  Bit #(TDiv #(Wd_Data_Periph, 8))  Fabric_Strb_Periph;
+typedef  TDiv #(Wd_Data_Periph, 8)         Bytes_per_Fabric_Data_Periph;
 
 // ----------------
 // Number of zero LSBs in a fabric address aligned to the fabric data width
@@ -81,18 +110,25 @@ Integer  zlsbs_aligned_fabric_addr = valueOf (ZLSBs_Aligned_Fabric_Addr);
 
 // ================================================================
 // AXI4 defaults for this project
-
-//Fabric_Id    fabric_default_id       = 0;
 Bit#(Wd_CoreW_Bus_MId) fabric_corew_bus_default_mid = 0;
 Bit#(Wd_MId)     fabric_default_mid     = 0;
-AXI4_Burst   fabric_default_burst    = INCR;
-AXI4_Lock    fabric_default_lock     = NORMAL;
-AXI4_Cache   fabric_default_arcache  = arcache_dev_nonbuf;
-AXI4_Cache   fabric_default_awcache  = awcache_dev_nonbuf;
-AXI4_Prot    fabric_default_prot    = axi4Prot(DATA, SECURE, UNPRIV);
-AXI4_QoS     fabric_default_qos      = 0;
-AXI4_Region  fabric_default_region   = 0;
-Fabric_User  fabric_default_user     = ?;
+AXI4_Burst       fabric_default_burst   = INCR;
+AXI4_Lock        fabric_default_lock    = NORMAL;
+AXI4_Cache       fabric_default_arcache = arcache_dev_nonbuf;
+AXI4_Cache       fabric_default_awcache = awcache_dev_nonbuf;
+AXI4_Prot        fabric_default_prot    = axi4Prot(DATA, SECURE, UNPRIV);
+AXI4_QoS         fabric_default_qos     = 0;
+AXI4_Region      fabric_default_region  = 0;
+Bit#(Wd_AW_User) fabric_default_awuser  = 0;
+Bit#(Wd_W_User)  fabric_default_wuser   = 0;
+Bit#(Wd_B_User)  fabric_default_buser   = 0;
+Bit#(Wd_AR_User) fabric_default_aruser  = 0;
+Bit#(Wd_R_User)  fabric_default_ruser   = 0;
+Bit#(Wd_AW_User_Periph) fabric_default_awuser_periph  = 0;
+Bit#(Wd_W_User_Periph)  fabric_default_wuser_periph   = 0;
+Bit#(Wd_B_User_Periph)  fabric_default_buser_periph   = 0;
+Bit#(Wd_AR_User_Periph) fabric_default_aruser_periph  = 0;
+Bit#(Wd_R_User_Periph)  fabric_default_ruser_periph   = 0;
 
 // ================================================================
 

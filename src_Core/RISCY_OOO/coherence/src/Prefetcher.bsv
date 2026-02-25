@@ -1203,7 +1203,6 @@ interface SudoPrefetcher;
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr();
 endinterface
 
-
 // Usually would pass in the module but I am passing through the CDP's prefetcher instead
 module mkSudoPrefetcherAdapter#(PCPrefetcher p)(SudoPrefetcher);
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
@@ -2000,7 +1999,7 @@ module mkLLDPrefetcherInL1D(PCPrefetcher);
     `elsif DATA_PREFETCHER_MARKOV_ON_HIT_2
         let m <- mkPCPrefetcherAdapter(mkMarkovOnHit2Prefetcher);
     `endif
-    //let m <- mkPCPrefetcherAdapter(mkAlwaysRequestPrefetcher);
+    let m <- mkPCPrefetcherAdapter(mkAlwaysRequestPrefetcher);
 `else 
     let m <- mkPCPrefetcherAdapter(mkDoNothingPrefetcher);
 `endif
