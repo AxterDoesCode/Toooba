@@ -151,12 +151,14 @@ module mkAXI4_DelayShim #(Bit #(16) delay) (AXI4_DelayShim_IFC);
    // WRITE ADDRESS (AW)
 
    rule rl_aw_master_to_delay;
+      $display("AlexLog: rl_aw_master_to_delay fired");
       let aw = xactor_from_master.o_wr_addr.first;
       xactor_from_master.o_wr_addr.deq;
       awff.enq(aw);
    endrule
 
    rule rl_aw_delay_to_slave;
+      $display("AlexLog: rl_aw_delay_to_slave fired");
       let aw = awff.first;
       awff.deq;
       xactor_to_slave.i_wr_addr.enq(aw);
@@ -166,12 +168,14 @@ module mkAXI4_DelayShim #(Bit #(16) delay) (AXI4_DelayShim_IFC);
    // WRITE DATA (W)
 
    rule rl_w_master_to_delay;
+      $display("AlexLog: rl_w_master_to_delay fired");
       let w = xactor_from_master.o_wr_data.first;
       xactor_from_master.o_wr_data.deq;
       wff.enq(w);
    endrule
 
    rule rl_w_delay_to_slave;
+      $display("AlexLog: rl_w_delay_to_slave fired");
       let w = wff.first;
       wff.deq;
       xactor_to_slave.i_wr_data.enq(w);
@@ -181,11 +185,13 @@ module mkAXI4_DelayShim #(Bit #(16) delay) (AXI4_DelayShim_IFC);
    // WRITE RESPONSE (B)
 
    rule rl_b_slave_to_delay;
+      $display("AlexLog: rl_b_slave_to_delay fired");
       let b <- pop_o(xactor_to_slave.o_wr_resp);
       bff.enq(b);
    endrule
 
-   rule rl_b_delay_to_master;
+   rule rl_b_delay_to_master(bff.notEmpty);
+      $display("AlexLog: rl_b_delay_to_master fired");
       let b = bff.first;
       bff.deq;
       xactor_from_master.i_wr_resp.enq(b);
@@ -195,12 +201,14 @@ module mkAXI4_DelayShim #(Bit #(16) delay) (AXI4_DelayShim_IFC);
    // READ ADDRESS (AR)
 
    rule rl_ar_master_to_delay;
+      $display("AlexLog: rl_ar_master_to_delay fired");
       let ar = xactor_from_master.o_rd_addr.first;
       xactor_from_master.o_rd_addr.deq;
       arff.enq(ar);
    endrule
 
-   rule rl_ar_delay_to_slave;
+   rule rl_ar_delay_to_slave(arff.notEmpty);
+      $display("AlexLog: rl_ar_delay_to_slave fired");
       let ar = arff.first;
       arff.deq;
       xactor_to_slave.i_rd_addr.enq(ar);
@@ -210,11 +218,13 @@ module mkAXI4_DelayShim #(Bit #(16) delay) (AXI4_DelayShim_IFC);
    // READ DATA (R)
 
    rule rl_r_slave_to_delay;
+      $display("AlexLog: rl_r_slave_to_delay fired");
       let r <- pop_o(xactor_to_slave.o_rd_data);
       rff.enq(r);
    endrule
 
    rule rl_r_delay_to_master;
+      $display("AlexLog: rl_r_delay_to_master fired");
       let r = rff.first;
       rff.deq;
       xactor_from_master.i_rd_data.enq(r);
