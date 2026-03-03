@@ -51,7 +51,6 @@ import Performance::*;
 import LatencyTimer::*;
 import RandomReplace::*;
 import Prefetcher::*;
-import CDP::*;
 `ifdef PERFORMANCE_MONITORING
 import PerformanceMonitor::*;
 import SpecialRegs::*;
@@ -190,13 +189,7 @@ module mkL1Bank#(
     // when it doesn't hold up the pipeline.
     Fifo#(4, pRsFromPT) llcDataArrivalQ <- mkOverflowBypassFifo;
 
-    // let prefetcher <- mkL1DPrefetcher;
-    CDP#(procRqT) cdp <- mkCDP;
-`ifdef DATA_PREFETCHER_IN_L1_FORWARDING
-    let prefetcher <- mkNextLevelPrefetcherAdapter(mkSudoPrefetcherAdapter(cdp.prefetcher));
-`else
-    let prefetcher <- mkSudoPrefetcherAdapter(cdp.prefetcher);
-`endif
+    let prefetcher <- mkL1DPrefetcher;
 
     // security flush
 `ifdef SECURITY_CACHES
@@ -394,23 +387,23 @@ endfunction
     (* descending_urgency = "pRqTransfer, cRqTransfer_retry, cRqTransfer_new, sendRqToP, createPrefetchRq" *)
     rule createPrefetchRq(flushDone && crqMshrEnqs - crqMshrDeqs < 6);
         let prefetch <- prefetcher.getNextPrefetchAddr;
-        if (prefetch.nextLevel) begin
-            cRqToPT cRqToP = CRqMsg {
-                addr: prefetch.addr,
-                fromState: ?,
-                toState: S,
-                //op: Ld,
-                canUpToE: True,
-                id: 0,
-                child: ?,
-                isPrefetchRq: True
-            };
-            rqToPQ.enq(cRqToP);
-            if (verbose) $display("%t L1 %m sendPrefetchRqToP: ", $time, fshow(cRqToP));
-        end else begin
+        //if (prefetch.nextLevel) begin
+        //    cRqToPT cRqToP = CRqMsg {
+        //        addr: prefetch.addr,
+        //        fromState: ?,
+        //        toState: S,
+        //        //op: Ld,
+        //        canUpToE: True,
+        //        id: 0,
+        //        child: ?,
+        //        isPrefetchRq: True
+        //    };
+        //    rqToPQ.enq(cRqToP);
+        //    if (verbose) $display("%t L1 %m sendPrefetchRqToP: ", $time, fshow(cRqToP));
+        //end else begin
             procRqT r = ProcRq {
                 id: ?, //Or maybe do 0 here
-                addr: prefetch.addr,
+                addr: prefetch,
                 vpn: ?, // TODO: I think it may be worthwhile passing this through, need to make getNextPrefetchAddr return some struct?
                 toState: S,
                 op: Ld,
@@ -431,7 +424,7 @@ endfunction
                 $display("%t L1 %m createPrefetchRq: ", $time,
                     fshow(n), " ; ",
                     fshow(r));
-        end        
+        //end        
     endrule
 
 `ifdef SECURITY_CACHES
@@ -988,17 +981,6 @@ endfunction
             procRqT procRq = pipeOutCRq;
             doAssert(ram.info.cs >= procRq.toState && ram.info.tag == getTag(procRq.addr), ("pRs must be a hit"));
             cRqHit(cOwner, procRq, True);
-            // AlexNote: Virtual address matcher and prefetch issue needs to be inside this rule, on the parent (L2) response...
-            // The garbage values were from the mkDoNothingPrefetcher..., currently passing ? into the Vpn value on prefetch rule but I need to explore prefetch depth stuff later so should probably pass the Vpn in.
-            // Also if I want to combine with a stride prefetcher then need to do it that way
-            if(!cRqIsPrefetch[cOwner] && procRq.op == Ld) begin // Only forward loads into the prefetcher
-                $display("AlexLog: L1 pipelineResp_pRs (not prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
-                Line curLine = ram.line;
-                cdp.enqLineL1(procRq, curLine);
-            end
-            else 
-                // For now disregard chaining prefetches
-                $display("AlexLog: L1 pipelineResp_pRs (prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
 
             // performance counter: miss cRq
             if (!cRqIsPrefetch[cOwner]) begin
