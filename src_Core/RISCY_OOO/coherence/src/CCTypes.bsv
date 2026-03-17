@@ -276,6 +276,7 @@ typedef struct {
 // child/parent req/resp
 typedef struct {
     Addr addr;
+    Vpn vpn;
     Msi fromState;
     Msi toState;
     Bool canUpToE; // meaningful to upgrade to E if toState is S
@@ -332,6 +333,7 @@ typedef union tagged {
 typedef struct {
     // common addr
     Addr addr;
+    Vpn vpn;
     // child req stuff
     Msi fromState;
     Msi toState;

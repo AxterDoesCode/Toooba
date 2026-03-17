@@ -30,6 +30,7 @@ import Types::*;
 import MemoryTypes::*;
 import Amo::*;
 
+import Cur_Cycle::*;
 import Cntrs::*;
 import Vector::*;
 import ConfigReg::*;
@@ -112,7 +113,7 @@ typedef struct {
 
 module mkL1Bank#(
     Bit#(lgBankNum) bankId,
-    module#(L1CRqMshr#(cRqNum, wayT, tagT, procRqT)) mkL1CRqMshrLocal,
+    module#(L1CRqMshr#(cRqNum, indexT, wayT, tagT, procRqT)) mkL1CRqMshrLocal,
     module#(L1PRqMshr#(pRqNum)) mkL1PRqMshrLocal,
     module#(L1Pipe#(lgBankNum, wayNum, indexT, tagT, cRqIdxT, pRqIdxT)) mkL1Pipeline,
     L1ProcResp#(procRqIdT) procResp
@@ -147,9 +148,10 @@ module mkL1Bank#(
     Add#(TAdd#(tagSz, indexSz), TAdd#(lgBankNum, LgLineSzBytes), AddrSz)
 );
 
-   Bool verbose = True;
+    Bool verbose = True;
+    Bool prefetchVerbose = True;
 
-    L1CRqMshr#(cRqNum, wayT, tagT, procRqT) cRqMshr <- mkL1CRqMshrLocal;
+    L1CRqMshr#(cRqNum, indexT, wayT, tagT, procRqT) cRqMshr <- mkL1CRqMshrLocal;
 
     L1PRqMshr#(pRqNum) pRqMshr <- mkL1PRqMshrLocal;
 
@@ -313,11 +315,24 @@ endfunction
             mshrIdx: n
         }));
         cRqIsPrefetch[n] <= False;
-       if (verbose)
+        if (verbose)
         $display("%t L1 %m cRqTransfer_retry: ", $time,
             fshow(n), " ; ",
             fshow(req)
         );
+        if (prefetchVerbose)
+            $display("%t L1D cRq creation: mshr: %d, addr: 0x%h, vpn: 0x%h, pcHash: 0x%h, mshrInUse: %d/%d, isPrefetch: 0, isRetry: 1, reqCs: ", 
+                cur_cycle, 
+                n, 
+                req.addr,
+                req.vpn,
+                req.pcHash,
+                crqMshrEnqs + 1 - crqMshrDeqs,
+                valueof(cRqNum),
+                fshow(req.toState),
+                ", op: ",
+                fshow(req.op)
+            );
     endrule
 
     // although D$ may not have cRq at every cycle
@@ -337,13 +352,26 @@ endfunction
         cRqIsPrefetch[n] <= False;
         // performance counter: cRq type
         incrReqCnt(r.op);
-       if (verbose) begin
+        if (verbose) begin
         $display("%t L1 %m cRqTransfer_new: ", $time,
             fshow(n), " ; ",
             fshow(r)
         );
         $display ("AlexLog: L1 cRqTransfer_new: Vpn: ", fshow(r.vpn), " Op: ", fshow(r.op));
         end
+        if (prefetchVerbose)
+            $display("%t L1D cRq creation: mshr: %d, addr: 0x%h, vpn: 0x%h, pcHash: 0x%h, mshrInUse: %d/%d, isPrefetch: 0, isRetry: 0, reqCs: ", 
+                cur_cycle, 
+                n, 
+                r.addr,
+                r.vpn,
+                r.pcHash,
+                crqMshrEnqs + 1 - crqMshrDeqs,
+                valueof(cRqNum),
+                fshow(r.toState),
+                ", op: ",
+                fshow(r.op)
+            );
     endrule
 
     (* descending_urgency = "pRqTransfer, cRqTransfer_retry, cRqTransfer_new" *)
@@ -397,6 +425,7 @@ endfunction
         if (prefetch.nextLevel) begin
             cRqToPT cRqToP = CRqMsg {
                 addr: prefetch.addr,
+                vpn: prefetch.vpn,
                 fromState: ?,
                 toState: S,
                 //op: Ld,
@@ -411,7 +440,7 @@ endfunction
             procRqT r = ProcRq {
                 id: ?, //Or maybe do 0 here
                 addr: prefetch.addr,
-                vpn: ?, // TODO: I think it may be worthwhile passing this through, need to make getNextPrefetchAddr return some struct?
+                vpn: prefetch.vpn, // TODO: I think it may be worthwhile passing this through, need to make getNextPrefetchAddr return some struct?
                 toState: S,
                 op: Ld,
                 byteEn: ?,
@@ -427,6 +456,19 @@ endfunction
                 mshrIdx: n
             }));
             cRqIsPrefetch[n] <= True;
+            if (prefetchVerbose)
+                $display("%t L1D cRq creation: mshr: %d, addr: 0x%h, vpn: 0x%h, pcHash: 0x%h, mshrInUse: %d/%d, isPrefetch: 1, isRetry: 0, reqCs: ", 
+                    cur_cycle, 
+                    n, 
+                    prefetch.addr,
+                    prefetch.vpn, // This is needed to chain prefetches
+                    r.pcHash,
+                    crqMshrEnqs + 1 - crqMshrDeqs,
+                    valueof(cRqNum),
+                    fshow(r.toState),
+                    ", op: ",
+                    fshow(r.op)
+                );
             if (verbose)
                 $display("%t L1 %m createPrefetchRq: ", $time,
                     fshow(n), " ; ",
@@ -595,6 +637,24 @@ endfunction
             fshow(n), " ; ",
             fshow(req)
         );
+        Line line = ram.line;
+        if (prefetchVerbose)
+            $display("%t L1D cRq hit: mshr: %d, addr: 0x%h, cRq is prefetch: %d, wasMiss: %d, pipeCs: ",
+                cur_cycle,
+                n,
+                req.addr,
+                cRqIsPrefetch[n],
+                wasMiss,
+                fshow(ram.info.cs),
+                ", reqCs: ",
+                fshow(req.toState),
+                ", saveCs: ",
+                fshow(max(ram.info.cs, req.toState)),
+                ", op: ",
+                fshow(req.op),
+                ", data: ",
+                fshow(line)
+        );
         // check tag & cs: even this function is called by pRs, tag should match,
         // because tag is written into cache before sending req to parent
         doAssert(ram.info.tag == getTag(req.addr) && enoughCacheState(ram.info.cs, req.toState),
@@ -621,6 +681,8 @@ endfunction
             Ld: begin
                 if (!cRqIsPrefetch[n]) begin
                     procResp.respLd(req.id, curLine[dataSel]);
+                    if (prefetchVerbose) 
+                        $display("%t L1Bank hit data: ", $time, fshow(curLine[dataSel]));
                 end else begin
                     lineTouched = False;
                 end
@@ -752,7 +814,9 @@ endfunction
         $display("%t L1 %m pipelineResp: cRq: ", $time, fshow(n), " ; ", fshow(procRq));
 
         // find end of dependency chain
-        Maybe#(cRqIdxT) cRqEOC = cRqMshr.pipelineResp.searchEndOfChain(procRq.addr);
+        Maybe#(cRqIdxT) cRqDependEOC = cRqMshr.pipelineResp.searchDependEndOfChain(procRq.addr);
+        Maybe#(cRqIdxT) cRqQueuedEOC = cRqMshr.pipelineResp.searchQueuedEndOfChain(procRq.addr);
+
 
         function Action cRqScEarlyFail(Bool resetOwner);
         action
@@ -824,6 +888,21 @@ endfunction
             if (!cRqIsPrefetch[n]) begin
                 prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS);
             end
+            LineAddr repLineAddr = getLineAddr({ram.info.tag, truncate(procRq.addr)});
+            if (prefetchVerbose)
+                $display("%t L1D cRq miss (no rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, cRq is prefetch: %d, ramCs: ",
+                    cur_cycle,
+                    n,
+                    procRq.addr,
+                    repLineAddr,
+                    ram.info.other.wasPrefetch,
+                    cRqIsPrefetch[n],
+                    fshow(ram.info.cs),
+                    ", reqCs: ",
+                    fshow(procRq.toState),
+                    ", op: ",
+                    fshow(procRq.op)
+                );
         endaction
         endfunction
 
@@ -859,6 +938,20 @@ endfunction
             if(linkAddr == Valid (repLineAddr)) begin
                 linkAddr <= Invalid;
             end
+            if (prefetchVerbose)
+                $display("%t L1D cRq miss (rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, cRq is prefetch: %d, ramCs: ",
+                    cur_cycle,
+                    n,
+                    procRq.addr,
+                    repLineAddr,
+                    ram.info.other.wasPrefetch,
+                    cRqIsPrefetch[n],
+                    fshow(ram.info.cs),
+                    ", reqCs: ",
+                    fshow(procRq.toState),
+                    ", op: ",
+                    fshow(procRq.op)
+                );
         endaction
         endfunction
 
@@ -867,6 +960,24 @@ endfunction
         action
             cRqMshr.pipelineResp.setStateSlot(n, Depend, defaultValue);
             pipeline.deqWrite(Invalid, pipeOut.ram, False);
+        endaction
+        endfunction
+
+        function Action cRqQueue;
+        action
+            cRqMshr.pipelineResp.setStateSlot(n, Queued, defaultValue);
+            if (cRqQueuedEOC matches tagged Valid .eoc) begin
+                cRqMshr.pipelineResp.setSucc(eoc, Valid (n));
+            end
+            pipeline.deqWrite(Invalid, pipeOut.ram, Valid(fromMaybe(n, pipeOutNextInQueue)), False);
+        endaction
+        endfunction
+
+        function Action cRqDrop;
+        action
+            cRqMshr.pipelineResp.releaseEntry(n);
+            crqMshrDeqs <= crqMshrDeqs + 1;
+            pipeline.deqWrite(Invalid, pipeOut.ram, pipeOutNextInQueue, False);
         endaction
         endfunction
 
@@ -880,21 +991,56 @@ endfunction
         Bool enough_cs = enoughCacheState(ram.info.cs, procRq.toState);
         // check if cs is not I
         Bool cs_valid = ram.info.cs > I;
-
         if(ram.info.owner matches tagged Valid .cOwner) begin
             if(cOwner != n) begin
-                // owner is another cRq, so must just go through tag match
-                // tag match must be hit (because replacement algo won't give a way with owner)
                 doAssert(pipeOutCState == Init, "must first time go through tag match");
-                doAssert(cs_valid && tag_match, "cRq should hit in tag match");
-                // should be added to a cRq in dependency chain & deq from pipeline
-                doAssert(isValid(cRqEOC), ("cRq hit on another cRq, cRqEOC must be true"));
-                cRqMshr.pipelineResp.setSucc(fromMaybe(?, cRqEOC), Valid (n));
-                cRqSetDepNoCacheChange;
-	       if (verbose)
-                $display("%t L1 %m pipelineResp: cRq: own by other cRq ", $time,
-                    fshow(cOwner), ", depend on cRq ", fshow(cRqEOC)
-                );
+                // If the tags match then we want to add to a dependency chain
+                if (tag_match) begin
+                    // should be added to a cRq in dependency chain & deq from pipeline
+                    doAssert(isValid(cRqDependEOC), ("cRq hit on another cRq, cRqDependEOC must be true"));
+                    // If this is a prefetch, we can drop the prefetch here (prefetch was probably late)
+                    if (cRqIsPrefetch[n]) begin
+                        cRqDrop;
+                    end else begin
+                        cRqSetDepNoCacheChange;
+                    end
+                    if (verbose)
+                        $display("%t L1 %m pipelineResp: cRq: own by other cRq ", $time,
+                            fshow(cOwner), ", depend on cRq ", fshow(cRqDependEOC)
+                        );
+                    if (prefetchVerbose)
+                        $display("%t L1D cRq dependency: mshr: %d, depMshr: %d, addr: 0x%h, cRq is prefetch: %d, reqCs: ",
+                            cur_cycle,
+                            n,
+                            cOwner,
+                            procRq.addr,
+                            cRqIsPrefetch[n],
+                            fshow(procRq.toState),
+                            ", op: ",
+                            fshow(procRq.op)
+                        );
+                end 
+                // If the tags don't match then we want to queue the cRq
+                else begin
+                    // if there was an option to add a dependency, L1Pipe should have found it
+                    doAssert(!isValid(cRqDependEOC), ("end of chain is valid but the chosen way did not match tags"));
+                    if (cRqIsPrefetch[n]) begin
+                        cRqDrop;
+                    end else begin
+                        cRqQueue;
+                    end
+                    if (prefetchVerbose)
+                        $display("%t L1D cRq queued: mshr: %d, addr: 0x%h, succTo: ",
+                            cur_cycle,
+                            n,
+                            procRq.addr,
+                            fshow(cRqQueuedEOC),
+                            ", reqCs: ",
+                            fshow(procRq.toState),
+                            ", op: ",
+                            fshow(procRq.op)
+                        );
+                end
             end
             else begin
                 // owner is myself, so must be swapped in
@@ -904,8 +1050,8 @@ endfunction
                     "cRq swapped in by previous cRq, tag must match & cs > I"
                 );
                 // Hit or Miss (but no replacement)
-                if(enough_cs) begin
-		   if (verbose)
+                if(enough_cs_to_hit) begin
+                   if (verbose)
                     $display("%t L1 %m pipelineResp: cRq: own by itself, hit", $time);
                     cRqHit(n, procRq, False);
                 end
@@ -913,16 +1059,16 @@ endfunction
                     // Sc already fails, so we don't need to req parent.  Since
                     // Sc is the owner of the line, we need to reset owner to
                     // Invalid.
-		   if (verbose)
+                   if (verbose)
                     $display("%t L1 %m pipelineResp: cRq: own by itself, Sc early fails, ",
                         $time, fshow(linkAddr)
                     );
                     cRqScEarlyFail(True);
                 end
                 else begin
-		   if (verbose)
-                    $display("%t L1 %m pipelineResp: cRq: own by itself, miss no replace", $time);
-                    cRqMissNoReplacement;
+                  if (verbose)
+                   $display("%t L1 %m pipelineResp: cRq: own by itself, miss no replace", $time);
+                  cRqMissNoReplacement;
                 end
             end
         end
@@ -933,47 +1079,38 @@ endfunction
             // 2. cRq addr-depends on an Sc which fails early, just got waken up
             L1CRqState cState = pipeOutCState;
 
-            // check for cRqEOC to append to dependency chain
-            // Only append to dep-chain if is in Init state
-            if(cRqEOC matches tagged Valid .k &&& cState == Init) begin
-	       if (verbose)
-                $display("%t L1 %m pipelineResp: cRq: no owner, depend on cRq, ", $time,
-                    fshow(cState), " ; ", fshow(cRqEOC)
+            // There should be no dependency
+            doAssert(!isValid(cRqDependEOC), "end of chain is valid but the chosen way is not owned");
+            
+            // Check hit or miss, replacment may be needed
+            if(tag_match && enough_cs_to_hit) begin
+                // Hit
+                doAssert(cs_valid, "hit, so cs must > I");
+                if (verbose)
+                $display("%t L1 %m pipelineResp: cRq: no owner, hit", $time);
+                cRqHit(n, procRq, False);
+            end
+            else if(scFail) begin
+                // Sc already fails, so we don't need to req parent.  Since
+                // there is no owner of the line, we can reset owner to
+                // Invalid.
+                if (verbose)
+                $display("%t L1 %m pipelineResp: cRq: no owner, Sc early fails, ",
+                    $time, fshow(linkAddr)
                 );
-                cRqMshr.pipelineResp.setSucc(k, Valid (n));
-                cRqSetDepNoCacheChange;
+                cRqScEarlyFail(True);
+            end
+            else if(cs_valid && !tag_match) begin
+                // Req parent, need replacement
+                if (verbose)
+                $display("%t L1 %m pipelineResp: cRq: no owner, replace", $time);
+                cRqReplacement;
             end
             else begin
-                // Check hit or miss, replacment may be needed
-                if(tag_match && enough_cs) begin
-                    // Hit
-                    doAssert(cs_valid, "hit, so cs must > I");
-		   if (verbose)
-                    $display("%t L1 %m pipelineResp: cRq: no owner, hit", $time);
-                    cRqHit(n, procRq, False);
-                end
-                else if(scFail) begin
-                    // Sc already fails, so we don't need to req parent.  Since
-                    // there is no owner of the line, we can reset owner to
-                    // Invalid.
-		   if (verbose)
-                    $display("%t L1 %m pipelineResp: cRq: no owner, Sc early fails, ",
-                        $time, fshow(linkAddr)
-                    );
-                    cRqScEarlyFail(True);
-                end
-                else if(cs_valid && !tag_match) begin
-                    // Req parent, need replacement
-		   if (verbose)
-                    $display("%t L1 %m pipelineResp: cRq: no owner, replace", $time);
-                    cRqReplacement;
-                end
-                else begin
-		   if (verbose)
-                    $display("%t L1 %m pipelineResp: cRq: no owner, miss no replace", $time);
-                    // Req parent, no replacement needed
-                    cRqMissNoReplacement;
-                end
+                if (verbose)
+                $display("%t L1 %m pipelineResp: cRq: no owner, miss no replace", $time);
+                // Req parent, no replacement needed
+                cRqMissNoReplacement;
             end
         end
     endrule
@@ -1068,6 +1205,15 @@ endfunction
                 repTag: ?,
                 waitP: True
             });
+            if (prefetchVerbose)
+                $display("%t L1D pRq: line addr: 0x%h, wasPrefetch: %d, overtakeCRq: 1, ramCs: ",
+                    cur_cycle,
+                    getLineAddr(cRq.addr),
+                    ram.info.other.wasPrefetch,
+                    fshow(ram.info.cs),
+                    ", reqCs: ",
+                    fshow(I)
+                );
         end
         else begin
 	   if (verbose)
@@ -1092,6 +1238,15 @@ endfunction
                 line: ram.line
             }, False);
             rsToPIndexQ.enq(PRq (n));
+            if (prefetchVerbose)
+                $display("%t L1D pRq: line addr: 0x%h, wasPrefetch: %d, overtakeCRq: 0, ramCs: ",
+                    cur_cycle,
+                    getLineAddr(pRq.addr),
+                    ram.info.other.wasPrefetch,
+                    fshow(ram.info.cs),
+                    ", reqCs: ",
+                    fshow(pRq.toState)
+                );
         end
 
         // since pRq is always processed in one shot, we reset link addr here together
@@ -1327,7 +1482,7 @@ endmodule
 
 // group banks into cache
 module mkL1Cache#(
-    module#(L1CRqMshr#(cRqNum, wayT, tagT, procRqT)) mkL1CRqMshrLocal,
+    module#(L1CRqMshr#(cRqNum, indexT, wayT, tagT, procRqT)) mkL1CRqMshrLocal,
     module#(L1PRqMshr#(pRqNum)) mkL1PRqMshrLocal,
     module#(L1Pipe#(lgBankNum, wayNum, indexT, tagT, cRqIdxT, pRqIdxT)) mkL1Pipeline,
     L1ProcResp#(procRqIdT) procResp

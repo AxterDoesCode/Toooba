@@ -12,7 +12,7 @@ interface CDP#(
     type reqT
 );
     method Action enqLineL1(reqT req, Line line);
-    interface PCPrefetcher prefetcher;
+    interface CDPPCPrefetcher prefetcher;
 endinterface
 
 typedef struct {
@@ -67,7 +67,7 @@ module mkCDP(
         $display("%t AlexLog: CDP enqLineL1", $time);
     endmethod
 
-    interface PCPrefetcher prefetcher;
+    interface CDPPCPrefetcher prefetcher;
         method Action reportAccess(Addr addr,Bit#(16) pcHash, HitOrMiss hitMiss);
             if (hitMiss == HIT) begin
                 $display("%t AlexLog: prefetcher report HIT %h", $time, addr);
@@ -77,7 +77,7 @@ module mkCDP(
             end
         endmethod
 
-        method ActionValue#(Addr) getNextPrefetchAddr; // Do I want some condition here?
+        method ActionValue#(Tuple2#(Addr, Vpn)) getNextPrefetchAddr; // Do I want some condition here?
             // Found a virtual address and need to translate it now,
             // because I'm matching the VPN that caused to load to potential vaddrs with the same VPN, then the PPN should also be the same
             let x = nextCandidateBuffer.deqS[0].first;
@@ -85,7 +85,7 @@ module mkCDP(
             // Use the same VPN -> PPN, but get the offset of the candidate vaddr
             Addr nextAddr = zeroExtend({getPpn(x.paddr), getPageOffset(x.vaddr)});
             $display("%t AlexLog: CDP Prefetch addr issued. paddr: %h | vaddr: %h", $time, nextAddr, x.vaddr);
-            return nextAddr;
+            return tuple2 (nextAddr, getVpn(x.vaddr));
         endmethod
     endinterface
 endmodule

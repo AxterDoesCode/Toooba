@@ -119,6 +119,7 @@ interface L1Pipe#(
     method Action deqWrite(
         Maybe#(cRqIdxT) swapRq,
         RamData#(tagT, Msi, void, Maybe#(cRqIdxT), PrefetchInfo, Line) wrRam, // always write BRAM
+        Maybe#(cRqIdxT) nextInQueue,
         Bool updateRep
     );
 endinterface
@@ -379,7 +380,7 @@ module mkL1Pipe(
         };
     endmethod
 
-    method Action deqWrite(Maybe#(cRqIdxT) swapRq, ramDataT wrRam, Bool updateRep);
+    method Action deqWrite(Maybe#(cRqIdxT) swapRq, ramDataT wrRam, Maybe#(cRqIdxT) nextInQueue, Bool updateRep);
         // get new cmd
         Maybe#(pipeCmdT) newCmd = Invalid;
         if(swapRq matches tagged Valid .idx) begin // swap in cRq

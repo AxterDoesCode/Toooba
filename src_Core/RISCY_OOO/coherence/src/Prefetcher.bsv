@@ -35,6 +35,7 @@ import Types::*;
 import Vector::*;
 import BuildVector::*;
 import ProcTypes::*;
+import TlbTypes::*;
 
 Bool verbose = False;
 
@@ -44,6 +45,7 @@ typedef enum {
 
 typedef struct {
     Addr addr;
+    Vpn  vpn;
     Bool nextLevel;
 } PendingPrefetch deriving (Bits, Eq, FShow);
 
@@ -1197,6 +1199,11 @@ interface PCPrefetcher;
     method ActionValue#(Addr) getNextPrefetchAddr();
 endinterface
 
+interface CDPPCPrefetcher;
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
+    method ActionValue#(Tuple2#(Addr, Vpn)) getNextPrefetchAddr();
+endinterface
+
 interface SudoPrefetcher;
     (* always_ready *)
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
@@ -1205,14 +1212,17 @@ endinterface
 
 
 // Usually would pass in the module but I am passing through the CDP's prefetcher instead
-module mkSudoPrefetcherAdapter#(PCPrefetcher p)(SudoPrefetcher);
+// And modified the interface to return tuple of VPN to chain prefetches
+module mkSudoPrefetcherAdapter#(CDPPCPrefetcher p)(SudoPrefetcher);
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
         p.reportAccess(addr, pcHash, hitMiss);
     endmethod
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
-        let addr <- p.getNextPrefetchAddr;
+        let {addr, vpn} <- p.getNextPrefetchAddr;
+        // AlexNote: make this return a tuple2 instead so I can get back the VPN
         return PendingPrefetch {
             addr: addr,
+            vpn: vpn,
             nextLevel: False
         };
     endmethod

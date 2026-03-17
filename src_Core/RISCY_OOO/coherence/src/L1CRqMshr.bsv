@@ -44,7 +44,8 @@ typedef enum {
     WaitNewTag, // waiting replacement resp to send (but tag in RAM is already updated)
     WaitSt, // wait pRs/cRs to come
     Done, // resp is in index FIFO
-    Depend
+    Depend,
+    Queued // wait for a way to be free
 } L1CRqState deriving(Bits, Eq, FShow);
 
 // CRq info returned to outside
@@ -116,6 +117,7 @@ endinterface
 // port for pipelineResp
 interface L1CRqMshr_pipelineResp#(
     numeric type cRqNum,
+    type indexT,
     type wayT,
     type tagT,
     type reqT
@@ -141,11 +143,13 @@ interface L1CRqMshr_pipelineResp#(
 
     // find existing cRq which has gone through pipeline, but not in Done state, and has not successor
     // i.e. search the end of dependency chain
-    method Maybe#(Bit#(TLog#(cRqNum))) searchEndOfChain(Addr addr);
+    method Maybe#(Bit#(TLog#(cRqNum))) searchDependEndOfChain(Addr addr);
+    method Maybe#(Bit#(TLog#(cRqNum))) searchQueuedEndOfChain(Addr addr);
 endinterface
 
 interface L1CRqMshr#(
     numeric type cRqNum, 
+    type indexT,
     type wayT,
     type tagT,
     type reqT // child req type
@@ -160,7 +164,7 @@ interface L1CRqMshr#(
     interface L1CRqMshr_sendRqToP#(cRqNum, wayT, tagT, reqT) sendRqToP;
 
     // port for pipelineResp
-    interface L1CRqMshr_pipelineResp#(cRqNum, wayT, tagT, reqT) pipelineResp;
+    interface L1CRqMshr_pipelineResp#(cRqNum, indexT, wayT, tagT, reqT) pipelineResp;
 
     // port for security flush
     method Bool emptyForFlush;
@@ -174,12 +178,14 @@ endinterface
 // safe version //
 //////////////////
 module mkL1CRqMshrSafe#(
-    function Addr getAddrFromReq(reqT r)
+    function Addr getAddrFromReq(reqT r),
+    function indexT getIndexFromAddr(Addr addr)
 )(
-    L1CRqMshr#(cRqNum, wayT, tagT, reqT)
+    L1CRqMshr#(cRqNum, indexT, wayT, tagT, reqT)
 ) provisos (
     Alias#(cRqIndexT, Bit#(TLog#(cRqNum))),
     Alias#(slotT, L1CRqSlot#(wayT, tagT)),
+    Alias#(indexT, Bit#(_indexSz)),
     Alias#(wayT, Bit#(_waySz)),
     Alias#(tagT, Bit#(_tagSz)),
     Bits#(reqT, _reqSz)
@@ -338,15 +344,26 @@ module mkL1CRqMshrSafe#(
             succFile.upd(n, fromMaybe(?, succ));
         endmethod
 
-        method Maybe#(cRqIndexT) searchEndOfChain(Addr addr);
+        method Maybe#(cRqIndexT) searchDependEndOfChain(Addr addr);
             function Bool isEndOfChain(Integer i);
                 // check entry i is end of chain or not
                 L1CRqState state = stateVec[i][pipelineResp_port];
-                Bool notDone = state != Done;
-                Bool processedOnce = state != Empty && state != Init;
+                Bool isDepend = state == WaitSt || state == WaitNewTag || state == Depend;
                 Bool addrMatch = getLineAddr(getAddrFromReq(reqVec[i][pipelineResp_port])) == getLineAddr(addr);
                 Bool noSucc = !succValidVec[i][pipelineResp_port];
-                return notDone && processedOnce && addrMatch && noSucc;
+                return isDepend && addrMatch && noSucc;
+            endfunction
+            Vector#(cRqNum, Integer) idxVec = genVector;
+            return searchIndex(isEndOfChain, idxVec);
+        endmethod
+
+        method Maybe#(Bit#(TLog#(cRqNum))) searchQueuedEndOfChain(Addr addr);
+            function Bool isEndOfChain(Integer i);
+                L1CRqState state = stateVec[i][pipelineResp_port];
+                Bool isQueued = state == Queued;
+                Bool indexMatch = getIndexFromAddr(getAddrFromReq(reqVec[i][pipelineResp_port])) == getIndexFromAddr(addr);
+                Bool noSucc = !succValidVec[i][pipelineResp_port];
+                return isQueued && indexMatch && noSucc;
             endfunction
             Vector#(cRqNum, Integer) idxVec = genVector;
             return searchIndex(isEndOfChain, idxVec);
@@ -368,14 +385,16 @@ endmodule
 
 // exported version
 module mkL1CRqMshr#(
-    function Addr getAddrFromReq(reqT r)
+    function Addr getAddrFromReq(reqT r),
+    function indexT getIndexFromAddr(Addr addr)
 )(
-    L1CRqMshr#(cRqNum, wayT, tagT, reqT)
+    L1CRqMshr#(cRqNum, indexT, wayT, tagT, reqT)
 ) provisos (
+    Alias#(indexT, Bit#(_indexSz)),
     Alias#(wayT, Bit#(_waySz)),
     Alias#(tagT, Bit#(_tagSz)),
     Bits#(reqT, _reqSz)
 );
-    let m <- mkL1CRqMshrSafe(getAddrFromReq);
+    let m <- mkL1CRqMshrSafe(getAddrFromReq, getIndexFromAddr);
     return m;
 endmodule
