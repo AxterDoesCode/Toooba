@@ -138,6 +138,7 @@ interface L1CRqMshr_pipelineResp#(
     // cannot be used to release MSHR entry (use releaseSlot instead)
 
     method Maybe#(Bit#(TLog#(cRqNum))) getSucc(Bit#(TLog#(cRqNum)) n);
+    method Maybe#(Bit#(TLog#(cRqNum))) getSucc2(Bit#(TLog#(cRqNum)) n);
     method Action setSucc(Bit#(TLog#(cRqNum)) n, Maybe#(Bit#(TLog#(cRqNum))) succ);
     // index in setSucc is usually different from other getXXX methods
 
@@ -145,6 +146,13 @@ interface L1CRqMshr_pipelineResp#(
     // i.e. search the end of dependency chain
     method Maybe#(Bit#(TLog#(cRqNum))) searchDependEndOfChain(Addr addr);
     method Maybe#(Bit#(TLog#(cRqNum))) searchQueuedEndOfChain(Addr addr);
+endinterface
+
+// port to manage the state of queued instructions in parallel with pipelineResp 
+interface L1CRqMshr_manageQueue#(
+    numeric type cRqNum
+);
+    method Action resetEntry(Bit#(TLog#(cRqNum)) n);
 endinterface
 
 interface L1CRqMshr#(
@@ -165,6 +173,10 @@ interface L1CRqMshr#(
 
     // port for pipelineResp
     interface L1CRqMshr_pipelineResp#(cRqNum, indexT, wayT, tagT, reqT) pipelineResp;
+
+    // port for manageQueue
+    interface L1CRqMshr_manageQueue#(cRqNum) manageQueue;
+
 
     // port for security flush
     method Bool emptyForFlush;
@@ -198,20 +210,21 @@ module mkL1CRqMshrSafe#(
     Integer sendRqToP_port = 0; // sendRqToP is read only
     Integer sendRsToP_cRq_port = 0;
     Integer pipelineResp_port = 1;
-    Integer cRqTransfer_port = 2;
+    Integer manageQueue_port = 2;
+    Integer cRqTransfer_port = 3;
 
     // MSHR entry state
-    Vector#(cRqNum, Ehr#(3, L1CRqState)) stateVec <- replicateM(mkEhr(Empty));
+    Vector#(cRqNum, Ehr#(4, L1CRqState)) stateVec <- replicateM(mkEhr(Empty));
     // cRq req contents
-    Vector#(cRqNum, Ehr#(3, reqT)) reqVec <- replicateM(mkEhr(?));
+    Vector#(cRqNum, Ehr#(4, reqT)) reqVec <- replicateM(mkEhr(?));
     // cRq mshr slots
-    Vector#(cRqNum, Ehr#(3, slotT)) slotVec <- replicateM(mkEhr(defaultValue));
+    Vector#(cRqNum, Ehr#(4, slotT)) slotVec <- replicateM(mkEhr(defaultValue));
     // data valid bit
-    Vector#(cRqNum, Ehr#(3, Bool)) dataValidVec <- replicateM(mkEhr(False));
+    Vector#(cRqNum, Ehr#(4, Bool)) dataValidVec <- replicateM(mkEhr(False));
     // data values
     RegFile#(cRqIndexT, Line) dataFile <- mkRegFile(0, fromInteger(valueOf(cRqNum) - 1));
     // successor valid bit
-    Vector#(cRqNum, Ehr#(3, Bool)) succValidVec <- replicateM(mkEhr(False));
+    Vector#(cRqNum, Ehr#(4, Bool)) succValidVec <- replicateM(mkEhr(False));
     // successor MSHR index
     RegFile#(cRqIndexT, cRqIndexT) succFile <- mkRegFile(0, fromInteger(valueOf(cRqNum) - 1));
     // empty entry FIFO
@@ -339,9 +352,18 @@ module mkL1CRqMshrSafe#(
             return succValidVec[n][pipelineResp_port] ? (Valid (succFile.sub(n))) : Invalid;
         endmethod
 
+        method Maybe#(cRqIndexT) getSucc2(cRqIndexT n);
+            return succValidVec[n][pipelineResp_port] ? (Valid (succFile.sub(n))) : Invalid;
+        endmethod
+
+       // method Action setSucc(cRqIndexT n, Maybe#(cRqIndexT) succ);
+            //succValidVec[n][pipelineResp_port] <= isValid(succ);
+            //succFile.upd(n, fromMaybe(?, succ));
+        //endmethod
         method Action setSucc(cRqIndexT n, Maybe#(cRqIndexT) succ);
             succValidVec[n][pipelineResp_port] <= isValid(succ);
-            succFile.upd(n, fromMaybe(?, succ));
+            if (succ matches tagged Valid .s)
+                succFile.upd(n, s);
         endmethod
 
         method Maybe#(cRqIndexT) searchDependEndOfChain(Addr addr);
@@ -367,6 +389,13 @@ module mkL1CRqMshrSafe#(
             endfunction
             Vector#(cRqNum, Integer) idxVec = genVector;
             return searchIndex(isEndOfChain, idxVec);
+        endmethod
+    endinterface
+
+    interface L1CRqMshr_manageQueue manageQueue;
+        method Action resetEntry(Bit#(TLog#(cRqNum)) n);
+            stateVec[n][manageQueue_port] <= Init;
+            succValidVec[n][manageQueue_port] <= False;
         endmethod
     endinterface
 

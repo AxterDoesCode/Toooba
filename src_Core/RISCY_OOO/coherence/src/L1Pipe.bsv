@@ -114,7 +114,7 @@ interface L1Pipe#(
         Bit#(TLog#(wayNum)),
         tagT, Msi, void, // no dir
         Maybe#(cRqIdxT), PrefetchInfo, RandRepInfo,
-        Line, L1Cmd#(indexT, cRqIdxT, pRqIdxT)
+        Line, Maybe#(cRqIdxT), L1Cmd#(indexT, cRqIdxT, pRqIdxT)
     ) first;
     method Action deqWrite(
         Maybe#(cRqIdxT) swapRq,
@@ -151,11 +151,12 @@ module mkL1Pipe(
     Alias#(dirT, void), // no directory
     Alias#(ownerT, Maybe#(cRqIdxT)),
     Alias#(otherT, PrefetchInfo), // store information for prefetcher analysis
+    Alias#(setAuxT, Maybe#(cRqIdxT)),
     Alias#(repT, RandRepInfo), // use random replace
     Alias#(pipeInT, L1PipeIn#(wayT, indexT, cRqIdxT, pRqIdxT)),
     Alias#(pipeCmdT, L1PipeCmd#(wayT, indexT, cRqIdxT, pRqIdxT)),
     Alias#(l1CmdT, L1Cmd#(indexT, cRqIdxT, pRqIdxT)),
-    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, dirT, ownerT, otherT, repT, Line, l1CmdT)), // output type
+    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, dirT, ownerT, otherT, repT, Line, setAuxT, l1CmdT)), // output type
     Alias#(infoT, CacheInfo#(tagT, Msi, dirT, ownerT, otherT)),
     Alias#(ramDataT, RamData#(tagT, Msi, dirT, ownerT, otherT, Line)),
     Alias#(respStateT, RespState#(Msi)),
@@ -172,12 +173,13 @@ module mkL1Pipe(
     Add#(tagSz, b__, AddrSz)
 );
 
-   Bool verbose = False;
+   Bool verbose = True;
 
     // RAMs
     Vector#(wayNum, RWBramCore#(indexT, infoT)) infoRam <- replicateM(mkRWBramCoreForwarded);
     RWBramCore#(indexT, repT) repRam <- mkRandRepRam;
     Vector#(wayNum, RWBramCore#(indexT, Line)) dataRam <- replicateM(mkRWBramCoreForwarded);
+    RWBramCore#(indexT, setAuxT) queueRam <- mkRWBramCoreForwarded;
 
     // initialize RAM
     Reg#(Bool) initDone <- mkReg(False);
@@ -194,6 +196,7 @@ module mkL1Pipe(
             });
         end
         repRam.wrReq(initIndex, randRepInitInfo); // useless for random replace
+        queueRam.wrReq(initIndex, Invalid);
         initIndex <= initIndex + 1;
         if(initIndex == maxBound) begin
             initDone <= True;
@@ -261,11 +264,13 @@ module mkL1Pipe(
                 Addr addr = getAddrFromCmd(cmd);
                 tagT tag = getTag(addr);
                 // find hit way (nothing is being replaced)
-                function Bool isMatch(Tuple2#(Msi, tagT) csTag);
-                    match {.cs, .t} = csTag;
-                    return cs > I && t == tag;
+                function Bool isMatch(Tuple3#(Msi, tagT, ownerT) csTagOwner);
+                    match {.cs, .t, .o} = csTagOwner;
+                    Bool cRqHit = (cs > I || isValid(o)) && t == tag;
+                    Bool pRqHit = cs > I && t == tag;
+                    return cmd matches tagged CRq .* ? cRqHit : pRqHit;
                 endfunction
-                Maybe#(wayT) hitWay = searchIndex(isMatch, zip(csVec, tagVec));
+                Maybe#(wayT) hitWay = searchIndex(isMatch, zip3(csVec, tagVec, ownerVec));
                 if(hitWay matches tagged Valid .w) begin
                     return TagMatchResult {
                         way: w,
@@ -328,11 +333,11 @@ module mkL1Pipe(
     endfunction
 
     CCPipe#(
-        wayNum, indexT, tagT, Msi, dirT, ownerT, otherT, repT, Line, pipeCmdT
+        wayNum, indexT, tagT, Msi, dirT, ownerT, otherT, repT, Line, setAuxT, pipeCmdT
     ) pipe <- mkCCPipeSingleCycle(
         regToReadOnly(initDone), getIndex, tagMatch,
         updateByUpCs, updateByDownDir, updateRepInfo,
-        infoRam, repRam, dataRam
+        infoRam, repRam, dataRam, queueRam
     );
 
     method Action send(pipeInT req);
@@ -376,7 +381,8 @@ module mkL1Pipe(
             way: pout.way,
             pRqMiss: pout.pRqMiss,
             ram: pout.ram,
-            repInfo: pout.repInfo
+            repInfo: pout.repInfo,
+            setAuxData: pout.setAuxData
         };
     endmethod
 
@@ -392,6 +398,6 @@ module mkL1Pipe(
 `endif
         end
         // call pipe
-        pipe.deqWrite(newCmd, wrRam, updateRep);
+        pipe.deqWrite(newCmd, wrRam, nextInQueue, updateRep);
     endmethod
 endmodule

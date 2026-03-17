@@ -21,6 +21,8 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+`ifdef SELF_INV_CACHE
+
 import Assert::*;
 import ConfigReg::*;
 import Vector::*;
@@ -468,3 +470,4 @@ module mkSelfInvIPipe(
         return !needReconcile;
     endmethod
 endmodule
+`endif // SELF_INV_CACHE

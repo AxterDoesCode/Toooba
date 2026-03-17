@@ -109,6 +109,7 @@ typedef struct {
     cRqIdxT n; // AMO req MSHR idx
     cRqT req; // AMO req
     Maybe#(cRqIdxT) succ; // same-addr-successor of AMO req
+    Maybe#(cRqIdxT) nextInQueue;
 } AmoHitInfo#(type cRqIdxT, type cRqT) deriving(Bits, Eq, FShow);
 
 module mkL1Bank#(
@@ -127,6 +128,7 @@ module mkL1Bank#(
     Alias#(pRqIdxT, Bit#(TLog#(pRqNum))),
     Alias#(cacheOwnerT, Maybe#(cRqIdxT)), // actually owner cannot be pRq
     Alias#(cacheOtherT, PrefetchInfo),
+    Alias#(cacheSetAuxT, Maybe#(cRqIdxT)),
     Alias#(cacheInfoT, CacheInfo#(tagT, Msi, void, cacheOwnerT, cacheOtherT)),
     Alias#(ramDataT, RamData#(tagT, Msi, void, cacheOwnerT, cacheOtherT, Line)),
     Alias#(procRqT, ProcRq#(procRqIdT)),
@@ -137,7 +139,7 @@ module mkL1Bank#(
     Alias#(pRqRsFromPT, PRqRsMsg#(wayT, void)),
     Alias#(cRqSlotT, L1CRqSlot#(wayT, tagT)), // cRq MSHR slot
     Alias#(l1CmdT, L1Cmd#(indexT, cRqIdxT, pRqIdxT)),
-    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, l1CmdT)),
+    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, cacheSetAuxT, l1CmdT)),
     // requirements
     Bits#(procRqIdT, _procRqIdT),
     FShow#(procRqIdT),
@@ -583,6 +585,7 @@ endfunction
         cRqSlotT slot = cRqMshr.sendRqToP.getSlot(n);
         cRqToPT cRqToP = CRqMsg {
             addr: req.addr,
+            vpn: req.vpn,
             fromState: slot.cs,
             toState: req.toState,
             canUpToE: True,
@@ -628,6 +631,8 @@ endfunction
     L1CRqState pipeOutCState = cRqMshr.pipelineResp.getState(pipeOutCRqIdx);
     cRqSlotT pipeOutCSlot = cRqMshr.pipelineResp.getSlot(pipeOutCRqIdx);
     Maybe#(cRqIdxT) pipeOutSucc = cRqMshr.pipelineResp.getSucc(pipeOutCRqIdx);
+    Maybe#(cRqIdxT) pipeOutNextInQueue = pipeOut.setAuxData;
+    Maybe#(cRqIdxT) pipeOutSecondInQueue = isValid(pipeOutNextInQueue) ? cRqMshr.pipelineResp.getSucc2(fromMaybe(?, pipeOutNextInQueue)) : Invalid;
 
     // function to process cRq hit (MSHR slot may have garbage)
     function Action cRqHit(cRqIdxT n, procRqT req, Bool wasMiss);
@@ -738,7 +743,16 @@ endfunction
                     }
                 },
                 line: newLine // write new data into cache
-            }, True); // hit, so update rep info
+            }, isValid(succ) ? pipeOutNextInQueue : pipeOutSecondInQueue, True); // hit, so update rep info
+            if (!isValid(succ) &&& pipeOutNextInQueue matches tagged Valid .nextInQueue) begin
+                $display("%t L1D dequeuing queued req: mshr: %d, queueSucc: ",
+                    cur_cycle,
+                    nextInQueue,
+                    fshow(pipeOutSecondInQueue)
+                );
+                cRqRetryIndexQ.enq(nextInQueue);
+                cRqMshr.manageQueue.resetEntry(nextInQueue);
+            end
             if (!cRqIsPrefetch[n]) begin
                 prefetcher.reportAccess(req.addr, req.pcHash, HIT);
             end
@@ -755,7 +769,8 @@ endfunction
             processAmo <= Valid (AmoHitInfo {
                 n: n,
                 req: req,
-                succ: succ
+                succ: succ,
+                nextInQueue: pipeOutNextInQueue
             });
 	   if (verbose)
             $display("%t L1 %m pipelineResp: Hit func: AMO process in next cycle", $time);
@@ -791,7 +806,7 @@ endfunction
                 other: PrefetchInfo {wasPrefetch: False}
             },
             line: newLine // write new data into cache
-        }, True); // hit, so update rep info
+        }, amoHit.nextInQueue, True); // hit, so update rep info
         doAssert(req.toState == M, "AMO must req for M");
        if (verbose)
         $display("%t L1 %m processAmo: update ram: ", $time,
@@ -836,7 +851,7 @@ endfunction
                     other: ram.info.other
                 },
                 line: ram.line
-            }, False);
+            }, pipeOutNextInQueue, False);
             // retry successor
             Maybe#(cRqIdxT) succ = pipeOutSucc;
             if(succ matches tagged Valid .s) begin
@@ -884,7 +899,7 @@ endfunction
                     other: ram.info.other
                 },
                 line: ram.line
-            }, False);
+            }, pipeOutNextInQueue, False);
             if (!cRqIsPrefetch[n]) begin
                 prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS);
             end
@@ -919,7 +934,7 @@ endfunction
                     other: ?
                 },
                 line: ? // data is no longer used
-            }, False);
+            }, pipeOutNextInQueue, False);
             // update MSHR: may save replaced line data
             cRqMshr.pipelineResp.setStateSlot(n, WaitNewTag, L1CRqSlot {
                 way: pipeOut.way, // use way from pipeline
@@ -959,7 +974,8 @@ endfunction
         function Action cRqSetDepNoCacheChange;
         action
             cRqMshr.pipelineResp.setStateSlot(n, Depend, defaultValue);
-            pipeline.deqWrite(Invalid, pipeOut.ram, False);
+            cRqMshr.pipelineResp.setSucc(fromMaybe(?, cRqDependEOC), Valid (n));
+            pipeline.deqWrite(Invalid, pipeOut.ram, pipeOutNextInQueue, False);
         endaction
         endfunction
 
@@ -988,7 +1004,7 @@ endfunction
         // check tag match
         Bool tag_match = ram.info.tag == getTag(procRq.addr);
         // check enough cache state for hit
-        Bool enough_cs = enoughCacheState(ram.info.cs, procRq.toState);
+        Bool enough_cs_to_hit = enoughCacheState(ram.info.cs, procRq.toState);
         // check if cs is not I
         Bool cs_valid = ram.info.cs > I;
         if(ram.info.owner matches tagged Valid .cOwner) begin
@@ -1162,7 +1178,7 @@ endfunction
             // pRq can be directly dropped
             // must go through tag match, no successor
             pRqMshr.pipelineResp.releaseEntry(n);
-            pipeline.deqWrite(Invalid, pipeOut.ram, False);
+            pipeline.deqWrite(Invalid, pipeOut.ram, pipeOutNextInQueue, False);
             // sanity check (ram.info.tag != getTag(pRq.addr) is useless)
             if(!pipeOut.pRqMiss) begin
                 doAssert(ram.info.cs == S && pRq.toState == S && ram.info.tag == getTag(pRq.addr),
@@ -1196,7 +1212,7 @@ endfunction
                     other: ?
                 },
                 line: ram.line
-            }, False);
+            }, pipeOutNextInQueue, False);
             rsToPIndexQ.enq(PRq (n));
             // update cRq bookkeeping
             cRqMshr.pipelineResp.setStateSlot(cOwner, WaitSt, L1CRqSlot {
@@ -1236,7 +1252,7 @@ endfunction
                     other: ram.info.other
                 },
                 line: ram.line
-            }, False);
+            }, pipeOutSecondInQueue, False);
             rsToPIndexQ.enq(PRq (n));
             if (prefetchVerbose)
                 $display("%t L1D pRq: line addr: 0x%h, wasPrefetch: %d, overtakeCRq: 0, ramCs: ",
@@ -1499,12 +1515,13 @@ module mkL1Cache#(
     Alias#(pRqIdxT, Bit#(TLog#(pRqNum))),
     Alias#(cacheOwnerT, Maybe#(cRqIdxT)),
     Alias#(cacheOtherT, PrefetchInfo),
+    Alias#(cacheSetAuxT, Maybe#(cRqIdxT)),
     Alias#(procRqT, ProcRq#(procRqIdT)),
     Alias#(cRqToPT, CRqMsg#(wayT, void)),
     Alias#(cRsToPT, CRsMsg#(void)),
     Alias#(pRqRsFromPT, PRqRsMsg#(wayT, void)),
     Alias#(l1CmdT, L1Cmd#(indexT, cRqIdxT, pRqIdxT)),
-    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, l1CmdT)),
+    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, cacheSetAuxT, l1CmdT)),
     // requirements
     Bits#(procRqIdT, _procRqIdT),
     FShow#(procRqIdT),

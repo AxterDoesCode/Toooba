@@ -113,6 +113,7 @@ module mkIBank#(
     Alias#(pRqIdxT, Bit#(TLog#(pRqNum))),
     Alias#(cacheOwnerT, Maybe#(cRqIdxT)), // owner cannot be pRq
     Alias#(cacheOtherT, PrefetchInfo),
+    Alias#(cacheSetAuxT, Maybe#(cRqIdxT)),
     Alias#(cacheInfoT, CacheInfo#(tagT, Msi, void, cacheOwnerT, cacheOtherT)),
     Alias#(ramDataT, RamData#(tagT, Msi, void, cacheOwnerT, cacheOtherT, Line)),
     Alias#(procRqT, ProcRqToI),
@@ -123,7 +124,7 @@ module mkIBank#(
     Alias#(pRqRsFromPT, PRqRsMsg#(wayT, void)),
     Alias#(cRqSlotT, ICRqSlot#(wayT, tagT)), // cRq MSHR slot
     Alias#(l1CmdT, L1Cmd#(indexT, cRqIdxT, pRqIdxT)),
-    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, l1CmdT)),
+    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, void, cacheOwnerT, cacheOtherT, RandRepInfo, Line, cacheSetAuxT, l1CmdT)),
     Mul#(2, supSz, supSzX2),
     Alias#(resultT, Vector#(supSzX2, Maybe#(Instruction16))),
     // requirements
@@ -636,7 +637,7 @@ module mkIBank#(
             if(cOwner != n) begin
                 // owner is another cRq, so must just go through tag match
                 // tag match must be hit (because replacement algo won't give a way with owner)
-                doAssert(ram.info.cs == S && ram.info.tag == getTag(procRq.addr),
+                doAssert(ram.info.tag == getTag(procRq.addr),
                     "cRq should hit in tag match"
                 );
                 // should be added to a cRq in dependency chain & deq from pipeline
@@ -662,33 +663,28 @@ module mkIBank#(
         end
         else begin
             // cache has no owner, cRq must just go through tag match
-            // check for cRqEOC to append to dependency chain
-            if(cRqEOC matches tagged Valid .k) begin
-	       if (verbose)
-                $display("%t I %m pipelineResp: cRq: no owner, depend on cRq ", $time, fshow(k));
-                cRqMshr.pipelineResp.setSucc(k, Valid (n));
-                cRqSetDepNoCacheChange;
-            end
-            else if(ram.info.cs == I || ram.info.tag == getTag(procRq.addr)) begin
+            doAssert(!isValid(cRqEOC), "end of chain is valid but the chosen way is not owned");
+            if(ram.info.cs == I || ram.info.tag == getTag(procRq.addr)) begin
                 // No Replacement necessary
                 if(ram.info.cs > I) begin
-		   if (verbose)
+                   if (verbose)
                     $display("%t I %m pipelineResp: cRq: no owner, hit", $time);
                     cRqHit(n, procRq);
                 end
                 else begin
-		   if (verbose)
+                   if (verbose)
                     $display("%t I %m pipelineResp: cRq: no owner, miss no replace", $time);
                     cRqMissNoReplacement;
                 end
             end
             else begin
-	       if (verbose)
+               if (verbose)
                 $display("%t I %m pipelineResp: cRq: no owner, replace", $time);
                 cRqReplacement;
             end
         end
     endrule
+
 
     rule pipelineResp_pRs(pipeOut.cmd == L1PRs);
        if (verbose) begin

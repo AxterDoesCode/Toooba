@@ -83,13 +83,13 @@ interface LLPipe#(
         Bit#(TLog#(wayNum)),
         tagT, Msi, Vector#(childNum, Msi),
         Maybe#(CRqOwner#(cRqIdxT)), PrefetchInfo, RandRepInfo, // no other
-        Line, LLCmd#(Bit#(TLog#(childNum)), cRqIdxT)
+        Line, void, LLCmd#(Bit#(TLog#(childNum)), cRqIdxT)
     ) first;
     method PipeOut#(
         Bit#(TLog#(wayNum)),
         tagT, Msi, Vector#(childNum, Msi),
         Maybe#(CRqOwner#(cRqIdxT)), PrefetchInfo, RandRepInfo, // no other
-        Line, LLCmd#(Bit#(TLog#(childNum)), cRqIdxT)
+        Line, void, LLCmd#(Bit#(TLog#(childNum)), cRqIdxT)
     ) unguard_first;
     method Action deqWrite(
         Maybe#(cRqIdxT) swapRq,
@@ -131,7 +131,7 @@ module mkLLPipe(
     Alias#(pipeInT, LLPipeIn#(childT, wayT, cRqIdxT)),
     Alias#(pipeCmdT, LLPipeCmd#(childT, wayT, cRqIdxT)),
     Alias#(llCmdT, LLCmd#(childT, cRqIdxT)),
-    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, dirT, ownerT, otherT, repT, Line, llCmdT)), // output type
+    Alias#(pipeOutT, PipeOut#(wayT, tagT, Msi, dirT, ownerT, otherT, repT, Line, void, llCmdT)), // output type
     Alias#(infoT, CacheInfo#(tagT, Msi, dirT, ownerT, otherT)),
     Alias#(ramDataT, RamData#(tagT, Msi, dirT, ownerT, otherT, Line)),
     Alias#(respStateT, RespState#(Msi)),
@@ -153,6 +153,7 @@ module mkLLPipe(
     Vector#(wayNum, RWBramCore#(indexT, infoT)) infoRam <- replicateM(mkRWBramCore);
     RWBramCore#(indexT, repT) repRam <- mkRandRepRam;
     RWBramCore#(dataIndexT, Line) dataRam <- mkRWBramCore;
+    RWBramCore#(indexT, void) setAuxDataRam <- mkDummyBramCore;
 
     // initialize RAM
     Reg#(Bool) initDone <- mkReg(False);
@@ -310,14 +311,14 @@ module mkLLPipe(
     endactionvalue
     endfunction
 
-    CCPipe#(wayNum, indexT, tagT, Msi, dirT, ownerT, otherT, repT, Line, pipeCmdT) pipe <- mkCCPipe(
+    CCPipe#(wayNum, indexT, tagT, Msi, dirT, ownerT, otherT, repT, Line, void, pipeCmdT) pipe <- mkCCPipe(
         regToReadOnly(initDone), getIndex, tagMatch,
         updateByUpCs, updateByDownDir, updateRepInfo,
-        infoRam, repRam, dataRam
+        infoRam, repRam, dataRam, setAuxDataRam
     );
 
     // get first output from CCPipe output
-    function pipeOutT getFirst(PipeOut#(wayT, tagT, Msi, dirT, ownerT, otherT, repT, Line, pipeCmdT) pout);
+    function pipeOutT getFirst(PipeOut#(wayT, tagT, Msi, dirT, ownerT, otherT, repT, Line, void, pipeCmdT) pout);
         return PipeOut {
             cmd: (case(pout.cmd) matches
                 tagged CRq .rq: LLCRq (rq.mshrIdx);
@@ -371,6 +372,6 @@ module mkLLPipe(
             newCmd = Valid (CRq (LLPipeCRqIn {addr: addr, mshrIdx: idx}));
         end
         // call pipe
-        pipe.deqWrite(newCmd, wrRam, updateRep);
+        pipe.deqWrite(newCmd, wrRam, ?, updateRep);
     endmethod
 endmodule
