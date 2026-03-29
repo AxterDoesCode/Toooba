@@ -35,7 +35,7 @@ module mkCDP(
 
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
 
-    // 8 used, one line there is potentially 8 candidate vaddr
+    // 8 used, one line there is potentially 8 candidate vaddr, size 8 for each FIFO
     SupFifo#(8, 8, NextCandT) nextCandidateBuffer <- mkSupFifo;
 
     rule deqLineL1;
@@ -68,7 +68,7 @@ module mkCDP(
     endmethod
 
     interface CDPPCPrefetcher prefetcher;
-        method Action reportAccess(Addr addr,Bit#(16) pcHash, HitOrMiss hitMiss);
+        method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
             if (hitMiss == HIT) begin
                 $display("%t AlexLog: prefetcher report HIT %h", $time, addr);
             end

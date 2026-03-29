@@ -1,0 +1,6 @@
+Smaller cache size
+Get the stride prefetcher in and measure performance from a good prefetcher, see if it does anything useful
+Prefetch chaining?
+Combine with stride prefetcher..
+What proportion of misses can actually be eliminated?
+Try get Olden benchmarks building
