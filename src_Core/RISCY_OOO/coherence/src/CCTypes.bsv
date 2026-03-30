@@ -56,6 +56,7 @@ typeclass IsProcRq#(type t);
     function Vpn getReqVpn(t x);
     function Addr getReqAddr(t x);
     function MemOp getReqOp(t x);
+    function Bit#(16) getPcHash(t x);
 endtypeclass
 
 typedef enum {
@@ -233,6 +234,7 @@ instance IsProcRq#(ProcRq#(t));
     function Vpn getReqVpn(ProcRq#(t) x) = x.vpn;
     function Addr getReqAddr(ProcRq#(t) x) = x.addr;
     function MemOp getReqOp(ProcRq#(t) x) = x.op;
+    function Bit#(16) getPcHash(ProcRq#(t) x) = x.pcHash;
 endinstance
 
 interface L1ProcReq#(type idT);

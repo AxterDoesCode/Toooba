@@ -4,6 +4,7 @@ import CCTypes ::*;
 import FIFO::*;
 import Fifos::*;
 import Ehr::*;
+import Vector::*;
 
 import Types::*;
 import RWBramCore::*;
@@ -86,17 +87,28 @@ module mkCDP(
     endmethod
 endmodule
 
+typedef struct {
+    Bit#(16)       pcHash;
+    LineDataOffset lineOffset;
+} trainingTableEntryT deriving (Bits, FShow, Eq);
+
+// PC-offset confidence table entry: one 4-bit confidence counter per cache line offset (8 offsets)
+typedef Vector#(8, Bit#(4)) PCOffsetConfT;
+
 module mkCDPStateful(
-    Parameter#(trainingTableSize) _
-)(CacheLinePrefetcher#(reqT)) 
+    Parameter#(trainingTableSize) _,
+    Parameter#(pcTableSize) __
+)(CacheLinePrefetcher#(reqT))
 provisos (
-    Bits#(reqT, _reqSz), 
+    Bits#(reqT, _reqSz),
     FShow#(reqT),
     IsProcRq#(reqT),
 
     NumAlias#(trainingTableIdxBits, TLog#(trainingTableSize)),
-    // Index/Tag types
     Alias#(trainingTableIdxT, Bit#(trainingTableIdxBits)),
+
+    NumAlias#(pcTableIdxBits, TLog#(pcTableSize)),
+    Alias#(pcTableIdxT, Bit#(pcTableIdxBits)),
 );
 
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
@@ -105,6 +117,9 @@ provisos (
     //SupFifo#(8, 8, NextCandT) nextCandidateBuffer <- mkSupFifo;
 
     RWBramCore#(trainingTableIdxT, trainingTableEntryT) tt <- mkRWBramCoreForwarded(); // Training table should be indexed by vaddr and value should contain the PC and offset within the line at that miss
+
+    // PC-offset confidence table: indexed by truncated pcHash, stores 4-bit confidence per offset
+    RWBramCore#(pcTableIdxT, PCOffsetConfT) pct <- mkRWBramCoreForwarded();
 
     rule deqCacheLines; // Dequeue the incoming cache lines
         L1ToCDPT#(reqT) x = l1ToCDP.first;
@@ -116,8 +131,12 @@ provisos (
         // We want to fill the training table with potential vaddrs
         for (Integer i = 0; i < 8; i = i + 1) begin
             if (getVpn(x.line[i]) == reqVpn &&& getReqOp(x.req) == Ld) begin // If it looks like a vaddr (in the same page)
-                // Then we want to add an entry to the training table
-                tt.wrReq() // Something like this
+                // Index the training table by a hash of the candidate vaddr (skip cache line offset bits)
+                trainingTableIdxT idx = truncate(x.line[i] >> valueOf(LgLineSzBytes));
+                tt.wrReq(idx, trainingTableEntryT {
+                    pcHash:     getPcHash(x.req),
+                    lineOffset: getLineDataOffset(x.line[i])
+                });
                 $display("%t AlexLog: CDP candidate vaddr found, offset: %d, LineDataOffset: ", $time, i, fshow(dataSel), fshow(x.line[i]), fshow(reqVpn), fshow(x.req));
             end
         end
