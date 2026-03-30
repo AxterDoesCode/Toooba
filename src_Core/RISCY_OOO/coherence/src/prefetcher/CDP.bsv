@@ -6,9 +6,8 @@ import Fifos::*;
 import Ehr::*;
 
 import Types::*;
-import Prefetcher_intf::*;
 import RWBramCore::*;
-
+import Prefetcher_intf::*;
 
 typedef struct {
     reqT req;
@@ -88,34 +87,38 @@ module mkCDP(
 endmodule
 
 module mkCDPStateful(
-    CacheLinePrefetcher#(reqT)
-) provisos (
+    Parameter#(trainingTableSize) _
+)(CacheLinePrefetcher#(reqT)) 
+provisos (
     Bits#(reqT, _reqSz), 
     FShow#(reqT),
-    IsProcRq#(reqT)
+    IsProcRq#(reqT),
+
+    NumAlias#(trainingTableIdxBits, TLog#(trainingTableSize)),
+    // Index/Tag types
+    Alias#(trainingTableIdxT, Bit#(trainingTableIdxBits)),
 );
 
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
 
     // 8 used, one line there is potentially 8 candidate vaddr, size 8 for each FIFO
-    SupFifo#(8, 8, NextCandT) nextCandidateBuffer <- mkSupFifo;
+    //SupFifo#(8, 8, NextCandT) nextCandidateBuffer <- mkSupFifo;
 
     RWBramCore#(trainingTableIdxT, trainingTableEntryT) tt <- mkRWBramCoreForwarded(); // Training table should be indexed by vaddr and value should contain the PC and offset within the line at that miss
 
-    rule deqLineL1; // Dequeue the incoming cache lines
+    rule deqCacheLines; // Dequeue the incoming cache lines
         L1ToCDPT#(reqT) x = l1ToCDP.first;
         LineDataOffset dataSel = getLineDataOffset(getReqAddr(x.req)); // This is purely for $display
         l1ToCDP.deq;
         let reqVpn = getReqVpn(x.req);
-        Integer enqIdx = 0;
         $display("%t AlexLog: CDP deqLineL1", $time);
+        
+        // We want to fill the training table with potential vaddrs
         for (Integer i = 0; i < 8; i = i + 1) begin
             if (getVpn(x.line[i]) == reqVpn &&& getReqOp(x.req) == Ld) begin // If it looks like a vaddr (in the same page)
                 // Then we want to add an entry to the training table
-                tt
-                // Probably change logging here to just see the candidate vaddr -> candidate paddr?
+                tt.wrReq() // Something like this
                 $display("%t AlexLog: CDP candidate vaddr found, offset: %d, LineDataOffset: ", $time, i, fshow(dataSel), fshow(x.line[i]), fshow(reqVpn), fshow(x.req));
-                enqIdx = enqIdx + 1;
             end
         end
     endrule
