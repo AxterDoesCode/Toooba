@@ -42,6 +42,7 @@ import Cntrs::*;
 import ConfigReg::*;
 import RandomReplace::*;
 import Prefetcher::*;
+import Prefetcher_intf::*;
 import ProcTypes::*;
 import Cur_Cycle::*;
 `ifdef PERFORMANCE_MONITORING

@@ -1,6 +1,18 @@
 Smaller cache size
 Get the stride prefetcher in and measure performance from a good prefetcher, see if it does anything useful
+    Along with this make prefetcher.bsv more tidy, separate out into various files
+    Can't the CDP prefetcher interface be turned into a SudoPrefetcher instead.
 Prefetch chaining?
 Combine with stride prefetcher..
 What proportion of misses can actually be eliminated?
 Try get Olden benchmarks building
+
+Stateful Content-directed prefetching Policy:
+I want to add a training table where:
+    Demand miss -> 
+    bring in cache line to L1 -> 
+    send this off to the prefetcher for training ->
+    Check if the miss being requested was seen in the recent past?
+        If so, update confidence on PC | offset table 
+    Identify vaddrs -> These vaddrs get keyed into some table where key = vaddr, value = tuple(PC, offset)
+If the PC is seen again in the future, key into the PC offset table and issue a prefetch for the offset with the highest confidence

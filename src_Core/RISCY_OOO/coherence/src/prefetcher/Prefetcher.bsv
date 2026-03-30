@@ -37,17 +37,9 @@ import BuildVector::*;
 import ProcTypes::*;
 import TlbTypes::*;
 
+import Prefetcher_intf::*;
+
 Bool verbose = False;
-
-typedef enum {
-    HIT = 1'b0, MISS = 1'b1
-} HitOrMiss deriving (Bits, Eq, FShow);
-
-typedef struct {
-    Addr addr;
-    Vpn  vpn;
-    Bool nextLevel;
-} PendingPrefetch deriving (Bits, Eq, FShow);
 
 interface Prefetcher;
     (* always_ready *)
@@ -1193,43 +1185,7 @@ module mkBlockPrefetcher(Prefetcher) provisos (
 
 endmodule
 
-interface PCPrefetcher;
-    (* always_ready *)
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
-    method ActionValue#(Addr) getNextPrefetchAddr();
-endinterface
-
-interface CDPPCPrefetcher;
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
-    method ActionValue#(Tuple2#(Addr, Vpn)) getNextPrefetchAddr();
-endinterface
-
-interface SudoPrefetcher;
-    (* always_ready *)
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
-    method ActionValue#(PendingPrefetch) getNextPrefetchAddr();
-endinterface
-
-
-// Usually would pass in the module but I am passing through the CDP's prefetcher instead
-// And modified the interface to return tuple of VPN to chain prefetches
-module mkSudoPrefetcherAdapter#(CDPPCPrefetcher p)(SudoPrefetcher);
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
-        p.reportAccess(addr, pcHash, hitMiss);
-    endmethod
-    method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
-        let {addr, vpn} <- p.getNextPrefetchAddr;
-        // AlexNote: make this return a tuple2 instead so I can get back the VPN
-        return PendingPrefetch {
-            addr: addr,
-            vpn: vpn,
-            nextLevel: False
-        };
-    endmethod
-endmodule
-
-module mkNextLevelPrefetcherAdapter#(module#(SudoPrefetcher) mkPrefetcher)(SudoPrefetcher);
-    let p <- mkPrefetcher;
+module mkNextLevelPrefetcherAdapter#(SudoPrefetcher p)(SudoPrefetcher);
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
         p.reportAccess(addr, pcHash, hitMiss);
     endmethod
@@ -1968,29 +1924,6 @@ module mkLLIPrefetcher(Prefetcher);
     //let m <- mkPrintPrefetcher;
 `else
     let m <- mkDoNothingPrefetcher;
-`endif
-    return m;
-endmodule
-(* synthesize *)
-module mkL1DPrefetcher(PCPrefetcher);
-`ifdef DATA_PREFETCHER_IN_L1
-    `ifdef DATA_PREFETCHER_BLOCK
-        let m <- mkPCPrefetcherAdapter(mkBlockPrefetcher);
-    `elsif DATA_PREFETCHER_STRIDE
-        //let m <- mkBRAMStridePCPrefetcher;
-        let m <- mkStride2PCPrefetcher;
-    `elsif DATA_PREFETCHER_STRIDE_ADAPTIVE
-        let m <- mkBRAMStrideAdaptivePCPrefetcher;
-    `elsif DATA_PREFETCHER_MARKOV
-        let m <- mkPCPrefetcherAdapter(mkBRAMMarkovPrefetcher);
-    `elsif DATA_PREFETCHER_MARKOV_ON_HIT
-        let m <- mkPCPrefetcherAdapter(mkBRAMMarkovOnHitPrefetcher);
-    `elsif DATA_PREFETCHER_MARKOV_ON_HIT_2
-        let m <- mkPCPrefetcherAdapter(mkMarkovOnHit2Prefetcher);
-    `endif
-    //let m <- mkPCPrefetcherAdapter(mkAlwaysRequestPrefetcher);
-`else 
-    let m <- mkPCPrefetcherAdapter(mkDoNothingPrefetcher);
 `endif
     return m;
 endmodule

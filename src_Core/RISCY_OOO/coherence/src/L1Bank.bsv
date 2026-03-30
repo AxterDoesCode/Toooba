@@ -51,6 +51,8 @@ import Performance::*;
 import LatencyTimer::*;
 import RandomReplace::*;
 import Prefetcher::*;
+import Prefetcher_intf::*;
+import Prefetcher_top::*;
 import CDP::*;
 `ifdef PERFORMANCE_MONITORING
 import PerformanceMonitor::*;
@@ -194,11 +196,11 @@ module mkL1Bank#(
     Fifo#(4, pRsFromPT) llcDataArrivalQ <- mkOverflowBypassFifo;
 
     // let prefetcher <- mkL1DPrefetcher;
-    CDP#(procRqT) cdp <- mkCDP;
+    // CDP#(procRqT) cdp <- mkCDP;
 `ifdef DATA_PREFETCHER_IN_L1_FORWARDING
-    let prefetcher <- mkNextLevelPrefetcherAdapter(mkSudoPrefetcherAdapter(cdp.prefetcher));
+    CacheLinePrefetcher#(procRqT) prefetcher <- mkNextLevelPrefetcherAdapter(mkL1DPrefetcher);
 `else
-    let prefetcher <- mkSudoPrefetcherAdapter(cdp.prefetcher);
+    CacheLinePrefetcher#(procRqT) prefetcher <- mkL1DPrefetcher;
 `endif
 
     // security flush
@@ -429,7 +431,7 @@ endfunction
                 vpn: prefetch.vpn,
                 fromState: ?,
                 toState: S,
-                //op: Ld,
+                op: Ld,
                 canUpToE: True,
                 id: 0,
                 child: ?,
@@ -441,7 +443,7 @@ endfunction
             procRqT r = ProcRq {
                 id: ?, //Or maybe do 0 here
                 addr: prefetch.addr,
-                vpn: prefetch.vpn, // TODO: I think it may be worthwhile passing this through, need to make getNextPrefetchAddr return some struct?
+                vpn: prefetch.vpn, // TODO: I think it may be worthwhile passing this through, need to make getNextPrefetchAddr return some struct? For non CDP-like prefetchers we can disable this?
                 toState: S,
                 op: Ld,
                 byteEn: ?,
@@ -1146,7 +1148,7 @@ endfunction
             if(!cRqIsPrefetch[cOwner] && procRq.op == Ld) begin // Only forward loads into the prefetcher
                 $display("AlexLog: L1 pipelineResp_pRs (not prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
                 Line curLine = ram.line;
-                cdp.enqLineL1(procRq, curLine);
+                prefetcher.reportIncomingCacheLine(procRq, curLine);
             end
             else 
                 // For now disregard chaining prefetches

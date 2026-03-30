@@ -279,6 +279,7 @@ typedef struct {
     Vpn vpn;
     Msi fromState;
     Msi toState;
+    MemOp op;
     Bool canUpToE; // meaningful to upgrade to E if toState is S
     idT id; // slot id in child cache
     childT child; // from which child
