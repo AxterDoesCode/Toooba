@@ -12,7 +12,8 @@ I want to add a training table where:
     Demand miss -> 
     bring in cache line to L1 -> 
     send this off to the prefetcher for training ->
-    Check if the miss being requested was seen in the recent past?
-        If so, update confidence on PC | offset table 
-    Identify vaddrs -> These vaddrs get keyed into some table where key = vaddr, value = tuple(PC, offset)
+    Check if the vaddr being requested was seen in the recent past?
+        Key into the training table and see if there is any PC + Offset associated with it
+        If so, update confidence on PC | offset table / Confidence on this offset should also be updated if we hit on this cache line if a prefetched line exists in the cache
+    Identify vaddrs -> These vaddrs get keyed into some table where key = vaddr, value = tuple(PC, offset), if the entry already exists then don't overwrite, ideally preserve the earliest PC at which they are seen in order to prefetch effectively?
 If the PC is seen again in the future, key into the PC offset table and issue a prefetch for the offset with the highest confidence
