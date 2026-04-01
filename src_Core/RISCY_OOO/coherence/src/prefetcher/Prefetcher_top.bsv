@@ -2,6 +2,7 @@ import Prefetcher::*;
 import Prefetcher_intf::*;
 import CDP::*;
 import CCTypes::*;
+import Types::*;
 
 module mkL1DPrefetcher(CacheLinePrefetcher#(reqT))
 provisos (
@@ -24,7 +25,9 @@ provisos (
     `elsif DATA_PREFETCHER_MARKOV_ON_HIT_2
         let m <- mkPCToCacheLinePrefetcherAdapter(mkPCPrefetcherAdapter(mkMarkovOnHit2Prefetcher));
     `elsif DATA_PREFETCHER_CDP
-        CacheLinePrefetcher#(reqT) m <- mkCDP;
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4096) pcTableSize <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStateful(trainingTableSize, pcTableSize);
     `endif
     //let m <- mkPCPrefetcherAdapter(mkAlwaysRequestPrefetcher);
 `else 

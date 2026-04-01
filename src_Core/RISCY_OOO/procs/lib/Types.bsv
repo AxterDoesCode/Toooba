@@ -24,6 +24,12 @@
 import Vector::*;
 import Assert::*;
 
+interface Parameter#(numeric type param);
+endinterface
+
+module mkParameter(Parameter#(param));
+endmodule
+
 typedef 64 AddrSz;
 typedef Bit#(AddrSz) Addr;
 

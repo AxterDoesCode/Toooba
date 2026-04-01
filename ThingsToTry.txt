@@ -17,3 +17,25 @@ I want to add a training table where:
         If so, update confidence on PC | offset table / Confidence on this offset should also be updated if we hit on this cache line if a prefetched line exists in the cache
     Identify vaddrs -> These vaddrs get keyed into some table where key = vaddr, value = tuple(PC, offset), if the entry already exists then don't overwrite, ideally preserve the earliest PC at which they are seen in order to prefetch effectively?
 If the PC is seen again in the future, key into the PC offset table and issue a prefetch for the offset with the highest confidence
+
+Does UGSupFIFO even dequeue from head sequentially? Can quickly add some extra logs on normal stateless CDP
+
+Jon Talk:
+Two-way set associative, 16 lines.
+Drop the cache size down and see if the number cache misses jumps up
+Do offset from the access instead of offset from the line
+Have some statistical decay of confidence, on any cycle that we aren't updating any confidence, we can randomly select an entry and decrease its confidence by 1 
+
+Next prefetcher to get larger offsets, because LDS nodes may be larger than a single cache line
+
+omnet = big spec pointer benchmark
+
+Could perform some sort of deep study for the lines around a prefetch miss
+
+TAGE branch predictor has a way of identifying branches that still keep missing even when we've tried to prefetch them.
+
+Alex Thoughts:
+So the BRAM needs to be init with some value to identify that the value inside of it isn't garbage.
+Also that the valid thing always exists if a read request has been issued.
+Assuming that is why Louis did that stuff because otherwise when I try to read it then it isn't any good
+Training table also only has 64 entries, is there any potential overwriting/aliasing happening? Need to store the tag in the entry or just the whole vaddr in the entry
