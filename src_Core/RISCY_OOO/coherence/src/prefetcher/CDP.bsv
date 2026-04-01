@@ -63,7 +63,7 @@ module mkCDP(
         $display("%t AlexLog: CDP reportIncomingCacheLine", $time);
     endmethod
 
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line);
         if (hitMiss == HIT) begin
             $display("%t AlexLog: prefetcher report HIT %h", $time, addr);
         end
@@ -98,6 +98,7 @@ typedef struct {
     idxT ttIdx;
     Bool missedOnThisVaddr;
     LineDataOffset offset;
+    Addr candVaddr; // The actual candidate vaddr (pointer value) found at this offset
 } TrainingTableRespQT#(type reqT, type idxT) deriving (Bits, FShow, Eq);
 
 // PC-offset confidence table entry: one 3-bit confidence counter per cache line offset (8 offsets)
@@ -133,11 +134,12 @@ provisos (
     SupFifo#(8, 8, ttRespQT) ttRespQ <- mkSupFifo;
     SupFifo#(8, 8, trainingTableIdxT) ttRdReqSupFIFO <- mkSupFifo;
 
-    // PC-offset confidence table: indexed by truncated pcHash, stores 4-bit confidence per offset
+    // PC-offset confidence table: indexed by truncated pcHash, stores confidence per offset
     RWBramCore#(pcTableIdxT, Maybe#(PCOffsetConfT)) pcTable <- mkRWBramCoreForwarded();
 
     FIFO#(NextCandT) nextCandidateBuffer <- mkFIFO;
     FIFO#(Tuple2#(pcTableIdxT, LineDataOffset)) pcTableRdReqQ <- mkFIFO;
+    FIFO#(Tuple2#(Addr, Line)) reportAccessAddrQ <- mkFIFO;
 
 
     // Init registers
@@ -164,7 +166,7 @@ provisos (
         trainingTableInitCount <= trainingTableInitCount + 1;
     endrule
 
-    (* mutually_exclusive = "doPcTableInit, processTtRdReq, ttAccess, pcTableAccess" *)
+    (* mutually_exclusive = "doPcTableInit, processTtRdReq, ttAccess, pcTableAccess, pcTablePrefetchIssue" *)
     rule doPcTableInit(!pcTableInited);
         pcTable.wrReq(pcTableInitCount, Invalid);
         if (pcTableInitCount == ~0) begin
@@ -192,10 +194,11 @@ provisos (
                     $display("%t AlexLog: found a candidate vaddr that missed", $time);
                 ttRespQ.enqS[enqIdx].enq(
                     TrainingTableRespQT{
-                        req: x.req, 
-                        ttIdx: idx, 
+                        req: x.req,
+                        ttIdx: idx,
                         missedOnThisVaddr: missedOnThisVaddr,
-                        offset: fromInteger(i)});
+                        offset: fromInteger(i),
+                        candVaddr: x.line[i]});
                 ttRdReqSupFIFO.enqS[enqIdx].enq(idx); // Since this can call multiple times per cycle, need to send it to a SupFIFO
                 $display("%t AlexLog: CDP candidate vaddr found, offset: %d, LineDataOffset: ", $time, i, fshow(dataSel), fshow(x.line[i]), fshow(reqVpn), fshow(x.req));
                 enqIdx = enqIdx + 1;
@@ -245,6 +248,28 @@ provisos (
         $display("%t AlexLog: PC table updated, idx: %d, offset: %d, conf: %d -> %d", $time, pctIdx, offset, curVal, newVal);
     endrule
 
+    rule pcTablePrefetchIssue(inited);
+        let rdResp = pcTable.rdResp;
+        pcTable.deqRdResp;
+        match {.addr, .line} = reportAccessAddrQ.first;
+        reportAccessAddrQ.deq;
+        if (rdResp matches tagged Valid .conf) begin
+            // Find the highest-confidence offset (lowest index wins on tie)
+            LineDataOffset bestOffset = 0;
+            Bool foundHighConf = False;
+            for (Integer i = 7; i >= 0; i = i - 1) begin
+                if (conf[i] >= 4) begin
+                    bestOffset = fromInteger(i);
+                    foundHighConf = True;
+                end
+            end
+            if (foundHighConf) begin
+                nextCandidateBuffer.enq(NextCandT{paddr: addr, vaddr: line[bestOffset]});
+                $display("%t AlexLog: CDP prefetch from familiar PC, offset: %d, paddr: %h, vaddr: %h", $time, bestOffset, addr, line[bestOffset]);
+            end
+        end
+    endrule
+
     //rule thing;
         // For that specific cache line fill -> the actual data being pulled needs to be checked if it is a candidate vaddr
         // If so the go into the training table -> if seen before -> update confidence on PC-offset table
@@ -269,15 +294,15 @@ provisos (
         $display("%t AlexLog: CDP reportIncomingCacheLine", $time);
     endmethod
 
-    // Here we want to see that on access
-    // On access to a PC we have in the PC table, if confidence is good then issue prefetch
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
+    // On a HIT, the line is already in cache so we can use its contents directly as prefetch targets.
+    // MISSes are ignored here; training happens via reportIncomingCacheLine when the line arrives.
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line);
         if (hitMiss == HIT) begin
-            $display("%t AlexLog: prefetcher report HIT %h", $time, addr);
+            pcTableIdxT pctIdx = truncate(pcHash >> valueof(TSub#(16, pcTableIdxBits)));
+            pcTable.rdReq(pctIdx);
+            reportAccessAddrQ.enq(tuple2(addr, line));
         end
-        else begin
-            $display("%t AlexLog: prefetcher report MISS %h", $time, addr);
-        end
+        $display("%t AlexLog: prefetcher report %s %h", $time, hitMiss == HIT ? "HIT" : "MISS", addr);
     endmethod
 
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr; // Do I want some condition here?

@@ -29,14 +29,14 @@ interface CacheLinePrefetcher#(
     type reqT
 );
     (* always_ready *)
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line);
     method Action reportIncomingCacheLine(reqT req, Line line);
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr();
 endinterface
 
 module mkPCToCacheLinePrefetcherAdapter#(module#(PCPrefetcher) mkPCPrefetcher)(CacheLinePrefetcher#(reqT));
     let p <- mkPCPrefetcher;
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss);
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line);
         p.reportAccess(addr, pcHash, hitMiss);
     endmethod
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
