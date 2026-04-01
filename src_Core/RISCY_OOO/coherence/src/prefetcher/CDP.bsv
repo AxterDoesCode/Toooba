@@ -217,8 +217,9 @@ provisos (
         if (x matches tagged Valid .ttRdResp) begin // Vaddr already exists in the training table and the cache miss is for that specific vaddr
             if (respQ.missedOnThisVaddr) begin
                 $display("%t AlexLog: PC table needs update", $time);
-                let pctIdx = truncate(getPcHash(respQ.req) >> valueof());
-                pct.wrReq();
+                let pctIdx = truncate(getPcHash(respQ.req) >> valueof(TSub#(16, pcTableIdxBits)));
+                PCOffsetConfT initConf = replicate(0);
+                pcTable.wrReq(pctIdx, Valid(update(initConf, ttRdResp.lineOffset, 1)));
             end
             // If the vaddr trainingTable entry already exists then no need to update
         end else begin // vaddr doesn't exist, create entry
