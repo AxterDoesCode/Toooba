@@ -119,7 +119,8 @@ provisos (
     Alias#(pcTableIdxT, Bit#(pcTableIdxBits)),
     Alias#(ttRespQT, TrainingTableRespQT#(reqT, trainingTableIdxT)),
 
-    Add#(a__, TLog#(trainingTableSize), 64)
+    Add#(a__, TLog#(trainingTableSize), 64),
+    Add#(b__, TLog#(pcTableSize), 16)
 
 );
 
@@ -136,6 +137,7 @@ provisos (
     RWBramCore#(pcTableIdxT, Maybe#(PCOffsetConfT)) pcTable <- mkRWBramCoreForwarded();
 
     FIFO#(NextCandT) nextCandidateBuffer <- mkFIFO;
+    FIFO#(Tuple2#(pcTableIdxT, LineDataOffset)) pcTableRdReqQ <- mkFIFO;
 
 
     // Init registers
@@ -162,7 +164,7 @@ provisos (
         trainingTableInitCount <= trainingTableInitCount + 1;
     endrule
 
-    (* mutually_exclusive = "doPcTableInit, processTtRdReq, ttAccess" *)
+    (* mutually_exclusive = "doPcTableInit, processTtRdReq, ttAccess, pcTableAccess" *)
     rule doPcTableInit(!pcTableInited);
         pcTable.wrReq(pcTableInitCount, Invalid);
         if (pcTableInitCount == ~0) begin
@@ -218,8 +220,8 @@ provisos (
             if (respQ.missedOnThisVaddr) begin
                 $display("%t AlexLog: PC table needs update", $time);
                 let pctIdx = truncate(getPcHash(respQ.req) >> valueof(TSub#(16, pcTableIdxBits)));
-                PCOffsetConfT initConf = replicate(0);
-                pcTable.wrReq(pctIdx, Valid(update(initConf, ttRdResp.lineOffset, 1)));
+                pcTable.rdReq(pctIdx);
+                pcTableRdReqQ.enq(tuple2(pctIdx, ttRdResp.lineOffset));
             end
             // If the vaddr trainingTable entry already exists then no need to update
         end else begin // vaddr doesn't exist, create entry
@@ -229,6 +231,18 @@ provisos (
             }));
             $display("%t AlexLog: Wrote to training table, idx: %d", $time, respQ.ttIdx);
         end
+    endrule
+
+    rule pcTableAccess(inited);
+        let rdResp = pcTable.rdResp;
+        pcTable.deqRdResp;
+        match {.pctIdx, .offset} = pcTableRdReqQ.first;
+        pcTableRdReqQ.deq;
+        PCOffsetConfT curConf = fromMaybe(replicate(0), rdResp);
+        Bit#(3) curVal = curConf[offset];
+        Bit#(3) newVal = (curVal == maxBound) ? maxBound : curVal + 1;
+        pcTable.wrReq(pctIdx, Valid(update(curConf, offset, newVal)));
+        $display("%t AlexLog: PC table updated, idx: %d, offset: %d, conf: %d -> %d", $time, pctIdx, offset, curVal, newVal);
     endrule
 
     //rule thing;
