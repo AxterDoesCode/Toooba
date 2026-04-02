@@ -104,6 +104,13 @@ typedef struct {
 // PC-offset confidence table entry: one 3-bit confidence counter per cache line offset (8 offsets)
 typedef Vector#(8, Bit#(3)) PCOffsetConfT;
 
+// Tag carried alongside each pcTable read request so the single response rule
+// knows whether to do a confidence update (Training) or a prefetch issue (PrefetchIssue)
+typedef union tagged {
+    LineDataOffset      Training;      // offset whose counter to saturating-increment
+    Tuple2#(Addr, Line) PrefetchIssue; // (load addr, cache line) to select prefetch target from
+} PCTableRdTagT deriving (Bits, FShow);
+
 module mkCDPStateful#(
     Parameter#(trainingTableSize) _,
     Parameter#(pcTableSize) __
@@ -138,8 +145,10 @@ provisos (
     RWBramCore#(pcTableIdxT, Maybe#(PCOffsetConfT)) pcTable <- mkRWBramCoreForwarded();
 
     FIFO#(NextCandT) nextCandidateBuffer <- mkFIFO;
-    FIFO#(Tuple2#(pcTableIdxT, LineDataOffset)) pcTableRdReqQ <- mkFIFO;
-    FIFO#(Tuple2#(Addr, Line)) reportAccessAddrQ <- mkFIFO;
+    // Incoming pcTable read requests (buffered so callers never block on the BRAM)
+    FIFO#(Tuple2#(pcTableIdxT, PCTableRdTagT)) pcTableRdReqFIFO <- mkFIFO;
+    // Mirrors in-flight BRAM reads so pcTableResp knows what each response is for
+    FIFO#(Tuple2#(pcTableIdxT, PCTableRdTagT)) pcTableRdTagQ    <- mkFIFO;
 
 
     // Init registers
@@ -166,7 +175,7 @@ provisos (
         trainingTableInitCount <= trainingTableInitCount + 1;
     endrule
 
-    (* mutually_exclusive = "doPcTableInit, processTtRdReq, ttAccess, pcTableAccess, pcTablePrefetchIssue" *)
+    (* mutually_exclusive = "doPcTableInit, processPcTableRdReq, pcTableResp" *)
     rule doPcTableInit(!pcTableInited);
         pcTable.wrReq(pcTableInitCount, Invalid);
         if (pcTableInitCount == ~0) begin
@@ -223,8 +232,7 @@ provisos (
             if (respQ.missedOnThisVaddr) begin
                 $display("%t AlexLog: PC table needs update", $time);
                 let pctIdx = truncate(getPcHash(respQ.req) >> valueof(TSub#(16, pcTableIdxBits)));
-                pcTable.rdReq(pctIdx);
-                pcTableRdReqQ.enq(tuple2(pctIdx, ttRdResp.lineOffset));
+                pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged Training ttRdResp.lineOffset));
             end
             // If the vaddr trainingTable entry already exists then no need to update
         end else begin // vaddr doesn't exist, create entry
@@ -236,38 +244,48 @@ provisos (
         end
     endrule
 
-    rule pcTableAccess(inited);
-        let rdResp = pcTable.rdResp;
-        pcTable.deqRdResp;
-        match {.pctIdx, .offset} = pcTableRdReqQ.first;
-        pcTableRdReqQ.deq;
-        PCOffsetConfT curConf = fromMaybe(replicate(0), rdResp);
-        Bit#(3) curVal = curConf[offset];
-        Bit#(3) newVal = (curVal == maxBound) ? maxBound : curVal + 1;
-        pcTable.wrReq(pctIdx, Valid(update(curConf, offset, newVal)));
-        $display("%t AlexLog: PC table updated, idx: %d, offset: %d, conf: %d -> %d", $time, pctIdx, offset, curVal, newVal);
+    // Drains pcTableRdReqFIFO one entry at a time and issues the actual BRAM read,
+    // keeping pcTableRdTagQ in sync so pcTableResp knows what each response is for
+    rule processPcTableRdReq(inited);
+        match {.pctIdx, .tag} = pcTableRdReqFIFO.first;
+        pcTableRdReqFIFO.deq;
+        pcTable.rdReq(pctIdx);
+        pcTableRdTagQ.enq(tuple2(pctIdx, tag));
     endrule
 
-    rule pcTablePrefetchIssue(inited);
+    // Single consumer of pcTable.rdResp; dispatches on the tag to either update
+    // confidence (Training) or issue a prefetch candidate (PrefetchIssue)
+    rule pcTableResp(inited);
         let rdResp = pcTable.rdResp;
         pcTable.deqRdResp;
-        match {.addr, .line} = reportAccessAddrQ.first;
-        reportAccessAddrQ.deq;
-        if (rdResp matches tagged Valid .conf) begin
-            // Find the highest-confidence offset (lowest index wins on tie)
-            LineDataOffset bestOffset = 0;
-            Bool foundHighConf = False;
-            for (Integer i = 7; i >= 0; i = i - 1) begin
-                if (conf[i] >= 4) begin
-                    bestOffset = fromInteger(i);
-                    foundHighConf = True;
+        match {.pctIdx, .tag} = pcTableRdTagQ.first;
+        pcTableRdTagQ.deq;
+        case (tag) matches
+            tagged Training .offset: begin
+                PCOffsetConfT curConf = fromMaybe(replicate(0), rdResp);
+                Bit#(3) curVal = curConf[offset];
+                Bit#(3) newVal = (curVal == maxBound) ? maxBound : curVal + 1;
+                pcTable.wrReq(pctIdx, Valid(update(curConf, offset, newVal)));
+                $display("%t AlexLog: PC table updated, idx: %d, offset: %d, conf: %d -> %d", $time, pctIdx, offset, curVal, newVal);
+            end
+            tagged PrefetchIssue {.addr, .line}: begin
+                if (rdResp matches tagged Valid .conf) begin
+                    // Find highest-confidence offset; lowest index wins on tie
+                    LineDataOffset bestOffset = 0;
+                    Bool foundHighConf = False;
+                    for (Integer i = 7; i >= 0; i = i - 1) begin
+                        if (conf[i] >= 4) begin
+                            bestOffset = fromInteger(i);
+                            foundHighConf = True;
+                        end
+                    end
+                    if (foundHighConf) begin
+                        nextCandidateBuffer.enq(NextCandT{paddr: addr, vaddr: line[bestOffset]});
+                        $display("%t AlexLog: CDP prefetch from familiar PC, offset: %d, paddr: %h, vaddr: %h", $time, bestOffset, addr, line[bestOffset]);
+                    end
                 end
             end
-            if (foundHighConf) begin
-                nextCandidateBuffer.enq(NextCandT{paddr: addr, vaddr: line[bestOffset]});
-                $display("%t AlexLog: CDP prefetch from familiar PC, offset: %d, paddr: %h, vaddr: %h", $time, bestOffset, addr, line[bestOffset]);
-            end
-        end
+        endcase
     endrule
 
     //rule thing;
@@ -299,8 +317,7 @@ provisos (
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line);
         if (hitMiss == HIT) begin
             pcTableIdxT pctIdx = truncate(pcHash >> valueof(TSub#(16, pcTableIdxBits)));
-            pcTable.rdReq(pctIdx);
-            reportAccessAddrQ.enq(tuple2(addr, line));
+            pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple2(addr, line)));
         end
         $display("%t AlexLog: prefetcher report %s %h", $time, hitMiss == HIT ? "HIT" : "MISS", addr);
     endmethod
