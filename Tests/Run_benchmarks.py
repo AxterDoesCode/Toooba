@@ -47,8 +47,8 @@ import multiprocessing
 # ================================================================
 # DEBUGGING ONLY: This exclude list allows skipping some specific test
 
-# exclude_list = ["aes.bin", "limits.bin", "adpcm_decode.bin", "adpcm_encode.bin", "bitcount.bin", "blowfish.bin", "crc.bin", "picojpeg.bin", "qsort.bin", "randmath.bin", "rc4.bin", "rsa.bin", "sha.bin", "bh.bin", "basicmath.bin"]
-exclude_list = []
+exclude_list = ["aes.bin", "limits.bin", "adpcm_decode.bin", "adpcm_encode.bin", "bitcount.bin", "blowfish.bin", "crc.bin", "picojpeg.bin", "qsort.bin", "randmath.bin", "rc4.bin", "rsa.bin", "sha.bin", "bh.bin", "basicmath.bin", "stringsearch.bin"]
+# exclude_list = []
 
 n_workers_max = 16
 

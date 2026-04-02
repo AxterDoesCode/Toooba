@@ -144,11 +144,10 @@ provisos (
     // PC-offset confidence table: indexed by truncated pcHash, stores confidence per offset
     RWBramCore#(pcTableIdxT, Maybe#(PCOffsetConfT)) pcTable <- mkRWBramCoreForwarded();
 
-    // This FIFO needs to change for sure
     Fifo#(16, NextCandT) nextCandidateBuffer <- mkOverflowBypassFifo;
 
     // Incoming pcTable read requests
-    // Do I want to make this FIFO overwriteable?
+    // Do I want to make this FIFO an overflow fifo? Probably?
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdTagT)) pcTableRdReqFIFO <- mkSizedFIFO(64);
     // Mirrors in-flight BRAM reads so pcTableResp knows what each response is for
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdTagT)) pcTableRdTagQ    <- mkFIFO;

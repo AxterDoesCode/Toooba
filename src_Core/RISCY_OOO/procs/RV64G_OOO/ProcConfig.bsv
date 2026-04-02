@@ -155,6 +155,23 @@
 
 `endif
 
+`ifdef CACHE_ALEX_SMALL
+
+    // L1
+    `define LOG_L1_LINES 4
+    `define LOG_L1_WAYS 1 // 2 ways
+    `define L1D_CRQ_NUM 8
+
+    // LLC
+    `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+    // There is already 20 cycles of baseline latency
+    `undef DRAM_LATENCY
+    `define DRAM_LATENCY 80
+
+`endif
+
 `ifdef CACHE_ALEX_TINY
 
     // L1
