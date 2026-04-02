@@ -230,6 +230,12 @@ provisos (
                 enqIdx = enqIdx + 1;
             end
         end
+        // One pcTable lookup per incoming line — if this PC already has high confidence
+        // for some offset, issue a prefetch immediately without waiting for the next HIT
+        if (getReqOp(x.req) == Ld) begin
+            pcTableIdxT pctIdx = truncate(getPcHash(x.req) >> valueof(TSub#(16, pcTableIdxBits)));
+            pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple2(getReqAddr(x.req), x.line)));
+        end
     endrule
 
     rule processTtRdReq(inited);
@@ -290,7 +296,7 @@ provisos (
                     LineDataOffset bestOffset = 0;
                     Bool foundHighConf = False;
                     for (Integer i = 7; i >= 0; i = i - 1) begin
-                        if (conf[i] >= 4) begin
+                        if (conf[i] >= 3) begin
                             bestOffset = fromInteger(i);
                             foundHighConf = True;
                         end
@@ -495,6 +501,12 @@ provisos (
                 enqIdx = enqIdx + 1;
             end
         end
+        // One pcTable lookup per incoming line — if this PC already has high confidence
+        // for some offset, issue a prefetch immediately without waiting for the next HIT
+        if (getReqOp(x.req) == Ld) begin
+            pcTableIdxT pctIdx = truncate(getPcHash(x.req) >> valueof(TSub#(16, pcTableIdxBits)));
+            pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple2(getReqAddr(x.req), x.line)));
+        end
     endrule
 
     rule processTtRdReq(inited);
@@ -558,7 +570,7 @@ provisos (
                     for (Integer i = 14; i >= 0; i = i - 1) begin
                         Int#(4) relOffset  = fromInteger(i - 7); // subtract at Integer level to stay in Int#(4) range
                         Int#(4) absTarget  = hitOffset + relOffset;
-                        if (conf[fromInteger(i)] >= 4 &&& absTarget >= 0 &&& absTarget <= 7) begin
+                        if (conf[fromInteger(i)] >= 3 &&& absTarget >= 0 &&& absTarget <= 7) begin
                             bestOffset = truncate(pack(absTarget));
                             foundHighConf = True;
                         end
