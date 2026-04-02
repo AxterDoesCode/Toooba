@@ -27,7 +27,8 @@ provisos (
     `elsif DATA_PREFETCHER_CDP
         Parameter#(64) trainingTableSize <- mkParameter;
         Parameter#(4096) pcTableSize <- mkParameter;
-        CacheLinePrefetcher#(reqT) m <- mkCDPStateful(trainingTableSize, pcTableSize);
+        Parameter#(1024) decayInterval <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelative(trainingTableSize, pcTableSize, decayInterval);
     `endif
     //let m <- mkPCPrefetcherAdapter(mkAlwaysRequestPrefetcher);
 `else 

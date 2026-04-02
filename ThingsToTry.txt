@@ -41,3 +41,6 @@ Training table also only has 64 entries, is there any potential overwriting/alia
 After clauding:
 Looks like pointer heavy benchmarks are breaking, fairly certain these two rules that both access the pcTable aren't good.
 Also directly calling read instead of going to some read queue from reportAccess is also bad. This has been fixed, only single rules for processing pcTable access.
+
+So now with the new relative prefetcher I want to see performance, want to check Alex_Tiny cache size.
+Still I think the vaddr needs some tagging or something because once these 64 entries fill they basically don't do anything, do we need some aliasing or something
