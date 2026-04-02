@@ -132,7 +132,8 @@ provisos (
     Alias#(ttRespQT, TrainingTableRespQT#(reqT, trainingTableIdxT)),
 
     Add#(a__, TLog#(trainingTableSize), 64),
-    Add#(b__, TLog#(pcTableSize), 16)
+    Add#(b__, TLog#(pcTableSize), 16),
+    Add#(c__, TLog#(trainingTableSize), 33)
 
 );
 
@@ -206,8 +207,14 @@ provisos (
         // We want to fill the training table with potential vaddrs if the vaddr hasn't been seen before
         for (Integer i = 0; i < 8; i = i + 1) begin
             if (getVpn(x.line[i]) == reqVpn &&& getReqOp(x.req) == Ld) begin // If it looks like a vaddr (in the same page)
-                // Index the training table by a hash of the candidate vaddr (skip cache line offset bits) AlexNote: Not sure if this is correct?
-                trainingTableIdxT idx = truncate(x.line[i] >> valueOf(LgLineSzBytes));
+                // XOR-fold the 33 meaningful SV39 bits (38:6) into trainingTableIdxBits
+                // to spread the index more uniformly and reduce aliasing
+                Bit#(39) vaddr39 = truncate(x.line[i]);
+                Bit#(33) shifted = truncate(vaddr39 >> valueOf(LgLineSzBytes));
+                trainingTableIdxT fold1 = truncate(shifted);
+                trainingTableIdxT fold2 = truncate(shifted >> valueOf(trainingTableIdxBits));
+                trainingTableIdxT fold3 = truncate(shifted >> (2 * valueOf(trainingTableIdxBits)));
+                trainingTableIdxT idx   = fold1 ^ fold2 ^ fold3;
                 Bool missedOnThisVaddr = (dataSel == fromInteger(i));
                 if (missedOnThisVaddr)
                     $display("%t AlexLog: found a candidate vaddr that missed", $time);
@@ -404,7 +411,8 @@ provisos (
     Alias#(ttRespQT, TrainingTableRespQT#(reqT, trainingTableIdxT)),
 
     Add#(a__, TLog#(trainingTableSize), 64),
-    Add#(b__, TLog#(pcTableSize), 16)
+    Add#(b__, TLog#(pcTableSize), 16),
+    Add#(c__, TLog#(trainingTableSize), 33)
 );
 
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
@@ -465,7 +473,13 @@ provisos (
         $display("%t AlexLog: CDP Rel deqCacheLines", $time);
         for (Integer i = 0; i < 8; i = i + 1) begin
             if (getVpn(x.line[i]) == reqVpn &&& getReqOp(x.req) == Ld) begin
-                trainingTableIdxT idx = truncate(x.line[i] >> valueOf(LgLineSzBytes));
+                // XOR-fold the 33 meaningful SV39 bits (38:6) into trainingTableIdxBits
+                Bit#(39) vaddr39 = truncate(x.line[i]);
+                Bit#(33) shifted = truncate(vaddr39 >> valueOf(LgLineSzBytes));
+                trainingTableIdxT fold1 = truncate(shifted);
+                trainingTableIdxT fold2 = truncate(shifted >> valueOf(trainingTableIdxBits));
+                trainingTableIdxT fold3 = truncate(shifted >> (2 * valueOf(trainingTableIdxBits)));
+                trainingTableIdxT idx   = fold1 ^ fold2 ^ fold3;
                 Bool missedOnThisVaddr = (dataSel == fromInteger(i));
                 if (missedOnThisVaddr)
                     $display("%t AlexLog: CDP Rel found a candidate vaddr that missed", $time);
