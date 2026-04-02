@@ -230,7 +230,6 @@ provisos (
         //if (trainingTable.rdRespValid && respQ.missedOnThisVaddr) begin // Vaddr already exists in the training table and the cache miss is for that specific vaddr
         if (x matches tagged Valid .ttRdResp) begin // Vaddr already exists in the training table and the cache miss is for that specific vaddr
             if (respQ.missedOnThisVaddr) begin
-                $display("%t AlexLog: PC table needs update", $time);
                 let pctIdx = truncate(getPcHash(respQ.req) >> valueof(TSub#(16, pcTableIdxBits)));
                 pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged Training ttRdResp.lineOffset));
             end

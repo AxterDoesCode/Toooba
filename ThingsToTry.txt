@@ -35,7 +35,10 @@ Could perform some sort of deep study for the lines around a prefetch miss
 TAGE branch predictor has a way of identifying branches that still keep missing even when we've tried to prefetch them.
 
 Alex Thoughts:
-So the BRAM needs to be init with some value to identify that the value inside of it isn't garbage.
+So the BRAM needs to be init with some value to identify that the value inside of it isn't garbage. Done, also done for PC Table
 Also that the valid thing always exists if a read request has been issued.
 Assuming that is why Louis did that stuff because otherwise when I try to read it then it isn't any good
 Training table also only has 64 entries, is there any potential overwriting/aliasing happening? Need to store the tag in the entry or just the whole vaddr in the entry
+After clauding:
+Looks like pointer heavy benchmarks are breaking, fairly certain these two rules that both access the pcTable aren't good.
+Also directly calling read instead of going to some read queue from reportAccess is also bad
