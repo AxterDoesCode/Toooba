@@ -367,3 +367,239 @@ provisos (
         };
     endmethod
 endmodule
+
+// ============================================================================
+// mkCDPStatefulRelative
+// Same as mkCDPStateful but trains on the offset of the candidate vaddr
+// *relative* to the missed word position, so negative offsets are possible.
+// ============================================================================
+
+// Signed relative offset: candidate_position - miss_position, range -7..+7
+typedef Int#(4) RelLineOffset;
+
+// Confidence vector indexed by (relOffset + 7), covering offsets -7..+7 (15 slots)
+typedef Vector#(15, Bit#(3)) PCRelOffsetConfT;
+
+typedef union tagged {
+    RelLineOffset        Training;      // relative offset whose counter to saturating-increment
+    Tuple2#(Addr, Line)  PrefetchIssue; // (load addr, cache line) to select prefetch target from
+    void                 Decay;         // decrement all counters in the selected entry by 1
+} PCTableRdRelTagT deriving (Bits, FShow);
+
+module mkCDPStatefulRelative#(
+    Parameter#(trainingTableSize) _,
+    Parameter#(pcTableSize) __,
+    Parameter#(decayInterval) ___
+)(CacheLinePrefetcher#(reqT))
+provisos (
+    Bits#(reqT, _reqSz),
+    FShow#(reqT),
+    IsProcRq#(reqT),
+
+    NumAlias#(trainingTableIdxBits, TLog#(trainingTableSize)),
+    Alias#(trainingTableIdxT, Bit#(trainingTableIdxBits)),
+
+    NumAlias#(pcTableIdxBits, TLog#(pcTableSize)),
+    Alias#(pcTableIdxT, Bit#(pcTableIdxBits)),
+    Alias#(ttRespQT, TrainingTableRespQT#(reqT, trainingTableIdxT)),
+
+    Add#(a__, TLog#(trainingTableSize), 64),
+    Add#(b__, TLog#(pcTableSize), 16)
+);
+
+    FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
+
+    RWBramCore#(trainingTableIdxT, Maybe#(TrainingTableEntryT)) trainingTable <- mkRWBramCoreForwarded();
+    SupFifo#(8, 8, ttRespQT) ttRespQ <- mkSupFifo;
+    SupFifo#(8, 8, trainingTableIdxT) ttRdReqSupFIFO <- mkSupFifo;
+
+    // PC-relative-offset confidence table
+    RWBramCore#(pcTableIdxT, Maybe#(PCRelOffsetConfT)) pcTable <- mkRWBramCoreForwarded();
+
+    Fifo#(16, NextCandT) nextCandidateBuffer <- mkOverflowBypassFifo;
+    FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdReqFIFO <- mkSizedFIFO(64);
+    FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdTagQ    <- mkFIFO;
+
+    // Init registers
+    Reg#(Bool) trainingTableInited <- mkConfigReg(False);
+    Reg#(Bit#(trainingTableIdxBits)) trainingTableInitCount <- mkReg(0);
+    Reg#(Bool) pcTableInited <- mkConfigReg(False);
+    Reg#(Bit#(pcTableIdxBits)) pcTableInitCount <- mkReg(0);
+
+    // Confidence decay
+    LFSR#(Bit#(16)) decayLfsr <- mkLFSR_16;
+    Reg#(Bit#(32))  decayCounter <- mkReg(fromInteger(valueOf(decayInterval)));
+
+    function Bool inited;
+        return trainingTableInited && pcTableInited;
+    endfunction
+
+    (* mutually_exclusive = "doTrainingTableInit, processTtRdReq, ttAccess" *)
+    rule doTrainingTableInit(!trainingTableInited);
+        trainingTable.wrReq(trainingTableInitCount, Invalid);
+        if (trainingTableInitCount == ~0) begin
+            trainingTableInited <= True;
+            $display("%t AlexLog: CDP Rel Training table inited", $time);
+        end
+        trainingTableInitCount <= trainingTableInitCount + 1;
+    endrule
+
+    (* mutually_exclusive = "doPcTableInit, processPcTableRdReq, pcTableResp" *)
+    rule doPcTableInit(!pcTableInited);
+        pcTable.wrReq(pcTableInitCount, Invalid);
+        if (pcTableInitCount == ~0) begin
+            pcTableInited <= True;
+            decayLfsr.seed('hA5F1);
+            $display("%t AlexLog: CDP Rel PC table inited", $time);
+        end
+        pcTableInitCount <= pcTableInitCount + 1;
+    endrule
+
+    (* descending_urgency = "deqCacheLines, processTtRdReq, ttAccess" *)
+    rule deqCacheLines;
+        L1ToCDPT#(reqT) x = l1ToCDP.first;
+        LineDataOffset dataSel = getLineDataOffset(getReqAddr(x.req));
+        l1ToCDP.deq;
+        let reqVpn = getReqVpn(x.req);
+        Integer enqIdx = 0;
+        $display("%t AlexLog: CDP Rel deqCacheLines", $time);
+        for (Integer i = 0; i < 8; i = i + 1) begin
+            if (getVpn(x.line[i]) == reqVpn &&& getReqOp(x.req) == Ld) begin
+                trainingTableIdxT idx = truncate(x.line[i] >> valueOf(LgLineSzBytes));
+                Bool missedOnThisVaddr = (dataSel == fromInteger(i));
+                if (missedOnThisVaddr)
+                    $display("%t AlexLog: CDP Rel found a candidate vaddr that missed", $time);
+                ttRespQ.enqS[enqIdx].enq(
+                    TrainingTableRespQT{
+                        req: x.req,
+                        ttIdx: idx,
+                        missedOnThisVaddr: missedOnThisVaddr,
+                        offset: fromInteger(i),
+                        candVaddr: x.line[i]});
+                ttRdReqSupFIFO.enqS[enqIdx].enq(idx);
+                $display("%t AlexLog: CDP Rel candidate vaddr found, offset: %d", $time, i);
+                enqIdx = enqIdx + 1;
+            end
+        end
+    endrule
+
+    rule processTtRdReq(inited);
+        let idx = ttRdReqSupFIFO.deqS[0].first;
+        ttRdReqSupFIFO.deqS[0].deq;
+        trainingTable.rdReq(idx);
+    endrule
+
+    rule ttAccess(inited);
+        let x = trainingTable.rdResp;
+        trainingTable.deqRdResp;
+        ttRespQT respQ = ttRespQ.deqS[0].first;
+        ttRespQ.deqS[0].deq;
+        if (x matches tagged Valid .ttRdResp) begin
+            if (respQ.missedOnThisVaddr) begin
+                $display("%t AlexLog: CDP Rel PC table needs update", $time);
+                let pctIdx = truncate(getPcHash(respQ.req) >> valueof(TSub#(16, pcTableIdxBits)));
+                // Relative offset: where the pointer sat in the line vs where we missed
+                LineDataOffset dataSel = getLineDataOffset(getReqAddr(respQ.req));
+                RelLineOffset relOffset = unpack(zeroExtend(ttRdResp.lineOffset))
+                                        - unpack(zeroExtend(dataSel));
+                pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged Training relOffset));
+            end
+        end else begin
+            trainingTable.wrReq(respQ.ttIdx, Valid(TrainingTableEntryT {
+                pcHash:     getPcHash(respQ.req),
+                lineOffset: respQ.offset
+            }));
+            $display("%t AlexLog: CDP Rel Wrote to training table, idx: %d", $time, respQ.ttIdx);
+        end
+    endrule
+
+    rule processPcTableRdReq(inited);
+        match {.pctIdx, .tag} = pcTableRdReqFIFO.first;
+        pcTableRdReqFIFO.deq;
+        pcTable.rdReq(pctIdx);
+        pcTableRdTagQ.enq(tuple2(pctIdx, tag));
+    endrule
+
+    rule pcTableResp(inited);
+        let rdResp = pcTable.rdResp;
+        pcTable.deqRdResp;
+        match {.pctIdx, .tag} = pcTableRdTagQ.first;
+        pcTableRdTagQ.deq;
+        case (tag) matches
+            tagged Training .relOffset: begin
+                PCRelOffsetConfT curConf = fromMaybe(replicate(0), rdResp);
+                Bit#(4) vecIdx = pack(relOffset + 7);
+                Bit#(3) curVal = curConf[vecIdx];
+                Bit#(3) newVal = (curVal == maxBound) ? maxBound : curVal + 1;
+                pcTable.wrReq(pctIdx, Valid(update(curConf, vecIdx, newVal)));
+                $display("%t AlexLog: CDP Rel PC table updated, idx: %d, relOffset: %d, conf: %d -> %d",
+                         $time, pctIdx, relOffset, curVal, newVal);
+            end
+            tagged PrefetchIssue {.addr, .line}: begin
+                if (rdResp matches tagged Valid .conf) begin
+                    Int#(4) hitOffset = unpack(zeroExtend(getLineDataOffset(addr)));
+                    LineDataOffset bestOffset = 0;
+                    Bool foundHighConf = False;
+                    // Iterate high-to-low so lowest relative offset wins on tie
+                    for (Integer i = 14; i >= 0; i = i - 1) begin
+                        Int#(4) relOffset  = fromInteger(i) - 7;
+                        Int#(4) absTarget  = hitOffset + relOffset;
+                        if (conf[fromInteger(i)] >= 4 &&& absTarget >= 0 &&& absTarget <= 7) begin
+                            bestOffset = truncate(pack(absTarget));
+                            foundHighConf = True;
+                        end
+                    end
+                    if (foundHighConf) begin
+                        nextCandidateBuffer.enq(NextCandT{paddr: addr, vaddr: line[bestOffset]});
+                        $display("%t AlexLog: CDP Rel prefetch issued, paddr: %h, vaddr: %h",
+                                 $time, addr, line[bestOffset]);
+                    end
+                end
+            end
+            tagged Decay: begin
+                if (rdResp matches tagged Valid .conf) begin
+                    function Bit#(3) satDec(Bit#(3) x) = (x == 0) ? 0 : x - 1;
+                    pcTable.wrReq(pctIdx, Valid(map(satDec, conf)));
+                    $display("%t AlexLog: CDP Rel decay applied to pcTable idx: %d", $time, pctIdx);
+                end
+            end
+        endcase
+    endrule
+
+    rule tickDecayCounter(inited);
+        decayCounter <= (decayCounter == 0) ? fromInteger(valueOf(decayInterval)) : decayCounter - 1;
+    endrule
+
+    (* descending_urgency = "issuePcTableDecay, tickDecayCounter" *)
+    rule issuePcTableDecay(inited && decayCounter == 0);
+        pcTableIdxT decayIdx = truncate(decayLfsr.value);
+        decayLfsr.next;
+        pcTableRdReqFIFO.enq(tuple2(decayIdx, tagged Decay));
+    endrule
+
+    method Action reportIncomingCacheLine(reqT req, Line line);
+        let tmp = L1ToCDPT{req: req, line: line};
+        l1ToCDP.enq(tmp);
+        $display("%t AlexLog: CDP Rel reportIncomingCacheLine", $time);
+    endmethod
+
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line);
+        if (hitMiss == HIT) begin
+            pcTableIdxT pctIdx = truncate(pcHash >> valueof(TSub#(16, pcTableIdxBits)));
+            pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple2(addr, line)));
+        end
+        $display("%t AlexLog: CDP Rel prefetcher report %s %h", $time, hitMiss == HIT ? "HIT" : "MISS", addr);
+    endmethod
+
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
+        let x = nextCandidateBuffer.first;
+        nextCandidateBuffer.deq;
+        Addr nextAddr = zeroExtend({getPpn(x.paddr), getPageOffset(x.vaddr)});
+        $display("%t AlexLog: CDP Rel Prefetch addr issued. paddr: %h | vaddr: %h", $time, nextAddr, x.vaddr);
+        return PendingPrefetch {
+            addr: nextAddr,
+            vpn: getVpn(x.vaddr),
+            nextLevel: False
+        };
+    endmethod
+endmodule
