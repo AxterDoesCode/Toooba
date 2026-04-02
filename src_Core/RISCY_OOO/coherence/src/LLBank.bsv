@@ -227,7 +227,7 @@ module mkLLBank#(
 
     Count#(Bit#(32)) addedCRqs <- mkCount(0); // Do we even need these?
     Count#(Bit#(32)) removedCRqs <- mkCount(0);
-    Bit#(TAdd#(TLog#(cRqNum),1)) threeQuartursFull = ~({1'b1,0} >> 3);
+    Bit#(TAdd#(TLog#(cRqNum),1)) threeQuartursFull = fromInteger(3 * valueOf(cRqNum) / 4);
 
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
     PrefetcherVector#(TDiv#(childNum, 2)) dataPrefetchers <- mkPrefetcherVector(mkLLDPrefetcher);

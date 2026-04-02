@@ -182,6 +182,7 @@ module mkL1Bank#(
 
     Reg#(Bit#(TAdd#(TLog#(cRqNum),1))) crqMshrEnqs <- mkConfigReg(0);
     Reg#(Bit#(TAdd#(TLog#(cRqNum),1))) crqMshrDeqs <- mkConfigReg(0);
+    Bit#(TAdd#(TLog#(cRqNum),1)) threeQuartersFull = fromInteger(3 * valueOf(cRqNum) / 4);
 
 
     // we process AMO resp in a new cycle to cut critical path
@@ -423,7 +424,7 @@ endfunction
     endrule
 
     (* descending_urgency = "pRqTransfer, cRqTransfer_retry, cRqTransfer_new, sendRqToP, createPrefetchRq" *)
-    rule createPrefetchRq(flushDone && crqMshrEnqs - crqMshrDeqs < 6);
+    rule createPrefetchRq(flushDone && crqMshrEnqs - crqMshrDeqs < threeQuartersFull);
         let prefetch <- prefetcher.getNextPrefetchAddr;
         if (prefetch.nextLevel) begin
             cRqToPT cRqToP = CRqMsg {
