@@ -542,7 +542,7 @@ provisos (
                     Bool foundHighConf = False;
                     // Iterate high-to-low so lowest relative offset wins on tie
                     for (Integer i = 14; i >= 0; i = i - 1) begin
-                        Int#(4) relOffset  = fromInteger(i) - 7;
+                        Int#(4) relOffset  = fromInteger(i - 7); // subtract at Integer level to stay in Int#(4) range
                         Int#(4) absTarget  = hitOffset + relOffset;
                         if (conf[fromInteger(i)] >= 4 &&& absTarget >= 0 &&& absTarget <= 7) begin
                             bestOffset = truncate(pack(absTarget));
