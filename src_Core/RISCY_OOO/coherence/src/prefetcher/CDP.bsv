@@ -6,6 +6,7 @@ import Fifos::*;
 import Ehr::*;
 import Vector::*;
 import ConfigReg::*;
+import LFSR::*;
 
 import Types::*;
 import RWBramCore::*;
@@ -105,15 +106,18 @@ typedef struct {
 typedef Vector#(8, Bit#(3)) PCOffsetConfT;
 
 // Tag carried alongside each pcTable read request so the single response rule
-// knows whether to do a confidence update (Training) or a prefetch issue (PrefetchIssue)
+// knows whether to do a confidence update (Training), a prefetch issue (PrefetchIssue),
+// or a periodic confidence decay (Decay)
 typedef union tagged {
     LineDataOffset      Training;      // offset whose counter to saturating-increment
     Tuple2#(Addr, Line) PrefetchIssue; // (load addr, cache line) to select prefetch target from
+    void                Decay;         // decrement all counters in the selected entry by 1
 } PCTableRdTagT deriving (Bits, FShow);
 
 module mkCDPStateful#(
     Parameter#(trainingTableSize) _,
-    Parameter#(pcTableSize) __
+    Parameter#(pcTableSize) __,
+    Parameter#(decayInterval) ___
 )(CacheLinePrefetcher#(reqT))
 provisos (
     Bits#(reqT, _reqSz),
@@ -158,6 +162,10 @@ provisos (
     Reg#(Bool) pcTableInited <- mkConfigReg(False);
     Reg#(Bit#(pcTableIdxBits)) pcTableInitCount <- mkReg(0);
 
+    // Confidence decay: LFSR picks a random pcTable entry, counter controls frequency
+    LFSR#(Bit#(16)) decayLfsr <- mkLFSR_16;
+    Reg#(Bit#(32))  decayCounter <- mkReg(fromInteger(valueOf(decayInterval)));
+
     // Whether we have inited
     function Bool inited;
         //return ptrTableInited && trainingTableInited && tlbReqFreeQInited;
@@ -181,6 +189,7 @@ provisos (
         pcTable.wrReq(pcTableInitCount, Invalid);
         if (pcTableInitCount == ~0) begin
             pcTableInited <= True;
+            decayLfsr.seed('hA5F1);
             $display("%t AlexLog: PC table inited", $time);
         end
         pcTableInitCount <= pcTableInitCount + 1;
@@ -285,7 +294,28 @@ provisos (
                     end
                 end
             end
+            tagged Decay: begin
+                if (rdResp matches tagged Valid .conf) begin
+                    function Bit#(3) satDec(Bit#(3) x) = (x == 0) ? 0 : x - 1;
+                    pcTable.wrReq(pctIdx, Valid(map(satDec, conf)));
+                    $display("%t AlexLog: CDP decay applied to pcTable idx: %d", $time, pctIdx);
+                end
+            end
         endcase
+    endrule
+
+    // Ticks every cycle regardless of FIFO state so decay timing is never distorted
+    rule tickDecayCounter(inited);
+        decayCounter <= (decayCounter == 0) ? fromInteger(valueOf(decayInterval)) : decayCounter - 1;
+    endrule
+
+    // Enqueues a decay read request when the counter expires; lower urgency than
+    // tickDecayCounter so the counter always resets even if the FIFO is momentarily full
+    (* descending_urgency = "issuePcTableDecay, tickDecayCounter" *)
+    rule issuePcTableDecay(inited && decayCounter == 0);
+        pcTableIdxT decayIdx = truncate(decayLfsr.value);
+        decayLfsr.next;
+        pcTableRdReqFIFO.enq(tuple2(decayIdx, tagged Decay));
     endrule
 
     //rule thing;
