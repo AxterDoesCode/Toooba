@@ -688,7 +688,7 @@ endfunction
                 if (!cRqIsPrefetch[n]) begin
                     procResp.respLd(req.id, curLine[dataSel]);
                     if (prefetchVerbose) 
-                        $display("%t L1Bank hit data: ", $time, fshow(curLine[dataSel]));
+                        $display("%t L1Bank hit data: ", cur_cycle, fshow(curLine[dataSel]));
                 end else begin
                     lineTouched = False;
                 end
