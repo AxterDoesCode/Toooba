@@ -146,7 +146,7 @@ provisos (
 
     FIFO#(NextCandT) nextCandidateBuffer <- mkFIFO;
     // Incoming pcTable read requests (buffered so callers never block on the BRAM)
-    FIFO#(Tuple2#(pcTableIdxT, PCTableRdTagT)) pcTableRdReqFIFO <- mkFIFO;
+    FIFO#(Tuple2#(pcTableIdxT, PCTableRdTagT)) pcTableRdReqFIFO <- mkSizedFIFO(16);
     // Mirrors in-flight BRAM reads so pcTableResp knows what each response is for
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdTagT)) pcTableRdTagQ    <- mkFIFO;
 
