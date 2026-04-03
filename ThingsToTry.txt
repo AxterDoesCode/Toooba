@@ -39,7 +39,7 @@ So the BRAM needs to be init with some value to identify that the value inside o
 Also that the valid thing always exists if a read request has been issued. Not a problem now with table init and rewriting
 Training table also only has 64 entries, is there any potential overwriting/aliasing happening? Need to store the tag in the entry or just the whole vaddr in the entry
 After clauding:
-Looks like pointer heavy benchmarks are breaking, fairly certain these two rules that both access the pcTable aren't good.
+Looks like pointer heavy benchmarks are breaking, fairly certain these two rules that both access the pcTable aren't good., This is fixed and unified
 Also directly calling read instead of going to some read queue from reportAccess is also bad. This has been fixed, only single rules for processing pcTable access.
 
 So now with the new relative prefetcher I want to see performance, want to check Alex_Tiny cache size.

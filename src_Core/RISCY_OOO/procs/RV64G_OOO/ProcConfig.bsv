@@ -163,8 +163,8 @@
     `define L1D_CRQ_NUM 8
 
     // LLC
-    `define LOG_LLC_LINES 14 // 1MB
-    `define LOG_LLC_WAYS 4 // 16 ways
+    `define LOG_LLC_LINES 13 // 512KB
+    `define LOG_LLC_WAYS 3 // 8 ways
 
     // There is already 20 cycles of baseline latency
     `undef DRAM_LATENCY
@@ -180,8 +180,8 @@
     `define L1D_CRQ_NUM 8
 
     // LLC
-    `define LOG_LLC_LINES 14 // 1MB
-    `define LOG_LLC_WAYS 4 // 16 ways
+    `define LOG_LLC_LINES 13 // 512KB
+    `define LOG_LLC_WAYS 3 // 8 ways
 
     // There is already 20 cycles of baseline latency
     `undef DRAM_LATENCY
