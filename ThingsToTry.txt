@@ -44,3 +44,5 @@ Also directly calling read instead of going to some read queue from reportAccess
 
 So now with the new relative prefetcher I want to see performance, want to check Alex_Tiny cache size.
 Still I think the vaddr needs some tagging or something because once these 64 entries fill they basically don't do anything, do we need some aliasing or something
+
+Are these benchmarks even good??? If they perform well on the strided access pattern then why would they perform well for pointer chasing?
