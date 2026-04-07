@@ -52,4 +52,9 @@ perimeter, treeadd and power are timing out. This is done
 
 Alex Thoughts Tuesday 7th April:
 We seem to be issuing a lot of prefetches, which is good, clearly a lot are useless according to logs.
-Are the prefetches issued do they even look like virtual addresses? Before they looked like a virtual address but now we are just doing a hard offset on a line...
+Are the prefetches issued do they even look like virtual addresses? Before they looked like a virtual address but now we are just doing a hard offset on a line... These changes are pushed but haven't tested on walkeria yet
+
+Things to ask Jon:
+How should I size the training tables/PC table?
+Backbone - node prefetching, how do I stop repeat prefetching, another data structure?
+Discuss the cache line analysis thing
