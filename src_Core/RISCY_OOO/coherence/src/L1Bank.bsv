@@ -756,7 +756,7 @@ endfunction
                 cRqMshr.manageQueue.resetEntry(nextInQueue);
             end
             if (!cRqIsPrefetch[n]) begin
-                prefetcher.reportAccess(req.addr, req.pcHash, HIT, ram.line);
+                prefetcher.reportAccess(req.addr, req.pcHash, HIT, ram.line, req.vpn);
             end
             if (verbose)
                 $display("%t L1 %m pipelineResp: Hit func: update ram: ", $time,
@@ -903,7 +903,7 @@ endfunction
                 line: ram.line
             }, pipeOutNextInQueue, False);
             if (!cRqIsPrefetch[n]) begin
-                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, ?);
+                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, ?, procRq.vpn);
             end
             LineAddr repLineAddr = getLineAddr({ram.info.tag, truncate(procRq.addr)});
             if (prefetchVerbose)
@@ -946,7 +946,7 @@ endfunction
             });
             cRqMshr.pipelineResp.setData(n, ram.info.cs == M ? Valid (ram.line) : Invalid);
             if (!cRqIsPrefetch[n]) begin
-                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, ?);
+                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, ?, procRq.vpn);
             end
             // send replacement resp to parent
             rsToPIndexQ.enq(CRq (n));

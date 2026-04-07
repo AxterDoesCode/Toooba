@@ -10,7 +10,7 @@ PROC := RV64G_OOO
 # core size
 CORE_SIZE ?= SMALL
 # cache size
-CACHE_SIZE ?= ALEX
+CACHE_SIZE ?= ALEX_SMALL
 # always include perf counter
 PERF_COUNT := true
 # dram type in simulation: VC707 or AWSF1
@@ -47,7 +47,7 @@ CHECK_DEADLOCK ?= true
 RENAME_DEBUG ?= false
 INSTR_PREFETCHER_LOCATION ?= NONE
 INSTR_PREFETCHER_TYPE ?= SINGLE_WINDOW_TARGET
-DATA_PREFETCHER_LOCATION ?= NONE
+DATA_PREFETCHER_LOCATION ?= L1
 DATA_PREFETCHER_TYPE ?= CDP
 
 # clk frequency depends on core size
