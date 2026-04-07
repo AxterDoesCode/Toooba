@@ -92,6 +92,7 @@ endmodule
 typedef struct {
     Bit#(16)       pcHash;
     LineDataOffset lineOffset;
+    Addr           storedVaddr; // Full vaddr stored to detect hash collisions
 } TrainingTableEntryT deriving (Bits, FShow, Eq);
 
 typedef struct {
@@ -242,6 +243,10 @@ provisos (
         ttRespQT respQ = ttRespQ.deqS[0].first;
         ttRespQ.deqS[0].deq;
         if (x matches tagged Valid .ttRdResp) begin
+            if (ttRdResp.storedVaddr != respQ.candVaddr) begin
+                $display("%t AlexLog: CDP Rel training table COLLISION: stored vaddr %h != incoming vaddr %h (idx: %d)",
+                         $time, ttRdResp.storedVaddr, respQ.candVaddr, respQ.ttIdx);
+            end
             if (respQ.missedOnThisVaddr) begin
                 $display("%t AlexLog: CDP Rel PC table needs update", $time);
                 let pctIdx = truncate(getPcHash(respQ.req) >> valueof(TSub#(16, pcTableIdxBits)));
@@ -253,8 +258,9 @@ provisos (
             end
         end else begin
             trainingTable.wrReq(respQ.ttIdx, Valid(TrainingTableEntryT {
-                pcHash:     getPcHash(respQ.req),
-                lineOffset: respQ.offset
+                pcHash:      getPcHash(respQ.req),
+                lineOffset:  respQ.offset,
+                storedVaddr: respQ.candVaddr
             }));
             $display("%t AlexLog: CDP Rel Wrote to training table, idx: %d", $time, respQ.ttIdx);
         end
