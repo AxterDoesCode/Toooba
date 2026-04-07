@@ -297,6 +297,7 @@ provisos (
                         end
                     end
 
+                    
                     Addr candidate = line[bestOffset];
                     Bool isValidVaddr = getVpn(line[bestOffset]) == reqVpn;
                     // Check if the address at the high confidence offset is valid/looks like it points to line in same page
@@ -304,7 +305,7 @@ provisos (
                         nextCandidateBuffer.enq(NextCandT{paddr: addr, vaddr: candidate});
                         $display("%t AlexLog: CDP Rel prefetch issued, paddr: %h, vaddr: %h", $time, addr, candidate);
                     end
-                    if (!isValidVaddr) begin
+                    if (foundHighConf && !isValidVaddr) begin
                         $display("%t AlexLog: Invalid address at best offset");
                     end
                 end

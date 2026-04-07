@@ -463,7 +463,6 @@ module mkDTlb#(
 `endif
         else if (vm_info.sv39) begin
             let vpn = getVpn(r.addr);
-            $display("AlexLog: DTlb sv39 vpn from vaddr: ", fshow(vpn));
             let trans_result = tlb.translate(vpn, vm_info.asid);
             if (!validVirtualAddress(r.addr)) begin
                 // page fault

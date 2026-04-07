@@ -1149,6 +1149,7 @@ endfunction
             if(!cRqIsPrefetch[cOwner] && procRq.op == Ld) begin // Only forward loads into the prefetcher
                 $display("AlexLog: L1 pipelineResp_pRs (not prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
                 Line curLine = ram.line;
+                // Only report incoming demand miss lines
                 prefetcher.reportIncomingCacheLine(procRq, curLine);
             end
             else 
