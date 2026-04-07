@@ -89,10 +89,13 @@ module mkCDP(
     endmethod
 endmodule
 
+// Signed relative offset: candidate_position - miss_position, range -7..+7
+typedef Int#(4) RelLineOffset;
+
 typedef struct {
-    Bit#(16)       pcHash;
-    LineDataOffset lineOffset;
-    Addr           storedVaddr; // Full vaddr stored to detect hash collisions
+    Bit#(16)      pcHash;
+    RelLineOffset lineOffset;  // relative offset: candidate_pos - miss_pos
+    Addr          storedVaddr; // Full vaddr stored to detect hash collisions
 } TrainingTableEntryT deriving (Bits, FShow, Eq);
 
 typedef struct {
@@ -108,9 +111,6 @@ typedef struct {
 // Same as mkCDPStateful but trains on the offset of the candidate vaddr
 // *relative* to the missed word position, so negative offsets are possible.
 // ============================================================================
-
-// Signed relative offset: candidate_position - miss_position, range -7..+7
-typedef Int#(4) RelLineOffset;
 
 // Confidence vector indexed by (relOffset + 7), covering offsets -7..+7 (15 slots)
 typedef Vector#(15, Bit#(3)) PCRelOffsetConfT;
@@ -250,16 +250,14 @@ provisos (
             if (respQ.missedOnThisVaddr) begin
                 $display("%t AlexLog: CDP Rel PC table needs update", $time);
                 let pctIdx = truncate(getPcHash(respQ.req) >> valueof(TSub#(16, pcTableIdxBits)));
-                // Relative offset: where the pointer sat in the line vs where we missed
-                LineDataOffset dataSel = getLineDataOffset(getReqAddr(respQ.req));
-                RelLineOffset relOffset = unpack(zeroExtend(ttRdResp.lineOffset))
-                                        - unpack(zeroExtend(dataSel));
-                pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged Training relOffset));
+                pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged Training ttRdResp.lineOffset));
             end
         end else begin
+            LineDataOffset dataSel = getLineDataOffset(getReqAddr(respQ.req));
+            RelLineOffset relOffset = unpack(zeroExtend(respQ.offset)) - unpack(zeroExtend(dataSel));
             trainingTable.wrReq(respQ.ttIdx, Valid(TrainingTableEntryT {
                 pcHash:      getPcHash(respQ.req),
-                lineOffset:  respQ.offset,
+                lineOffset:  relOffset,
                 storedVaddr: respQ.candVaddr
             }));
             $display("%t AlexLog: CDP Rel Wrote to training table, idx: %d", $time, respQ.ttIdx);
