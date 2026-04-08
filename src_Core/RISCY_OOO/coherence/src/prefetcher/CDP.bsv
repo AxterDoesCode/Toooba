@@ -146,7 +146,9 @@ provisos (
     Add#(1, d__, TDiv#(39, TLog#(trainingTableSize))),
     Add#(e__, 39, TMul#(TDiv#(39, TLog#(trainingTableSize)), TLog#(trainingTableSize))),
     PrimIndex#(trainingTableIdxT, f__),
-    PrimIndex#(pcTableIdxT, g__)
+    PrimIndex#(pcTableIdxT, g__),
+    Add#(1, h__, TDiv#(16, TLog#(pcTableSize))),
+    Add#(i__, 16, TMul#(TDiv#(16, TLog#(pcTableSize)), TLog#(pcTableSize)))
 );
 
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
