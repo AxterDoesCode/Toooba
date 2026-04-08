@@ -7,6 +7,7 @@ import Ehr::*;
 import Vector::*;
 import ConfigReg::*;
 import LFSR::*;
+import ProcTypes::*;
 
 import Types::*;
 import RWBramCore::*;
@@ -140,12 +141,16 @@ provisos (
 
     Add#(a__, TLog#(trainingTableSize), 64),
     Add#(b__, TLog#(pcTableSize), 16),
-    Add#(c__, TLog#(trainingTableSize), 33)
+    Add#(c__, TLog#(trainingTableSize), 33),
+    Add#(1, d__, TDiv#(39, TLog#(trainingTableSize))),
+    Add#(e__, 39, TMul#(TDiv#(39, TLog#(trainingTableSize)),
+    TLog#(trainingTableSize)))
 );
 
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
 
     RWBramCore#(trainingTableIdxT, Maybe#(TrainingTableEntryT)) trainingTable <- mkRWBramCoreForwarded();
+    // mapLossyBRAM
     SupFifo#(8, 8, ttRespQT) ttRespQ <- mkSupFifo;
     SupFifo#(8, 8, trainingTableIdxT) ttRdReqSupFIFO <- mkSupFifo;
 
@@ -201,13 +206,13 @@ provisos (
         $display("%t AlexLog: CDP Rel deqCacheLines", $time);
         for (Integer i = 0; i < 8; i = i + 1) begin
             if (getVpn(x.line[i]) == reqVpn &&& getReqOp(x.req) == Ld) begin
-                // XOR-fold the 33 meaningful SV39 bits (38:6) into trainingTableIdxBits
                 Bit#(39) vaddr39 = truncate(x.line[i]);
-                Bit#(33) shifted = truncate(vaddr39 >> valueOf(LgLineSzBytes));
-                trainingTableIdxT fold1 = truncate(shifted);
-                trainingTableIdxT fold2 = truncate(shifted >> valueOf(trainingTableIdxBits));
-                trainingTableIdxT fold3 = truncate(shifted >> (2 * valueOf(trainingTableIdxBits)));
-                trainingTableIdxT idx   = fold1 ^ fold2 ^ fold3;
+                //Bit#(33) shifted = truncate(vaddr39 >> valueOf(LgLineSzBytes));
+                //trainingTableIdxT fold1 = truncate(shifted);
+                //trainingTableIdxT fold2 = truncate(shifted >> valueOf(trainingTableIdxBits));
+                //trainingTableIdxT fold3 = truncate(shifted >> (2 * valueOf(trainingTableIdxBits)));
+                //trainingTableIdxT idx   = fold1 ^ fold2 ^ fold3;
+                trainingTableIdxT idx  = hash(vaddr39);
                 Bool missedOnThisVaddr = (dataSel == fromInteger(i));
                 if (missedOnThisVaddr)
                     $display("%t AlexLog: CDP Rel found a candidate vaddr that missed", $time);

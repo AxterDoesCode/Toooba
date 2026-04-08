@@ -25,7 +25,7 @@ provisos (
     `elsif DATA_PREFETCHER_MARKOV_ON_HIT_2
         let m <- mkPCToCacheLinePrefetcherAdapter(mkPCPrefetcherAdapter(mkMarkovOnHit2Prefetcher));
     `elsif DATA_PREFETCHER_CDP
-        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(4096) trainingTableSize <- mkParameter;
         Parameter#(4096) pcTableSize <- mkParameter;
         Parameter#(1024) decayInterval <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelative(trainingTableSize, pcTableSize, decayInterval);

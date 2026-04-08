@@ -7,17 +7,25 @@ Combine with stride prefetcher..
 What proportion of misses can actually be eliminated?
 Try get Olden benchmarks building
 
-Stateful Content-directed prefetching Policy:
-I want to add a training table where:
-    Demand miss -> 
-    bring in cache line to L1 -> 
-    send this off to the prefetcher for training ->
-    Check if the vaddr being requested was seen in the recent past?
-        Key into the training table and see if there is any PC + Offset associated with it
-        If so, update confidence on PC | offset table / Confidence on this offset should also be updated if we hit on this cache line if a prefetched line exists in the cache
-    Identify vaddrs -> These vaddrs get keyed into some table where key = vaddr, value = tuple(PC, offset), if the entry already exists then don't overwrite, ideally preserve the earliest PC at which they are seen in order to prefetch effectively?
-If the PC is seen again in the future, key into the PC offset table and issue a prefetch for the offset with the highest confidence
 
+CDP Relative Policy:
+**Training (building confidence)**
+
+When a cache line arrives on a MISS, each word is checked for same-page pointer candidates (VPN match). For each candidate at absolute position `i`:
+- Its vaddr is XOR-folded into a training table index
+- If no entry exists, one is created storing the PC hash, the relative offset `i - dataSel` (where `dataSel` is the miss word position in this line), and the full vaddr for collision detection
+- If an entry already exists AND this candidate is the word that was actually missed (`missedOnThisVaddr`), the pcTable confidence counter for the stored relative offset is saturating-incremented
+
+**Prefetch issue (two paths)**
+
+1. **On MISS** — one pcTable lookup is issued per incoming line using the request's PC hash. If any relative offset has confidence ≥ 3, the value at `line[hitOffset + relOffset]` is used as the prefetch target, bounds-checked to ensure the resulting absolute offset stays within 0–7, and VPN-validated before enqueuing
+2. **On HIT** — same pcTable lookup and same selection logic, triggered from `reportAccess`
+
+**Confidence decay**
+
+Every `decayInterval` cycles a randomly selected pcTable entry has all 15 of its confidence counters saturating-decremented by 1, preventing stale patterns from persisting indefinitely.
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 Does UGSupFIFO even dequeue from head sequentially? Can quickly add some extra logs on normal stateless CDP
 
 Jon Talk:
@@ -39,7 +47,7 @@ So the BRAM needs to be init with some value to identify that the value inside o
 Also that the valid thing always exists if a read request has been issued. Not a problem now with table init and rewriting
 Training table also only has 64 entries, is there any potential overwriting/aliasing happening? Need to store the tag in the entry or just the whole vaddr in the entry
 After clauding:
-Looks like pointer heavy benchmarks are breaking, fairly certain these two rules that both access the pcTable aren't good., This is fixed and unified
+Looks like pointer heavy benchmarks L1D cRq hitare breaking, fairly certain these two rules that both access the pcTable aren't good., This is fixed and unified
 Also directly calling read instead of going to some read queue from reportAccess is also bad. This has been fixed, only single rules for processing pcTable access.
 
 So now with the new relative prefetcher I want to see performance, want to check Alex_Tiny cache size.
@@ -54,7 +62,28 @@ Alex Thoughts Tuesday 7th April:
 We seem to be issuing a lot of prefetches, which is good, clearly a lot are useless according to logs.
 Are the prefetches issued do they even look like virtual addresses? Before they looked like a virtual address but now we are just doing a hard offset on a line... These changes are pushed but haven't tested on walkeria yet
 
+Things to Investigate: ALSO ASK JON
+TODO: check the logs of recent runs to see if there are collisions, if so the training table needs some ways/sets and replacement policy, training table is also fairly small, could just make it a lot larger to see if useful stuff actually gets learned
+    In a similar train of thought, can the PC table have collisions? Probably.
+    On current run, upped the tt size from 64 to 4096 to see if that does anything for the aliasing issue
+        It does a bit but still seems to be some collisions, need to make training table set associative then.
+TODO: Prefetch issue may be bugged, we can issue prefetches on cache line fills from LLC -> L1D and also on demand HIT, however this is just a reportAccess call in cRqHit, can these two prefetch issues compete with eachother and/or mislead confidence update?
+    This was an issue, the pRs rule (cache fill from LLC rule) also calls cRqHit (which calls reportAccess(HIT)) cRqHit is aware that this is a hit on a missed line but the prefetcher wasn't.
+TODO: Can best offset be out of bounds? e.g. best offset is -3 but the PC miss was on index 1
+TODO: So far I have a statistical decay of confidence, I probably want to decrease confidence if a prefetch issued was useless?
+TODO: Random thought but is the reason why misses decrease in my prefetcher compared to no prefetches because we keep useful lines in cache for longer?
+
 Things to ask Jon:
-How should I size the training tables/PC table?
+How should I size the training tables/PC table? What are reasonable sizes for these
+How do I make sure prefetches are timely, the current scheme identifies a vaddr in a line and then waits some amount of time until the candidate is accessed, perhaps this isn't timely?
+    E.g the time between the first seen in some offset and then the actual demand miss for that line may be quite large, useless prefetches are those that weren't used before eviction. The training table sees ah I've seen this pointer at this PC and cache line offset in the past, next time lets prefetch it/update confidence, the issue is it could be very far in the past and so if we prefetch too early it could just get evicted before it is actually needed.
 Backbone - node prefetching, how do I stop repeat prefetching, another data structure?
-Discuss the cache line analysis thing
+Discuss the cache line analysis thing again?
+
+Talk:
+Halving the cache size, should increase misses by 1.4x, scales more with square root of 2
+Check logging logic of isPrefetched and isAccessed
+Can a core overwrite the prefetch if a prefetch is inflight?
+Stride prefetcher success implies nodes are stored linearly,
+
+To further reduce confidence try tie in an access to a cache line to a cache eviction, then decrease confidence if a useless prefetch was made?
