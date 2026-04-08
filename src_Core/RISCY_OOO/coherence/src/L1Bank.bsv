@@ -755,7 +755,7 @@ endfunction
                 cRqRetryIndexQ.enq(nextInQueue);
                 cRqMshr.manageQueue.resetEntry(nextInQueue);
             end
-            if (!cRqIsPrefetch[n]) begin
+            if (!cRqIsPrefetch[n] && !wasMiss) begin
                 prefetcher.reportAccess(req.addr, req.pcHash, HIT, ram.line, req.vpn);
             end
             if (verbose)
