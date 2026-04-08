@@ -231,7 +231,7 @@ provisos (
         // One pcTable lookup per incoming line — if this PC already has high confidence
         // for some offset, issue a prefetch immediately without waiting for the next HIT
         if (getReqOp(x.req) == Ld) begin
-            pcTableIdxT pctIdx = truncate(getPcHash(x.req) >> valueof(TSub#(16, pcTableIdxBits)));
+            pcTableIdxT pctIdx = hash(getPcHash(x.req));
             pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple3(getReqAddr(x.req), x.line, getReqVpn(x.req))));
         end
     endrule
@@ -254,7 +254,7 @@ provisos (
             end
             if (respQ.missedOnThisVaddr) begin
                 $display("%t AlexLog: CDP Rel PC table needs update", $time);
-                let pctIdx = truncate(getPcHash(respQ.req) >> valueof(TSub#(16, pcTableIdxBits)));
+                pcTableIdxT pctIdx = hash(getPcHash(respQ.req));
                 pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged Training ttRdResp.lineOffset));
             end
         end else begin
@@ -348,7 +348,7 @@ provisos (
 
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn);
         if (hitMiss == HIT) begin
-            pcTableIdxT pctIdx = truncate(pcHash >> valueof(TSub#(16, pcTableIdxBits)));
+            pcTableIdxT pctIdx = hash(pcHash);
             pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple3(addr, line, reqVpn)));
         end
         $display("%t AlexLog: CDP Rel prefetcher report %s %h", $time, hitMiss == HIT ? "HIT" : "MISS", addr);
