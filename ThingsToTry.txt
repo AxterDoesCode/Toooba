@@ -70,8 +70,13 @@ TODO: check the logs of recent runs to see if there are collisions, if so the tr
 TODO: Prefetch issue may be bugged, we can issue prefetches on cache line fills from LLC -> L1D and also on demand HIT, however this is just a reportAccess call in cRqHit, can these two prefetch issues compete with eachother and/or mislead confidence update?
     This was an issue, the pRs rule (cache fill from LLC rule) also calls cRqHit (which calls reportAccess(HIT)) cRqHit is aware that this is a hit on a missed line but the prefetcher wasn't.
 TODO: Can best offset be out of bounds? e.g. best offset is -3 but the PC miss was on index 1
+    This is guarded against
 TODO: So far I have a statistical decay of confidence, I probably want to decrease confidence if a prefetch issued was useless?
 TODO: Random thought but is the reason why misses decrease in my prefetcher compared to no prefetches because we keep useful lines in cache for longer?
+    After rerunning there is no improvement, the thing I showed Jon was misleading
+TODO: Is mst a useful benchmark, seems to have no prefetches issued but also problem size is very small...
+TODO: Statistical decay currently removed with setassocBram for pc table, maybe need to move back to the RWBramCore for just the pc table
+TODO: run benchmarks against stride adaptive
 
 Things to ask Jon:
 How should I size the training tables/PC table? What are reasonable sizes for these
