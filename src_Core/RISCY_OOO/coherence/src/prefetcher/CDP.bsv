@@ -176,6 +176,11 @@ provisos (
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdReqFIFO <- mkSizedFIFO(64);
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdTagQ    <- mkFIFO;
 
+    // TLB translation pipeline for prefetch candidates
+    FIFO#(Addr) tlbReqFIFO <- mkSizedFIFO(16);        // decouples pcTableResp from TLB
+    FIFO#(Addr) tlbPendingCandQ <- mkSizedFIFO(valueOf(LLCTlbReqNum)); // tracks in-flight vaddrs
+    Reg#(LLCTlbReqIdx) tlbReqId <- mkReg(0);
+
     // Init: write unpack(0) (valid=False) to every (addr, way) pair for training table
     Reg#(Bool) ttInited <- mkConfigReg(False);
     Reg#(Bit#(TAdd#(trainingTableIdxBits, 2))) ttInitCount <- mkReg(0);
@@ -327,8 +332,8 @@ provisos (
                     Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
                     Bool isValidVaddr = candUpper == addrUpper;
                     if (foundHighConf && isValidVaddr) begin
-                        nextCandidateBuffer.enq(NextCandT{paddr: addr, vaddr: candidate});
-                        $display("%t AlexLog: CDP Rel prefetch issued, paddr: %h, vaddr: %h", $time, addr, candidate);
+                        tlbReqFIFO.enq(candidate);
+                        $display("%t AlexLog: CDP Rel queued TLB req for candidate vaddr %h", $time, candidate);
                     end
                     if (foundHighConf && !isValidVaddr) begin
                         $display("%t AlexLog: Invalid address at best offset");
@@ -343,6 +348,30 @@ provisos (
                 end
             end
         endcase
+    endrule
+
+    // Drain tlbReqFIFO and issue requests to the TLB
+    rule processTlbReq;
+        Addr candVaddr = tlbReqFIFO.first;
+        tlbReqFIFO.deq;
+        toTlb.prefetcherReq(PrefetcherReqToTlb{vaddr: candVaddr, id: tlbReqId});
+        tlbPendingCandQ.enq(candVaddr);
+        tlbReqId <= tlbReqId + 1;
+        $display("%t AlexLog: CDP Rel TLB req sent for vaddr %h id %d", $time, candVaddr, tlbReqId);
+    endrule
+
+    // Consume TLB translation responses and enqueue to nextCandidateBuffer
+    rule processTlbResp;
+        let resp = toTlb.prefetcherResp;
+        toTlb.deqPrefetcherResp;
+        Addr candVaddr = tlbPendingCandQ.first;
+        tlbPendingCandQ.deq;
+        if (!resp.haveException) begin
+            nextCandidateBuffer.enq(NextCandT{paddr: resp.paddr, vaddr: candVaddr});
+            $display("%t AlexLog: CDP Rel TLB resp: vaddr %h -> paddr %h", $time, candVaddr, resp.paddr);
+        end else begin
+            $display("%t AlexLog: CDP Rel TLB resp: exception for vaddr %h, dropping prefetch", $time, candVaddr);
+        end
     endrule
 
     rule tickDecayCounter(inited);
@@ -374,10 +403,10 @@ provisos (
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
         let x = nextCandidateBuffer.first;
         nextCandidateBuffer.deq;
-        Addr nextAddr = zeroExtend({getPpn(x.paddr), getPageOffset(x.vaddr)});
-        $display("%t AlexLog: CDP Rel Prefetch addr issued. paddr: %h | vaddr: %h", $time, nextAddr, x.vaddr);
+        // paddr is already the correct translated physical address from the TLB
+        $display("%t AlexLog: CDP Rel Prefetch addr issued. paddr: %h | vaddr: %h", $time, x.paddr, x.vaddr);
         return PendingPrefetch {
-            addr: nextAddr,
+            addr: x.paddr,
             vpn: getVpn(x.vaddr),
             nextLevel: False
         };
