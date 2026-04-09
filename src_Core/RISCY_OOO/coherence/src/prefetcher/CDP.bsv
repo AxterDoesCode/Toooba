@@ -130,7 +130,8 @@ typedef union tagged {
 module mkCDPStatefulRelative#(
     Parameter#(trainingTableSize) _,
     Parameter#(pcTableSize) __,
-    Parameter#(decayInterval) ___
+    Parameter#(decayInterval) ___,
+    Parameter#(matchBits) ____
 )(CacheLinePrefetcher#(reqT))
 provisos (
     Bits#(reqT, _reqSz),
@@ -150,7 +151,8 @@ provisos (
     Add#(1, d__, TDiv#(39, TLog#(trainingTableSize))),
     Add#(e__, 39, TMul#(TDiv#(39, TLog#(trainingTableSize)), TLog#(trainingTableSize))),
     Add#(1, f__, TDiv#(16, TLog#(pcTableSize))),
-    Add#(g__, 16, TMul#(TDiv#(16, TLog#(pcTableSize)), TLog#(pcTableSize)))
+    Add#(g__, 16, TMul#(TDiv#(16, TLog#(pcTableSize)), TLog#(pcTableSize))),
+    Add#(h__, matchBits, 27)
 );
 
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
@@ -216,11 +218,12 @@ provisos (
         L1ToCDPT#(reqT) x = l1ToCDP.first;
         LineDataOffset dataSel = getLineDataOffset(getReqAddr(x.req));
         l1ToCDP.deq;
-        let reqVpn = getReqVpn(x.req);
+        Bit#(matchBits) missUpper = truncateLSB(getReqVpn(x.req));
         Integer enqIdx = 0;
         $display("%t AlexLog: CDP Rel deqCacheLines", $time);
         for (Integer i = 0; i < 8; i = i + 1) begin
-            if (getVpn(x.line[i]) == reqVpn &&& getReqOp(x.req) == Ld) begin
+            Bit#(matchBits) candUpper = truncateLSB(getVpn(x.line[i]));
+            if (candUpper == missUpper &&& getReqOp(x.req) == Ld) begin
                 Bit#(39) vaddr39 = truncate(x.line[i]);
                 trainingTableIdxT idx = hash(vaddr39);
                 Bool missedOnThisVaddr = (dataSel == fromInteger(i));
@@ -235,6 +238,9 @@ provisos (
                         candVaddr: x.line[i]});
                 ttRdReqSupFIFO.enqS[enqIdx].enq(tuple2(idx, x.line[i]));
                 $display("%t AlexLog: CDP Rel candidate vaddr found, offset: %d", $time, i);
+                if (getVpn(x.line[i]) != getReqVpn(x.req))
+                    $display("%t AlexLog: CDP Rel CROSS-PAGE candidate at offset %d: missVpn %h candVpn %h candVaddr %h",
+                             $time, i, getReqVpn(x.req), getVpn(x.line[i]), x.line[i]);
                 enqIdx = enqIdx + 1;
             end
         end
@@ -316,7 +322,9 @@ provisos (
                         end
                     end
                     Addr candidate = line[bestOffset];
-                    Bool isValidVaddr = getVpn(line[bestOffset]) == reqVpn;
+                    Bit#(matchBits) addrUpper = truncateLSB(reqVpn);
+                    Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
+                    Bool isValidVaddr = candUpper == addrUpper;
                     if (foundHighConf && isValidVaddr) begin
                         nextCandidateBuffer.enq(NextCandT{paddr: addr, vaddr: candidate});
                         $display("%t AlexLog: CDP Rel prefetch issued, paddr: %h, vaddr: %h", $time, addr, candidate);

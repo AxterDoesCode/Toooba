@@ -28,7 +28,8 @@ provisos (
         Parameter#(4096) trainingTableSize <- mkParameter;
         Parameter#(4096) pcTableSize <- mkParameter;
         Parameter#(1024) decayInterval <- mkParameter;
-        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelative(trainingTableSize, pcTableSize, decayInterval);
+        Parameter#(16)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelative(trainingTableSize, pcTableSize, decayInterval, matchBits);
     `endif
     //let m <- mkPCPrefetcherAdapter(mkAlwaysRequestPrefetcher);
 `else 
