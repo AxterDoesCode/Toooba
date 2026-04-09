@@ -193,6 +193,7 @@ interface MemExePipeline;
     interface Vector#(TMul#(2, AluExeNum), RecvBypass) recvBypass;
     interface ReservationStationMem rsMemIfc;
     interface DTlbSynth dTlbIfc;
+    interface DTlbSynth pTlbIfc;
     interface SplitLSQ lsqIfc;
     interface StoreBuffer stbIfc;
     interface DCoCache dMemIfc;
@@ -259,6 +260,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
     // TLB
     DTlbSynth dTlb <- mkDTlbSynth;
+    DTlbSynth pTlb <- mkDTlbSynth;
 
     // store buffer only used in WEAK model
 `ifdef TSO_MM
@@ -385,7 +387,45 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         endmethod
     endinterface);
     // non-blocking coherent D$
-    DCoCache dMem <- mkDCoCache(procRespIfc);
+    DCoCache dMem <- mkDCoCache(procRespIfc, 
+        interface TlbToPrefetcher;
+            method Action prefetcherReq(PrefetcherReqToTlb req);
+                if(verbose) $display ("%t PTlb prefetcherReq ", $time, fshow(req));
+                pTlb.procReq(DTlbReq {
+                    inst: MemExeToFinish {
+                        mem_func: Ld,
+                        tag: ?,
+                        ldstq_tag: unpack(zeroExtend(pack(req.id))),
+                        shiftedBE: unpack(-1),
+                        vaddr: req.vaddr,
+`ifdef INCLUDE_TANDEM_VERIF
+                        store_data: ?,
+                        store_data_BE: ?,
+`endif
+                        misaligned: False
+                    },
+                    specBits: 0
+                });
+            endmethod
+
+            method Action deqPrefetcherResp;
+                if(verbose) $display ("%t PTlb deqPrefetcherResp ", $time, fshow(pTlb.procResp));
+                pTlb.deqProcResp;
+            endmethod
+
+            method TlbRespToPrefetcher prefetcherResp;
+                let pTlbResp = pTlb.procResp;
+                let x = pTlbResp.inst;
+                let {paddr, vpn, cause} = pTlbResp.resp;
+                return TlbRespToPrefetcher {
+                    paddr: paddr,
+                    id: unpack(truncate(pack(x.ldstq_tag))),
+                    haveException: isValid(cause)
+                    //permsCheckPass: allowCapPTE // Unsure we still need this
+                };
+            endmethod
+        endinterface
+    );
 
 `ifdef SELF_INV_CACHE
     // Waiting bit for reconcile to be performed. We set the bit and start
@@ -1343,6 +1383,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     interface recvBypass = map(getRecvBypassIfc, bypassWire);
     interface rsMemIfc = rsMem;
     interface dTlbIfc = dTlb;
+    interface pTlbIfc = pTlb;
     interface lsqIfc = lsq;
     interface stbIfc = stb;
     interface dMemIfc = dMem;

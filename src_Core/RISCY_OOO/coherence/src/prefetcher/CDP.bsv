@@ -128,6 +128,7 @@ typedef union tagged {
 } PCTableRdRelTagT deriving (Bits, FShow);
 
 module mkCDPStatefulRelative#(
+    TlbToPrefetcher toTlb,
     Parameter#(trainingTableSize) _,
     Parameter#(pcTableSize) __,
     Parameter#(decayInterval) ___,

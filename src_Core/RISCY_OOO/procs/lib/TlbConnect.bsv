@@ -1,4 +1,3 @@
-
 // Copyright (c) 2017 Massachusetts Institute of Technology
 // 
 // Permission is hereby granted, free of charge, to any person
@@ -32,9 +31,9 @@ import ITlb::*;
 import DTlb::*;
 import L2Tlb::*;
 
-module mkTlbConnect#(ITlbToParent i, DTlbToParent d, L2TlbToChildren l2)(Empty);
+module mkTlbConnect#(ITlbToParent i, DTlbToParent d, DTlbToParent p, L2TlbToChildren l2)(Empty);
     // give priority to DTlb req
-    (* descending_urgency = "sendDTlbReq, sendITlbReq" *)
+    (* descending_urgency = "sendDTlbReq, sendITlbReq, sendPTlbReq" *)
     rule sendDTlbReq;
         DTlbRqToP r <- toGet(d.rqToP).get;
         l2.rqFromC.put(L2TlbRqFromC {
@@ -51,9 +50,25 @@ module mkTlbConnect#(ITlbToParent i, DTlbToParent d, L2TlbToChildren l2)(Empty);
         });
     endrule
 
+    rule sendPTlbReq;
+        DTlbRqToP r <- toGet(p.rqToP).get;
+        l2.rqFromC.put(L2TlbRqFromC {
+            child: P (r.id),
+            vpn: r.vpn
+        });
+    endrule
+
     rule sendRsToDTlb(l2.rsToC.first.child matches tagged D .id);
         L2TlbRsToC r <- toGet(l2.rsToC).get;
         d.ldTransRsFromP.enq(DTlbTransRsFromP {
+            entry: r.entry,
+            id: id
+        });
+    endrule
+
+    rule sendRsToPTlb(l2.rsToC.first.child matches tagged P .id);
+        L2TlbRsToC r <- toGet(l2.rsToC).get;
+        p.ldTransRsFromP.enq(DTlbTransRsFromP {
             entry: r.entry,
             id: id
         });

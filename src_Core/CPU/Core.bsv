@@ -457,13 +457,14 @@ module mkCore#(CoreId coreId)(Core);
     end
     ReservationStationMem reservationStationMem = coreFix.memExeIfc.rsMemIfc;
     DTlbSynth dTlb = coreFix.memExeIfc.dTlbIfc;
+    DTlbSynth pTlb = coreFix.memExeIfc.pTlbIfc;
     SplitLSQ lsq = coreFix.memExeIfc.lsqIfc;
     StoreBuffer stb = coreFix.memExeIfc.stbIfc;
     DCoCache dMem = coreFix.memExeIfc.dMemIfc;
 
     // L2 TLB
     L2Tlb l2Tlb <- mkL2Tlb;
-    mkTlbConnect(iTlb.toParent, dTlb.toParent, l2Tlb.toChildren);
+    mkTlbConnect(iTlb.toParent, dTlb.toParent, pTlb.toParent, l2Tlb.toChildren);
 
     // flags to flush
     Reg#(Bool)  flush_tlbs <- mkReg(False);

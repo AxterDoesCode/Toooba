@@ -118,7 +118,8 @@ module mkL1Bank#(
     module#(L1CRqMshr#(cRqNum, indexT, wayT, tagT, procRqT)) mkL1CRqMshrLocal,
     module#(L1PRqMshr#(pRqNum)) mkL1PRqMshrLocal,
     module#(L1Pipe#(lgBankNum, wayNum, indexT, tagT, cRqIdxT, pRqIdxT)) mkL1Pipeline,
-    L1ProcResp#(procRqIdT) procResp
+    L1ProcResp#(procRqIdT) procResp,
+    TlbToPrefetcher toPrefetcher
 )(
     L1Bank#(lgBankNum, wayNum, indexSz, tagSz, cRqNum, pRqNum, procRqIdT)
 ) provisos(
@@ -199,9 +200,9 @@ module mkL1Bank#(
     // let prefetcher <- mkL1DPrefetcher;
     // CDP#(procRqT) cdp <- mkCDP;
 `ifdef DATA_PREFETCHER_IN_L1_FORWARDING
-    CacheLinePrefetcher#(procRqT) prefetcher <- mkNextLevelPrefetcherAdapter(mkL1DPrefetcher);
+    CacheLinePrefetcher#(procRqT) prefetcher <- mkNextLevelPrefetcherAdapter(mkL1DPrefetcher(toPrefetcher));
 `else
-    CacheLinePrefetcher#(procRqT) prefetcher <- mkL1DPrefetcher;
+    CacheLinePrefetcher#(procRqT) prefetcher <- mkL1DPrefetcher(toPrefetcher);
 `endif
 
     // security flush
@@ -1504,7 +1505,8 @@ module mkL1Cache#(
     module#(L1CRqMshr#(cRqNum, indexT, wayT, tagT, procRqT)) mkL1CRqMshrLocal,
     module#(L1PRqMshr#(pRqNum)) mkL1PRqMshrLocal,
     module#(L1Pipe#(lgBankNum, wayNum, indexT, tagT, cRqIdxT, pRqIdxT)) mkL1Pipeline,
-    L1ProcResp#(procRqIdT) procResp
+    L1ProcResp#(procRqIdT) procResp,
+    TlbToPrefetcher toPrefetcher
 )(
     L1Bank#(lgBankNum, wayNum, indexSz, tagSz, cRqNum, pRqNum, procRqIdT)
 ) provisos (
@@ -1540,7 +1542,7 @@ module mkL1Cache#(
     // the pipelineResp_cRq,pRs will conflict with each other
     Vector#(bankNum, l1BankT) banks;
     for (Integer i = 0; i < valueof(bankNum); i = i+1) begin
-        banks[i] <- mkL1Bank(fromInteger(i), mkL1CRqMshrLocal, mkL1PRqMshrLocal, mkL1Pipeline, procResp);
+        banks[i] <- mkL1Bank(fromInteger(i), mkL1CRqMshrLocal, mkL1PRqMshrLocal, mkL1Pipeline, procResp, toPrefetcher);
     end
 
     function bankIdT getBankId(Addr a);

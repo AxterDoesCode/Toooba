@@ -36,6 +36,33 @@ typedef Bit#(TLog#(DTlbReqNum)) DTlbReqIdx;
 typedef `L2TLB_REQ_NUM L2TlbReqNum;
 typedef Bit#(TLog#(L2TlbReqNum)) L2TlbReqIdx;
 
+// number of prefetcher TLB requests
+`ifndef PREFETCHER_TLB_REQ_NUM
+    `define PREFETCHER_TLB_REQ_NUM 4
+`endif
+typedef `PREFETCHER_TLB_REQ_NUM LLCTlbReqNum;
+typedef Bit#(TLog#(LLCTlbReqNum)) LLCTlbReqIdx;
+typedef Bit#(TLog#(CoreNum)) LLCTlbId;
+typedef Bit#(TAdd#(TLog#(LLCTlbReqNum),TLog#(CoreNum))) CombinedLLCTlbReqIdx;
+
+// prefetcher req/resp with L1 TLB
+typedef struct {
+    Addr vaddr; // Think this needs to become just Addr vaddr
+    LLCTlbReqIdx id;
+} PrefetcherReqToTlb deriving (Bits, Eq, FShow);
+typedef struct {
+    Addr paddr;
+    LLCTlbReqIdx id;
+    Bool haveException;
+    Bool permsCheckPass;
+} TlbRespToPrefetcher deriving (Bits, Eq, FShow);
+
+interface TlbToPrefetcher;
+    method Action prefetcherReq(PrefetcherReqToTlb req);
+    method TlbRespToPrefetcher prefetcherResp;
+    method Action deqPrefetcherResp;
+endinterface
+
 // Only for Sv39
 typedef 27 VpnSz;
 typedef Bit#(VpnSz) Vpn;

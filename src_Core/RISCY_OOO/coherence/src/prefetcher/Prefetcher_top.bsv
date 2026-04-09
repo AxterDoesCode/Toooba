@@ -4,7 +4,7 @@ import CDP::*;
 import CCTypes::*;
 import Types::*;
 
-module mkL1DPrefetcher(CacheLinePrefetcher#(reqT))
+module mkL1DPrefetcher(TlbToPrefetcher toTlb)(CacheLinePrefetcher#(reqT))
 provisos (
     Bits#(reqT, _reqSz), 
     FShow#(reqT),
@@ -29,7 +29,7 @@ provisos (
         Parameter#(4096) pcTableSize <- mkParameter;
         Parameter#(1024) decayInterval <- mkParameter;
         Parameter#(16)   matchBits <- mkParameter;
-        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelative(trainingTableSize, pcTableSize, decayInterval, matchBits);
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelative(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits);
     `endif
     //let m <- mkPCPrefetcherAdapter(mkAlwaysRequestPrefetcher);
 `else 
