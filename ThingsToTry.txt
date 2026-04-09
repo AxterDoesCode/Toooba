@@ -72,6 +72,8 @@ TODO: Prefetch issue may be bugged, we can issue prefetches on cache line fills 
 TODO: Can best offset be out of bounds? e.g. best offset is -3 but the PC miss was on index 1
 TODO: So far I have a statistical decay of confidence, I probably want to decrease confidence if a prefetch issued was useless?
 TODO: Random thought but is the reason why misses decrease in my prefetcher compared to no prefetches because we keep useful lines in cache for longer?
+TODO: SetAssoc PC and TT tables decreased useless prefetch from 31k to 11k, running tests on set Assoc TT and flat PT currently, LossyMap needs to be rerun - looks like it ran with a stride prefetcher so those logs are inaccurate
+    SetAssoc TT and Flat TT issued way less prefetches and useless prefetches in Patricia
 
 Things to ask Jon:
 How should I size the training tables/PC table? What are reasonable sizes for these
