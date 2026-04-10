@@ -255,7 +255,8 @@ provisos (
                         offset:           fromInteger(i),
                         candVaddr:        x.line[i]});
                     ttRdReqSupFIFO.enqS[enqIdx].enq(tuple2(idx, x.line[i]));
-                    RelLineOffset relOffset = unpack(zeroExtend(fromInteger(i))) - unpack(zeroExtend(dataSel));
+                    LineDataOffset iOff = fromInteger(i);
+                    RelLineOffset relOffset = unpack(zeroExtend(iOff)) - unpack(zeroExtend(dataSel));
                     $display("%0d AlexLog: CDP Rel candidate vaddr relOffset: %d pcHash: %h candVaddr: %h crossPage: %b",
                         cur_cycle, relOffset, getPcHash(x.req), x.line[i], getVpn(x.line[i]) != getReqVpn(x.req));
                     enqIdx = enqIdx + 1;
@@ -294,20 +295,26 @@ provisos (
             // Miss: this vaddr hasn't been seen as a pointer before — nothing to do
         end else begin
             // Candidate lookup: we looked up a pointer-like value from the incoming line.
-            // Miss: this is a new candidate — record it so future accesses to it can train.
-            // Hit: already recorded — no action needed.
+            // Always write the current (pcHash, relOffset) context — overwriting on hit keeps
+            // the entry current if the same vaddr is later seen by a different load PC.
+            LineDataOffset dataSel = getLineDataOffset(getReqAddr(respQ.req));
+            RelLineOffset relOffset = unpack(zeroExtend(respQ.offset)) - unpack(zeroExtend(dataSel));
+            TrainingTableEntryT newEntry = TrainingTableEntryT{
+                valid:       True,
+                storedVaddr: respQ.candVaddr,
+                pcHash:      getPcHash(respQ.req),
+                lineOffset:  relOffset
+            };
             if (rdResp matches tagged Valid {.hitWay, .ttRdResp}) begin
-                $display("%0d AlexLog: CDP Rel Candidate already in training table: candVaddr %h",
-                    cur_cycle, respQ.candVaddr);
+                // Only overwrite if pcHash has changed — avoids a write when context is stable
+                if (ttRdResp.pcHash != getPcHash(respQ.req)) begin
+                    trainingTable.wrReq(respQ.ttIdx, hitWay, newEntry);
+                    $display("%0d AlexLog: CDP Rel Overwrote training table, idx: %d candVaddr: %h oldPcHash: %h newPcHash: %h relOffset: %d",
+                        cur_cycle, respQ.ttIdx, respQ.candVaddr, ttRdResp.pcHash, getPcHash(respQ.req), relOffset);
+                end
             end else begin
-                LineDataOffset dataSel = getLineDataOffset(getReqAddr(respQ.req));
-                RelLineOffset relOffset = unpack(zeroExtend(respQ.offset)) - unpack(zeroExtend(dataSel));
-                trainingTable.wrReq(respQ.ttIdx, rdRepl, TrainingTableEntryT{
-                    valid:       True,
-                    storedVaddr: respQ.candVaddr,
-                    pcHash:      getPcHash(respQ.req),
-                    lineOffset:  relOffset
-                });
+                // New candidate — insert into replacement way
+                trainingTable.wrReq(respQ.ttIdx, rdRepl, newEntry);
                 $display("%0d AlexLog: CDP Rel Wrote to training table, idx: %d candVaddr: %h relOffset: %d",
                     cur_cycle, respQ.ttIdx, respQ.candVaddr, relOffset);
             end
