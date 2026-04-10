@@ -106,9 +106,9 @@ typedef struct {
 typedef struct {
     reqT req;
     idxT ttIdx;
-    Bool missedOnThisVaddr;
-    LineDataOffset offset;
-    Addr candVaddr; // The actual candidate vaddr (pointer value) found at this offset
+    Bool isTrainingLookup; // True = miss-vaddr lookup (training trigger); False = candidate pointer lookup
+    LineDataOffset offset;  // position of candidate in line (only meaningful when !isTrainingLookup)
+    Addr candVaddr; // the address being looked up in the training table
 } TrainingTableRespQT#(type reqT, type idxT) deriving (Bits, FShow, Eq);
 
 // ============================================================================
@@ -166,9 +166,9 @@ provisos (
     RWSetAssocBramCore#(trainingTableIdxT, Bit#(2), TrainingTableEntryT, Addr) trainingTable
         <- mkRWSetAssocBramCoreForwarded(ttIsMatch, ttIsReplaceCandidate);
 
-    SupFifo#(8, 8, ttRespQT) ttRespQ <- mkSupFifo;
+    SupFifo#(9, 9, ttRespQT) ttRespQ <- mkSupFifo;
     // Carries (index, vaddr) — both needed by rdReq(addr, tag)
-    SupFifo#(8, 8, Tuple2#(trainingTableIdxT, Addr)) ttRdReqSupFIFO <- mkSupFifo;
+    SupFifo#(9, 9, Tuple2#(trainingTableIdxT, Addr)) ttRdReqSupFIFO <- mkSupFifo;
 
     // Flat PC confidence table
     RWBramCore#(pcTableIdxT, Maybe#(PCRelOffsetConfT)) pcTable <- mkRWBramCoreForwarded();
@@ -226,29 +226,41 @@ provisos (
         LineDataOffset dataSel = getLineDataOffset(getReqAddr(x.req));
         l1ToCDP.deq;
         Bit#(matchBits) missUpper = truncateLSB(getReqVpn(x.req));
-        Integer enqIdx = 0;
         $display("%0d AlexLog: CDP Rel deqCacheLines", cur_cycle);
-        for (Integer i = 0; i < 8; i = i + 1) begin
-            Bit#(matchBits) candUpper = truncateLSB(getVpn(x.line[i]));
-            if (candUpper == missUpper &&& getReqOp(x.req) == Ld) begin
-                Bit#(39) vaddr39 = truncate(x.line[i]);
-                trainingTableIdxT idx = hash(vaddr39);
-                Bool missedOnThisVaddr = (dataSel == fromInteger(i));
-                ttRespQ.enqS[enqIdx].enq(
-                    TrainingTableRespQT{
-                        req: x.req,
-                        ttIdx: idx,
-                        missedOnThisVaddr: missedOnThisVaddr,
-                        offset: fromInteger(i),
-                        candVaddr: x.line[i]});
-                ttRdReqSupFIFO.enqS[enqIdx].enq(tuple2(idx, x.line[i]));
-                $display("%0d AlexLog: CDP Rel candidate vaddr offset: %d pcHash: %h candVaddr: %h missedOnThis: %b crossPage: %b",
-                    cur_cycle, i, getPcHash(x.req), x.line[i], missedOnThisVaddr, getVpn(x.line[i]) != getReqVpn(x.req));
-                enqIdx = enqIdx + 1;
-            end
-        end
-        // One pcTable lookup per incoming line
         if (getReqOp(x.req) == Ld) begin
+            // Slot 0: training trigger — look up the virtual miss address in training table.
+            // If this address was previously seen as a pointer in another cache line, we can
+            // reinforce the PC table entry for the PC that originally stored it.
+            Addr missVaddr = zeroExtend({pack(getReqVpn(x.req)), getPageOffset(getReqAddr(x.req))});
+            Bit#(39) missVaddr39 = truncate(missVaddr);
+            trainingTableIdxT missIdx = hash(missVaddr39);
+            ttRespQ.enqS[0].enq(TrainingTableRespQT{
+                req:              x.req,
+                ttIdx:            missIdx,
+                isTrainingLookup: True,
+                offset:           dataSel,
+                candVaddr:        missVaddr});
+            ttRdReqSupFIFO.enqS[0].enq(tuple2(missIdx, missVaddr));
+            // Slots 1..8: candidate pointer lookups — scan incoming line for pointer-like values
+            Integer enqIdx = 1;
+            for (Integer i = 0; i < 8; i = i + 1) begin
+                Bit#(matchBits) candUpper = truncateLSB(getVpn(x.line[i]));
+                if (candUpper == missUpper) begin
+                    Bit#(39) vaddr39 = truncate(x.line[i]);
+                    trainingTableIdxT idx = hash(vaddr39);
+                    ttRespQ.enqS[enqIdx].enq(TrainingTableRespQT{
+                        req:              x.req,
+                        ttIdx:            idx,
+                        isTrainingLookup: False,
+                        offset:           fromInteger(i),
+                        candVaddr:        x.line[i]});
+                    ttRdReqSupFIFO.enqS[enqIdx].enq(tuple2(idx, x.line[i]));
+                    $display("%0d AlexLog: CDP Rel candidate vaddr offset: %d pcHash: %h candVaddr: %h crossPage: %b",
+                        cur_cycle, i, getPcHash(x.req), x.line[i], getVpn(x.line[i]) != getReqVpn(x.req));
+                    enqIdx = enqIdx + 1;
+                end
+            end
+            // One pcTable lookup per incoming line (for prefetch issue on future hits)
             pcTableIdxT pctIdx = hash(getPcHash(x.req));
             pcTableRdReqFIFO.enq(tuple2(pctIdx,
                 tagged PrefetchIssue tuple3(getReqAddr(x.req), x.line, getReqVpn(x.req))));
@@ -267,28 +279,37 @@ provisos (
         trainingTable.deqRdResp;
         ttRespQT respQ = ttRespQ.deqS[0].first;
         ttRespQ.deqS[0].deq;
-        if (rdResp matches tagged Valid {.hitWay, .ttRdResp}) begin
-            // Key matched — no collision detection needed (isMatch handles it)
-            if (respQ.missedOnThisVaddr) begin
-                $display("%0d AlexLog: CDP Rel PC table needs update, candVaddr: %h", cur_cycle, respQ.candVaddr);
-                pcTableIdxT pctIdx = hash(getPcHash(respQ.req));
+        if (respQ.isTrainingLookup) begin
+            // Training trigger: we looked up the virtual miss address in the training table.
+            // A hit means this address was previously seen as a pointer value in another cache
+            // line loaded by pcHash=ttRdResp.pcHash, at relative offset ttRdResp.lineOffset.
+            // We reinforce that PC table entry now.
+            if (rdResp matches tagged Valid {.hitWay, .ttRdResp}) begin
+                pcTableIdxT pctIdx = hash(ttRdResp.pcHash);
                 pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged Training ttRdResp.lineOffset));
+                $display("%0d AlexLog: CDP Rel Training hit: missVaddr %h seen before by pcHash %h at relOffset %d",
+                    cur_cycle, respQ.candVaddr, ttRdResp.pcHash, ttRdResp.lineOffset);
+            end
+            // Miss: this vaddr hasn't been seen as a pointer before — nothing to do
+        end else begin
+            // Candidate lookup: we looked up a pointer-like value from the incoming line.
+            // Miss: this is a new candidate — record it so future accesses to it can train.
+            // Hit: already recorded — no action needed.
+            if (rdResp matches tagged Valid {.hitWay, .ttRdResp}) begin
+                $display("%0d AlexLog: CDP Rel Candidate already in training table: candVaddr %h",
+                    cur_cycle, respQ.candVaddr);
             end else begin
                 LineDataOffset dataSel = getLineDataOffset(getReqAddr(respQ.req));
                 RelLineOffset relOffset = unpack(zeroExtend(respQ.offset)) - unpack(zeroExtend(dataSel));
-                $display("%0d AlexLog: CDP Rel Vaddr in training table seen at different offset candVaddr: %h VaddrRelOffset: %d TTRelOffset: %d", cur_cycle, respQ.candVaddr, relOffset, ttRdResp.lineOffset);
+                trainingTable.wrReq(respQ.ttIdx, rdRepl, TrainingTableEntryT{
+                    valid:       True,
+                    storedVaddr: respQ.candVaddr,
+                    pcHash:      getPcHash(respQ.req),
+                    lineOffset:  relOffset
+                });
+                $display("%0d AlexLog: CDP Rel Wrote to training table, idx: %d candVaddr: %h relOffset: %d",
+                    cur_cycle, respQ.ttIdx, respQ.candVaddr, relOffset);
             end
-        end else begin
-            // No matching entry — insert into replacement way
-            LineDataOffset dataSel = getLineDataOffset(getReqAddr(respQ.req));
-            RelLineOffset relOffset = unpack(zeroExtend(respQ.offset)) - unpack(zeroExtend(dataSel));
-            trainingTable.wrReq(respQ.ttIdx, rdRepl, TrainingTableEntryT{
-                valid:       True,
-                storedVaddr: respQ.candVaddr,
-                pcHash:      getPcHash(respQ.req),
-                lineOffset:  relOffset
-            });
-            $display("%0d AlexLog: CDP Rel Wrote to training table, idx: %d candVaddr: %h", cur_cycle, respQ.ttIdx, respQ.candVaddr);
         end
     endrule
 
