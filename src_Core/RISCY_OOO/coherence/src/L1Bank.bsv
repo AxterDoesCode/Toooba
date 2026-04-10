@@ -959,7 +959,7 @@ endfunction
             end
             if (ram.info.other.wasPrefetch)
                 $display("%t AlexLog: L1 evicted PREFETCHED line paddr %h (evicted by req for paddr %h)",
-                    $time, repLineAddr, procRq.addr);
+                    $time, repLineAddr << valueOf(LgLineSzBytes), procRq.addr);
             if (prefetchVerbose)
                 $display("%t L1D cRq miss (rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, cRq is prefetch: %d, ramCs: ",
                     cur_cycle,
