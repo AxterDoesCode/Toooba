@@ -255,8 +255,9 @@ provisos (
                         offset:           fromInteger(i),
                         candVaddr:        x.line[i]});
                     ttRdReqSupFIFO.enqS[enqIdx].enq(tuple2(idx, x.line[i]));
-                    $display("%0d AlexLog: CDP Rel candidate vaddr offset: %d pcHash: %h candVaddr: %h crossPage: %b",
-                        cur_cycle, i, getPcHash(x.req), x.line[i], getVpn(x.line[i]) != getReqVpn(x.req));
+                    RelLineOffset relOffset = unpack(zeroExtend(fromInteger(i))) - unpack(zeroExtend(dataSel));
+                    $display("%0d AlexLog: CDP Rel candidate vaddr relOffset: %d pcHash: %h candVaddr: %h crossPage: %b",
+                        cur_cycle, relOffset, getPcHash(x.req), x.line[i], getVpn(x.line[i]) != getReqVpn(x.req));
                     enqIdx = enqIdx + 1;
                 end
             end
