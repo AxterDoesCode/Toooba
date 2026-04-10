@@ -25,67 +25,82 @@ typedef struct {
     Addr vaddr;
 } NextCandT deriving (Bits, FShow, Eq);
 
-module mkCDP(
-    CacheLinePrefetcher#(reqT)
-) provisos (
-    Bits#(reqT, _reqSz), 
+module mkCDPNaive#(
+    TlbToPrefetcher toTlb,
+    Parameter#(matchBits) _
+)(CacheLinePrefetcher#(reqT))
+provisos (
+    Bits#(reqT, _reqSz),
     FShow#(reqT),
-    IsProcRq#(reqT)
+    IsProcRq#(reqT),
+    Add#(a__, matchBits, 27)
 );
 
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
 
-    // 8 used, one line there is potentially 8 candidate vaddr, size 8 for each FIFO
-    SupFifo#(8, 8, NextCandT) nextCandidateBuffer <- mkSupFifo;
+    // Up to 8 candidates per cache line; one enqueue port per slot
+    SupFifo#(8, 8, Addr) candFIFO <- mkSupFifo;
+
+    Fifo#(16, NextCandT) nextCandidateBuffer <- mkOverflowBypassFifo;
+
+    // TLB translation pipeline
+    FIFO#(Addr) tlbPendingCandQ <- mkSizedFIFO(valueOf(LLCTlbReqNum));
+    Reg#(LLCTlbReqIdx) tlbReqId <- mkReg(0);
 
     rule deqLineL1;
         L1ToCDPT#(reqT) x = l1ToCDP.first;
-        LineDataOffset dataSel = getLineDataOffset(getReqAddr(x.req)); // This is purely for $display
         l1ToCDP.deq;
-        let reqVpn = getReqVpn(x.req);
+        Bit#(matchBits) missUpper = truncateLSB(getReqVpn(x.req));
+        $display("%0d AlexLog: CDP Naive deqLineL1", cur_cycle);
         Integer enqIdx = 0;
-        $display("%0d AlexLog: CDP deqLineL1", cur_cycle);
         for (Integer i = 0; i < 8; i = i + 1) begin
-            if (getVpn(x.line[i]) == reqVpn &&& getReqOp(x.req) == Ld) begin
-                nextCandidateBuffer.enqS[enqIdx].enq(
-                    NextCandT{
-                        paddr: getReqAddr(x.req), 
-                        vaddr: x.line[i]});
-                // Probably change logging here to just see the candidate vaddr -> candidate paddr?
-                $display("%0d AlexLog: CDP candidate vaddr found, offset: %d, LineDataOffset: ", cur_cycle, i, fshow(dataSel), fshow(x.line[i]), fshow(reqVpn), fshow(x.req));
+            Bit#(matchBits) candUpper = truncateLSB(getVpn(x.line[i]));
+            if (candUpper == missUpper &&& getReqOp(x.req) == Ld) begin
+                candFIFO.enqS[enqIdx].enq(x.line[i]);
+                $display("%0d AlexLog: CDP Naive candidate vaddr offset: %d candVaddr: %h crossPage: %b",
+                    cur_cycle, i, x.line[i], getVpn(x.line[i]) != getReqVpn(x.req));
                 enqIdx = enqIdx + 1;
             end
         end
     endrule
 
+    rule processTlbReq;
+        Addr candVaddr = candFIFO.deqS[0].first;
+        candFIFO.deqS[0].deq;
+        toTlb.prefetcherReq(PrefetcherReqToTlb{vaddr: candVaddr, id: tlbReqId});
+        tlbPendingCandQ.enq(candVaddr);
+        tlbReqId <= tlbReqId + 1;
+        $display("%0d AlexLog: CDP Naive TLB req sent for vaddr %h id %d", cur_cycle, candVaddr, tlbReqId);
+    endrule
+
+    rule processTlbResp;
+        let resp = toTlb.prefetcherResp;
+        toTlb.deqPrefetcherResp;
+        Addr candVaddr = tlbPendingCandQ.first;
+        tlbPendingCandQ.deq;
+        if (!resp.haveException) begin
+            nextCandidateBuffer.enq(NextCandT{paddr: resp.paddr, vaddr: candVaddr});
+            $display("%0d AlexLog: CDP Naive TLB resp: vaddr %h -> paddr %h", cur_cycle, candVaddr, resp.paddr);
+        end else begin
+            $display("%0d AlexLog: CDP Naive TLB resp: exception for vaddr %h, dropping", cur_cycle, candVaddr);
+        end
+    endrule
+
     method Action reportIncomingCacheLine(reqT req, Line line);
-        let tmp = L1ToCDPT{
-            req: req,
-            line: line
-        };
-        l1ToCDP.enq(tmp);
-        $display("%0d AlexLog: CDP reportIncomingCacheLine", cur_cycle);
+        l1ToCDP.enq(L1ToCDPT{req: req, line: line});
+        $display("%0d AlexLog: CDP Naive reportIncomingCacheLine", cur_cycle);
     endmethod
 
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
-        if (hitMiss == HIT) begin
-            $display("%0d AlexLog: prefetcher report HIT %h", cur_cycle, addr);
-        end
-        else begin
-            $display("%0d AlexLog: prefetcher report MISS %h", cur_cycle, addr);
-        end
+        $display("%0d AlexLog: CDP Naive prefetcher report %s addr %h", cur_cycle, hitMiss == HIT ? "HIT" : "MISS", addr);
     endmethod
 
-    method ActionValue#(PendingPrefetch) getNextPrefetchAddr; // Do I want some condition here?
-        // Found a virtual address and need to translate it now,
-        // because I'm matching the VPN that caused to load to potential vaddrs with the same VPN, then the PPN should also be the same
-        let x = nextCandidateBuffer.deqS[0].first;
-        nextCandidateBuffer.deqS[0].deq;
-        // Use the same VPN -> PPN, but get the offset of the candidate vaddr
-        Addr nextAddr = zeroExtend({getPpn(x.paddr), getPageOffset(x.vaddr)});
-        $display("%0d AlexLog: CDP Prefetch addr issued. paddr: %h | vaddr: %h", cur_cycle, nextAddr, x.vaddr);
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
+        let x = nextCandidateBuffer.first;
+        nextCandidateBuffer.deq;
+        $display("%0d AlexLog: CDP Naive Prefetch addr issued. paddr: %h | vaddr: %h", cur_cycle, x.paddr, x.vaddr);
         return PendingPrefetch {
-            addr: nextAddr,
+            addr: x.paddr,
             vpn: getVpn(x.vaddr),
             nextLevel: False
         };
