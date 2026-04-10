@@ -66,7 +66,7 @@ module mkCDP(
         $display("%t AlexLog: CDP reportIncomingCacheLine", $time);
     endmethod
 
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn);
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
         if (hitMiss == HIT) begin
             $display("%t AlexLog: prefetcher report HIT %h", $time, addr);
         end
@@ -340,7 +340,7 @@ provisos (
                         $display("%t AlexLog: CDP Rel queued TLB req for candidate vaddr %h", $time, candidate);
                     end
                     if (foundHighConf && !isValidVaddr) begin
-                        $display("%t AlexLog: Invalid address at best offset");
+                        $display("%t AlexLog: CDP Rel Invalid address at best offset");
                     end
                 end
             end
@@ -390,25 +390,32 @@ provisos (
     endrule
 
     method Action reportIncomingCacheLine(reqT req, Line line);
-        let tmp = L1ToCDPT{req: req, line: line};
-        l1ToCDP.enq(tmp);
-        $display("%t AlexLog: CDP Rel reportIncomingCacheLine", $time);
+        if (inited) begin
+            let tmp = L1ToCDPT{req: req, line: line};
+            l1ToCDP.enq(tmp);
+            $display("%t AlexLog: CDP Rel reportIncomingCacheLine", $time);
+        end
     endmethod
 
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn);
-        if (hitMiss == HIT) begin
-            pcTableIdxT pctIdx = hash(pcHash);
-            pcTableRdReqFIFO.enq(tuple2(pctIdx,
-                tagged PrefetchIssue tuple3(addr, line, reqVpn)));
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
+        if (inited && op == Ld) begin
+            // This rule does work only on HIT loads currently because we detect miss loads on the cache line fill from L2 with reportIncomingCacheLine
+            // In L1Bank we currently only reportAccess on demand (not prefetch)
+            if (hitMiss == HIT) begin
+                pcTableIdxT pctIdx = hash(pcHash);
+                pcTableRdReqFIFO.enq(tuple2(pctIdx,
+                    tagged PrefetchIssue tuple3(addr, line, reqVpn)));
+                $display("%t AlexLog: CDP Rel prefetcher report %s %h", $time, hitMiss == HIT ? "HIT" : "MISS", addr);
+            end
+            //$display("%t AlexLog: CDP Rel prefetcher report %s %h", $time, hitMiss == HIT ? "HIT" : "MISS", addr);
         end
-        $display("%t AlexLog: CDP Rel prefetcher report %s %h", $time, hitMiss == HIT ? "HIT" : "MISS", addr);
     endmethod
 
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
         let x = nextCandidateBuffer.first;
         nextCandidateBuffer.deq;
         // paddr is already the correct translated physical address from the TLB
-        $display("%t AlexLog: CDP Rel Prefetch addr issued. paddr: %h | vaddr: %h", $time, x.paddr, x.vaddr);
+        $display("%t AlexLog: CDP Rel Prefetch addr issued. lineAddr: %h | paddr: %h | vaddr: %h", $time, getLineAddr(x.paddr), x.paddr, x.vaddr);
         return PendingPrefetch {
             addr: x.paddr,
             vpn: getVpn(x.vaddr),

@@ -78,9 +78,12 @@ TODO: SetAssoc PC and TT tables decreased useless prefetch from 31k to 11k, runn
 TODO: Investigate if prefetches are issued too early... See if an evicted line is actually demand loaded in the future
     This can be done in two ways:
         Decrease the L2 cache so that things actually miss the L2, if prefetches are too early then this is one way of making them appear later
-        Really I would want to log if evicted lines are demand accessed in the near future.
+        Really I would want to log if evicted lines are demand accessed in the near future such that a prefetch should be useful.
+            To elaborate on this theory, I mean that the first sighting (the PC) of a virtual address in a cache line may be far from the PC where we demand miss the vaddr.
+            But the prefetch mechanism issues a prefetch straight away after seeing the PC of the initial sighting, so it could just be really too early OR the first sighting is useless for prefetch correlation.
+            Why am I writing to training table and queueing on the same cycle
 
-TODO: Can offset 0 be trained too heavily? What is offset 0 behaviour
+TODO: Can offset 0 be trained too heavily? What is offset 0 behaviour?
 
 Things to ask Jon:
 How should I size the training tables/PC table? What are reasonable sizes for these

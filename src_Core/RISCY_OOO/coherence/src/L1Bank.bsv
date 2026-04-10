@@ -592,6 +592,7 @@ endfunction
             vpn: req.vpn,
             fromState: slot.cs,
             toState: req.toState,
+            op: req.op,
             canUpToE: True,
             id: slot.way,
             child: ?,
@@ -675,10 +676,9 @@ endfunction
         Line newLine = curLine;
         Bool lineTouched = True; // assume touched and set to false in a few cases
         LineDataOffset dataSel = getLineDataOffset(req.addr);
-        if (ram.info.other.wasPrefetch) $display("AlexLog: Prefetched line detected");
         if (ram.info.other.wasPrefetch && !cRqIsPrefetch[n] && req.op == Ld) begin
             //Hit on a prefetched cache line!
-            $display("%t AlexLog: Hit on a prefetched cache line! ", $time);
+            $display("%t AlexLog: Hit on a prefetched cache line! paddr: %h | lineAddr: %h", $time, req.addr, getLineAddr(req.addr));
         `ifdef PERF_COUNT
             usedPrefetchCnt.incr(1);
         `endif
@@ -758,7 +758,7 @@ endfunction
                 cRqMshr.manageQueue.resetEntry(nextInQueue);
             end
             if (!cRqIsPrefetch[n] && !wasMiss) begin
-                prefetcher.reportAccess(req.addr, req.pcHash, HIT, ram.line, req.vpn);
+                prefetcher.reportAccess(req.addr, req.pcHash, HIT, ram.line, req.vpn, req.op, cRqIsPrefetch[n]);
             end
             if (verbose)
                 $display("%t L1 %m pipelineResp: Hit func: update ram: ", $time,
@@ -905,7 +905,7 @@ endfunction
                 line: ram.line
             }, pipeOutNextInQueue, False);
             if (!cRqIsPrefetch[n]) begin
-                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, ?, procRq.vpn);
+                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, ?, procRq.vpn, procRq.op, cRqIsPrefetch[n]);
             end
             LineAddr repLineAddr = getLineAddr({ram.info.tag, truncate(procRq.addr)});
             if (prefetchVerbose)
@@ -948,7 +948,7 @@ endfunction
             });
             cRqMshr.pipelineResp.setData(n, ram.info.cs == M ? Valid (ram.line) : Invalid);
             if (!cRqIsPrefetch[n]) begin
-                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, ?, procRq.vpn);
+                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, ?, procRq.vpn, procRq.op, cRqIsPrefetch[n]);
             end
             // send replacement resp to parent
             rsToPIndexQ.enq(CRq (n));
@@ -958,8 +958,8 @@ endfunction
                 linkAddr <= Invalid;
             end
             if (ram.info.other.wasPrefetch)
-                $display("%t AlexLog: L1 evicted PREFETCHED line paddr %h (evicted by req for paddr %h)",
-                    $time, repLineAddr << valueOf(LgLineSzBytes), procRq.addr);
+                $display("%t AlexLog: L1 evicted PREFETCHED line lineAddr %h (evicted by req for paddr %h)",
+                    $time, repLineAddr, procRq.addr);
             if (prefetchVerbose)
                 $display("%t L1D cRq miss (rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, cRq is prefetch: %d, ramCs: ",
                     cur_cycle,
