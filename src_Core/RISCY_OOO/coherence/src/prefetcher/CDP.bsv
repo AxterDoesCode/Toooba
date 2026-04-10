@@ -243,7 +243,7 @@ provisos (
                         offset: fromInteger(i),
                         candVaddr: x.line[i]});
                 ttRdReqSupFIFO.enqS[enqIdx].enq(tuple2(idx, x.line[i]));
-                $display("%t AlexLog: CDP Rel candidate vaddr found, offset: %d", $time, i);
+                $display("%t AlexLog: CDP Rel candidate vaddr found, offset: %d, pcHash: %h", $time, i, getPcHash(x.req));
                 if (getVpn(x.line[i]) != getReqVpn(x.req))
                     $display("%t AlexLog: CDP Rel CROSS-PAGE candidate at offset %d: missVpn %h candVpn %h candVaddr %h",
                              $time, i, getReqVpn(x.req), getVpn(x.line[i]), x.line[i]);
@@ -405,7 +405,7 @@ provisos (
                 pcTableIdxT pctIdx = hash(pcHash);
                 pcTableRdReqFIFO.enq(tuple2(pctIdx,
                     tagged PrefetchIssue tuple3(addr, line, reqVpn)));
-                $display("%t AlexLog: CDP Rel prefetcher report %s %h", $time, hitMiss == HIT ? "HIT" : "MISS", addr);
+                $display("%t AlexLog: CDP Rel prefetcher report %s addr %h pcHash %h", $time, hitMiss == HIT ? "HIT" : "MISS", addr, pcHash);
             end
             //$display("%t AlexLog: CDP Rel prefetcher report %s %h", $time, hitMiss == HIT ? "HIT" : "MISS", addr);
         end
