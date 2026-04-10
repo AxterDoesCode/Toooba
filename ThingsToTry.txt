@@ -111,6 +111,9 @@ Stride prefetcher success implies nodes are stored linearly,
 
 To further reduce confidence try tie in an access to a cache line to a cache eviction, then decrease confidence if a useless prefetch was made?
 
+More things I have thought:
+    I think the decay is not aggressive enough on the PC table, and on the training table I can clearly see that fixing a vaddr to a single pc is not good
+
 Summary of policy 10 April
 Here's how the full pipeline works end-to-end:
 
