@@ -122,10 +122,15 @@ typedef struct {
 // Confidence vector indexed by (relOffset + 7), covering offsets -7..+7 (15 slots)
 typedef Vector#(15, Bit#(3)) PCRelOffsetConfT;
 
+typedef struct {
+    Bit#(16)         pcHash;
+    PCRelOffsetConfT conf;
+} PCTableEntryT deriving (Bits, FShow, Eq);
+
 typedef union tagged {
-    RelLineOffset             Training;      // relative offset whose counter to saturating-increment
-    Tuple3#(Addr, Line, Vpn)  PrefetchIssue; // (load addr, cache line, vpn) to select prefetch target from
-    void                      Decay;         // decrement all counters in the selected entry by 1
+    Tuple2#(Bit#(16), RelLineOffset) Training;      // (pcHash, relOffset) — pcHash carried so it survives into the write-back log
+    Tuple3#(Addr, Line, Vpn)         PrefetchIssue; // (load addr, cache line, vpn) to select prefetch target from
+    void                              Decay;         // decrement all counters in the selected entry by 1
 } PCTableRdRelTagT deriving (Bits, FShow);
 
 module mkCDPStatefulRelative#(
@@ -171,7 +176,7 @@ provisos (
     SupFifo#(16, 9, Tuple2#(trainingTableIdxT, Addr)) ttRdReqSupFIFO <- mkSupFifo;
 
     // Flat PC confidence table
-    RWBramCore#(pcTableIdxT, Maybe#(PCRelOffsetConfT)) pcTable <- mkRWBramCoreForwarded();
+    RWBramCore#(pcTableIdxT, Maybe#(PCTableEntryT)) pcTable <- mkRWBramCoreForwarded();
 
     Fifo#(16, NextCandT) nextCandidateBuffer <- mkOverflowBypassFifo;
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdReqFIFO <- mkSizedFIFO(64);
@@ -288,7 +293,7 @@ provisos (
             // We reinforce that PC table entry now.
             if (rdResp matches tagged Valid {.hitWay, .ttRdResp}) begin
                 pcTableIdxT pctIdx = hash(ttRdResp.pcHash);
-                pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged Training ttRdResp.lineOffset));
+                pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged Training tuple2(ttRdResp.pcHash, ttRdResp.lineOffset)));
                 $display("%0d AlexLog: CDP Rel Training hit: missVaddr %h seen before by pcHash %h at relOffset %d",
                     cur_cycle, respQ.candVaddr, ttRdResp.pcHash, ttRdResp.lineOffset);
             end
@@ -334,17 +339,20 @@ provisos (
         match {.pctIdx, .tag} = pcTableRdTagQ.first;
         pcTableRdTagQ.deq;
         case (tag) matches
-            tagged Training .relOffset: begin
-                PCRelOffsetConfT curConf = fromMaybe(replicate(0), rdResp);
+            tagged Training {.pcHash, .relOffset}: begin
+                PCRelOffsetConfT curConf = case (rdResp) matches
+                    tagged Valid .e: e.conf;
+                    default:         replicate(0);
+                endcase;
                 Bit#(4) vecIdx = pack(relOffset + 7);
                 Bit#(3) curVal = curConf[vecIdx];
                 Bit#(3) newVal = (curVal == maxBound) ? maxBound : curVal + 1;
-                pcTable.wrReq(pctIdx, Valid(update(curConf, vecIdx, newVal)));
-                $display("%0d AlexLog: CDP Rel PC table updated, idx: %d, relOffset: %d, conf: %d -> %d",
-                         cur_cycle, pctIdx, relOffset, curVal, newVal);
+                pcTable.wrReq(pctIdx, Valid(PCTableEntryT{pcHash: pcHash, conf: update(curConf, vecIdx, newVal)}));
+                $display("%0d AlexLog: CDP Rel PC table updated, idx: %d pcHash: %h relOffset: %d conf: %d -> %d",
+                         cur_cycle, pctIdx, pcHash, relOffset, curVal, newVal);
             end
             tagged PrefetchIssue {.addr, .line, .reqVpn}: begin
-                if (rdResp matches tagged Valid .conf) begin
+                if (rdResp matches tagged Valid .entry) begin
                     Int#(4) hitOffset = unpack(zeroExtend(getLineDataOffset(addr)));
                     LineDataOffset bestOffset = 0;
                     Bool foundHighConf = False;
@@ -352,7 +360,7 @@ provisos (
                     for (Integer i = 14; i >= 0; i = i - 1) begin
                         Int#(4) relOffset  = fromInteger(i - 7);
                         Int#(4) absTarget  = hitOffset + relOffset;
-                        if (conf[fromInteger(i)] >= 3 &&& absTarget >= 0 &&& absTarget <= 7) begin
+                        if (entry.conf[fromInteger(i)] >= 3 &&& absTarget >= 0 &&& absTarget <= 7) begin
                             bestOffset = truncate(pack(absTarget));
                             foundHighConf = True;
                         end
@@ -363,18 +371,18 @@ provisos (
                     Bool isValidVaddr = candUpper == addrUpper;
                     if (foundHighConf && isValidVaddr) begin
                         tlbReqFIFO.enq(candidate);
-                        $display("%0d AlexLog: CDP Rel queued TLB req for candidate vaddr %h", cur_cycle, candidate);
+                        $display("%0d AlexLog: CDP Rel queued TLB req for candidate vaddr %h pcHash %h", cur_cycle, candidate, entry.pcHash);
                     end
                     if (foundHighConf && !isValidVaddr) begin
-                        $display("%0d AlexLog: CDP Rel Invalid address at best offset");
+                        $display("%0d AlexLog: CDP Rel Invalid address at best offset pcHash %h", cur_cycle, entry.pcHash);
                     end
                 end
             end
             tagged Decay: begin
-                if (rdResp matches tagged Valid .conf) begin
+                if (rdResp matches tagged Valid .entry) begin
                     function Bit#(3) satDec(Bit#(3) x) = (x == 0) ? 0 : x - 1;
-                    pcTable.wrReq(pctIdx, Valid(map(satDec, conf)));
-                    $display("%0d AlexLog: CDP Rel decay applied to pcTable idx: %d", cur_cycle, pctIdx);
+                    pcTable.wrReq(pctIdx, Valid(PCTableEntryT{pcHash: entry.pcHash, conf: map(satDec, entry.conf)}));
+                    $display("%0d AlexLog: CDP Rel decay applied to pcTable idx: %d pcHash: %h", cur_cycle, pctIdx, entry.pcHash);
                 end
             end
         endcase
