@@ -69,6 +69,7 @@ endinterface
 typedef union tagged {
     void I;
     DTlbReqIdx D;
+    DTlbReqIdx P;
 } TlbChild deriving(Bits, Eq, FShow);
 typedef struct {
     TlbChild child;

@@ -46,6 +46,7 @@ import SelfInvL1Pipe::*;
 import SelfInvL1Bank::*;
 import SelfInvIPipe::*;
 import SelfInvIBank::*;
+import TlbTypes::*;
 
 export L1Num;
 export LgL1WayNum;

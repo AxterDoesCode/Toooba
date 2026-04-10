@@ -70,10 +70,17 @@ TODO: check the logs of recent runs to see if there are collisions, if so the tr
 TODO: Prefetch issue may be bugged, we can issue prefetches on cache line fills from LLC -> L1D and also on demand HIT, however this is just a reportAccess call in cRqHit, can these two prefetch issues compete with eachother and/or mislead confidence update?
     This was an issue, the pRs rule (cache fill from LLC rule) also calls cRqHit (which calls reportAccess(HIT)) cRqHit is aware that this is a hit on a missed line but the prefetcher wasn't.
 TODO: Can best offset be out of bounds? e.g. best offset is -3 but the PC miss was on index 1
+    No
 TODO: So far I have a statistical decay of confidence, I probably want to decrease confidence if a prefetch issued was useless?
 TODO: Random thought but is the reason why misses decrease in my prefetcher compared to no prefetches because we keep useful lines in cache for longer?
 TODO: SetAssoc PC and TT tables decreased useless prefetch from 31k to 11k, running tests on set Assoc TT and flat PT currently, LossyMap needs to be rerun - looks like it ran with a stride prefetcher so those logs are inaccurate
     SetAssoc TT and Flat TT issued way less prefetches and useless prefetches in Patricia
+TODO: Investigate if prefetches are issued too early... See if an evicted line is actually demand loaded in the future
+    This can be done in two ways:
+        Decrease the L2 cache so that things actually miss the L2, if prefetches are too early then this is one way of making them appear later
+        Really I would want to log if evicted lines are demand accessed in the near future.
+
+TODO: Can offset 0 be trained too heavily? What is offset 0 behaviour
 
 Things to ask Jon:
 How should I size the training tables/PC table? What are reasonable sizes for these

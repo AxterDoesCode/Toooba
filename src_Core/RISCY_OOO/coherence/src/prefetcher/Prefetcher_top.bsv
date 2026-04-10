@@ -3,8 +3,9 @@ import Prefetcher_intf::*;
 import CDP::*;
 import CCTypes::*;
 import Types::*;
+import TlbTypes::*;
 
-module mkL1DPrefetcher(TlbToPrefetcher toTlb)(CacheLinePrefetcher#(reqT))
+module mkL1DPrefetcher#(TlbToPrefetcher toTlb)(CacheLinePrefetcher#(reqT))
 provisos (
     Bits#(reqT, _reqSz), 
     FShow#(reqT),

@@ -53,6 +53,7 @@ import RandomReplace::*;
 import Prefetcher::*;
 import Prefetcher_intf::*;
 import Prefetcher_top::*;
+import TlbTypes::*;
 import CDP::*;
 `ifdef PERFORMANCE_MONITORING
 import PerformanceMonitor::*;

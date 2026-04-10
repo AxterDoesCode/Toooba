@@ -273,9 +273,13 @@ provisos (
         if (rdResp matches tagged Valid {.hitWay, .ttRdResp}) begin
             // Key matched — no collision detection needed (isMatch handles it)
             if (respQ.missedOnThisVaddr) begin
-                $display("%t AlexLog: CDP Rel PC table needs update", $time);
+                $display("%t AlexLog: CDP Rel PC table needs update, candVaddr: %h", $time, respQ.candVaddr);
                 pcTableIdxT pctIdx = hash(getPcHash(respQ.req));
                 pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged Training ttRdResp.lineOffset));
+            end else begin
+                LineDataOffset dataSel = getLineDataOffset(getReqAddr(respQ.req));
+                RelLineOffset relOffset = unpack(zeroExtend(respQ.offset)) - unpack(zeroExtend(dataSel));
+                $display("%t AlexLog: CDP Rel Vaddr in training table seen at different offset candVaddr: %h VaddrRelOffset: %d TTRelOffset: %d", $time, respQ.candVaddr, relOffset, ttRdResp.lineOffset);
             end
         end else begin
             // No matching entry — insert into replacement way
@@ -287,7 +291,7 @@ provisos (
                 pcHash:      getPcHash(respQ.req),
                 lineOffset:  relOffset
             });
-            $display("%t AlexLog: CDP Rel Wrote to training table, idx: %d", $time, respQ.ttIdx);
+            $display("%t AlexLog: CDP Rel Wrote to training table, idx: %d candVaddr: %h", $time, respQ.ttIdx, respQ.candVaddr);
         end
     endrule
 
