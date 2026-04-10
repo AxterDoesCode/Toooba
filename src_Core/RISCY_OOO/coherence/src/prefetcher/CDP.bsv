@@ -13,6 +13,7 @@ import Types::*;
 import RWBramCore::*;
 import RWSetAssocBramCore::*;
 import Prefetcher_intf::*;
+import Cur_Cycle::*;
 
 typedef struct {
     reqT req;
@@ -43,7 +44,7 @@ module mkCDP(
         l1ToCDP.deq;
         let reqVpn = getReqVpn(x.req);
         Integer enqIdx = 0;
-        $display("%t AlexLog: CDP deqLineL1", $time);
+        $display("%0d AlexLog: CDP deqLineL1", cur_cycle);
         for (Integer i = 0; i < 8; i = i + 1) begin
             if (getVpn(x.line[i]) == reqVpn &&& getReqOp(x.req) == Ld) begin
                 nextCandidateBuffer.enqS[enqIdx].enq(
@@ -51,7 +52,7 @@ module mkCDP(
                         paddr: getReqAddr(x.req), 
                         vaddr: x.line[i]});
                 // Probably change logging here to just see the candidate vaddr -> candidate paddr?
-                $display("%t AlexLog: CDP candidate vaddr found, offset: %d, LineDataOffset: ", $time, i, fshow(dataSel), fshow(x.line[i]), fshow(reqVpn), fshow(x.req));
+                $display("%0d AlexLog: CDP candidate vaddr found, offset: %d, LineDataOffset: ", cur_cycle, i, fshow(dataSel), fshow(x.line[i]), fshow(reqVpn), fshow(x.req));
                 enqIdx = enqIdx + 1;
             end
         end
@@ -63,15 +64,15 @@ module mkCDP(
             line: line
         };
         l1ToCDP.enq(tmp);
-        $display("%t AlexLog: CDP reportIncomingCacheLine", $time);
+        $display("%0d AlexLog: CDP reportIncomingCacheLine", cur_cycle);
     endmethod
 
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
         if (hitMiss == HIT) begin
-            $display("%t AlexLog: prefetcher report HIT %h", $time, addr);
+            $display("%0d AlexLog: prefetcher report HIT %h", cur_cycle, addr);
         end
         else begin
-            $display("%t AlexLog: prefetcher report MISS %h", $time, addr);
+            $display("%0d AlexLog: prefetcher report MISS %h", cur_cycle, addr);
         end
     endmethod
 
@@ -82,7 +83,7 @@ module mkCDP(
         nextCandidateBuffer.deqS[0].deq;
         // Use the same VPN -> PPN, but get the offset of the candidate vaddr
         Addr nextAddr = zeroExtend({getPpn(x.paddr), getPageOffset(x.vaddr)});
-        $display("%t AlexLog: CDP Prefetch addr issued. paddr: %h | vaddr: %h", $time, nextAddr, x.vaddr);
+        $display("%0d AlexLog: CDP Prefetch addr issued. paddr: %h | vaddr: %h", cur_cycle, nextAddr, x.vaddr);
         return PendingPrefetch {
             addr: nextAddr,
             vpn: getVpn(x.vaddr),
@@ -203,7 +204,7 @@ provisos (
         trainingTable.wrReq(addr, way, unpack(0));
         if (ttInitCount == maxBound) begin
             ttInited <= True;
-            $display("%t AlexLog: CDP Rel Training table inited", $time);
+            $display("%0d AlexLog: CDP Rel Training table inited", cur_cycle);
         end
         ttInitCount <= ttInitCount + 1;
     endrule
@@ -214,7 +215,7 @@ provisos (
         if (pcInitCount == ~0) begin
             pcInited <= True;
             decayLfsr.seed('hA5F1);
-            $display("%t AlexLog: CDP Rel PC table inited", $time);
+            $display("%0d AlexLog: CDP Rel PC table inited", cur_cycle);
         end
         pcInitCount <= pcInitCount + 1;
     endrule
@@ -226,15 +227,13 @@ provisos (
         l1ToCDP.deq;
         Bit#(matchBits) missUpper = truncateLSB(getReqVpn(x.req));
         Integer enqIdx = 0;
-        $display("%t AlexLog: CDP Rel deqCacheLines", $time);
+        $display("%0d AlexLog: CDP Rel deqCacheLines", cur_cycle);
         for (Integer i = 0; i < 8; i = i + 1) begin
             Bit#(matchBits) candUpper = truncateLSB(getVpn(x.line[i]));
             if (candUpper == missUpper &&& getReqOp(x.req) == Ld) begin
                 Bit#(39) vaddr39 = truncate(x.line[i]);
                 trainingTableIdxT idx = hash(vaddr39);
                 Bool missedOnThisVaddr = (dataSel == fromInteger(i));
-                if (missedOnThisVaddr)
-                    $display("%t AlexLog: CDP Rel found a candidate vaddr that missed", $time);
                 ttRespQ.enqS[enqIdx].enq(
                     TrainingTableRespQT{
                         req: x.req,
@@ -243,10 +242,8 @@ provisos (
                         offset: fromInteger(i),
                         candVaddr: x.line[i]});
                 ttRdReqSupFIFO.enqS[enqIdx].enq(tuple2(idx, x.line[i]));
-                $display("%t AlexLog: CDP Rel candidate vaddr found, offset: %d, pcHash: %h", $time, i, getPcHash(x.req));
-                if (getVpn(x.line[i]) != getReqVpn(x.req))
-                    $display("%t AlexLog: CDP Rel CROSS-PAGE candidate at offset %d: missVpn %h candVpn %h candVaddr %h",
-                             $time, i, getReqVpn(x.req), getVpn(x.line[i]), x.line[i]);
+                $display("%0d AlexLog: CDP Rel candidate vaddr offset: %d pcHash: %h candVaddr: %h missedOnThis: %b crossPage: %b",
+                    cur_cycle, i, getPcHash(x.req), x.line[i], missedOnThisVaddr, getVpn(x.line[i]) != getReqVpn(x.req));
                 enqIdx = enqIdx + 1;
             end
         end
@@ -273,13 +270,13 @@ provisos (
         if (rdResp matches tagged Valid {.hitWay, .ttRdResp}) begin
             // Key matched — no collision detection needed (isMatch handles it)
             if (respQ.missedOnThisVaddr) begin
-                $display("%t AlexLog: CDP Rel PC table needs update, candVaddr: %h", $time, respQ.candVaddr);
+                $display("%0d AlexLog: CDP Rel PC table needs update, candVaddr: %h", cur_cycle, respQ.candVaddr);
                 pcTableIdxT pctIdx = hash(getPcHash(respQ.req));
                 pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged Training ttRdResp.lineOffset));
             end else begin
                 LineDataOffset dataSel = getLineDataOffset(getReqAddr(respQ.req));
                 RelLineOffset relOffset = unpack(zeroExtend(respQ.offset)) - unpack(zeroExtend(dataSel));
-                $display("%t AlexLog: CDP Rel Vaddr in training table seen at different offset candVaddr: %h VaddrRelOffset: %d TTRelOffset: %d", $time, respQ.candVaddr, relOffset, ttRdResp.lineOffset);
+                $display("%0d AlexLog: CDP Rel Vaddr in training table seen at different offset candVaddr: %h VaddrRelOffset: %d TTRelOffset: %d", cur_cycle, respQ.candVaddr, relOffset, ttRdResp.lineOffset);
             end
         end else begin
             // No matching entry — insert into replacement way
@@ -291,7 +288,7 @@ provisos (
                 pcHash:      getPcHash(respQ.req),
                 lineOffset:  relOffset
             });
-            $display("%t AlexLog: CDP Rel Wrote to training table, idx: %d candVaddr: %h", $time, respQ.ttIdx, respQ.candVaddr);
+            $display("%0d AlexLog: CDP Rel Wrote to training table, idx: %d candVaddr: %h", cur_cycle, respQ.ttIdx, respQ.candVaddr);
         end
     endrule
 
@@ -314,8 +311,8 @@ provisos (
                 Bit#(3) curVal = curConf[vecIdx];
                 Bit#(3) newVal = (curVal == maxBound) ? maxBound : curVal + 1;
                 pcTable.wrReq(pctIdx, Valid(update(curConf, vecIdx, newVal)));
-                $display("%t AlexLog: CDP Rel PC table updated, idx: %d, relOffset: %d, conf: %d -> %d",
-                         $time, pctIdx, relOffset, curVal, newVal);
+                $display("%0d AlexLog: CDP Rel PC table updated, idx: %d, relOffset: %d, conf: %d -> %d",
+                         cur_cycle, pctIdx, relOffset, curVal, newVal);
             end
             tagged PrefetchIssue {.addr, .line, .reqVpn}: begin
                 if (rdResp matches tagged Valid .conf) begin
@@ -337,10 +334,10 @@ provisos (
                     Bool isValidVaddr = candUpper == addrUpper;
                     if (foundHighConf && isValidVaddr) begin
                         tlbReqFIFO.enq(candidate);
-                        $display("%t AlexLog: CDP Rel queued TLB req for candidate vaddr %h", $time, candidate);
+                        $display("%0d AlexLog: CDP Rel queued TLB req for candidate vaddr %h", cur_cycle, candidate);
                     end
                     if (foundHighConf && !isValidVaddr) begin
-                        $display("%t AlexLog: CDP Rel Invalid address at best offset");
+                        $display("%0d AlexLog: CDP Rel Invalid address at best offset");
                     end
                 end
             end
@@ -348,7 +345,7 @@ provisos (
                 if (rdResp matches tagged Valid .conf) begin
                     function Bit#(3) satDec(Bit#(3) x) = (x == 0) ? 0 : x - 1;
                     pcTable.wrReq(pctIdx, Valid(map(satDec, conf)));
-                    $display("%t AlexLog: CDP Rel decay applied to pcTable idx: %d", $time, pctIdx);
+                    $display("%0d AlexLog: CDP Rel decay applied to pcTable idx: %d", cur_cycle, pctIdx);
                 end
             end
         endcase
@@ -361,7 +358,7 @@ provisos (
         toTlb.prefetcherReq(PrefetcherReqToTlb{vaddr: candVaddr, id: tlbReqId});
         tlbPendingCandQ.enq(candVaddr);
         tlbReqId <= tlbReqId + 1;
-        $display("%t AlexLog: CDP Rel TLB req sent for vaddr %h id %d", $time, candVaddr, tlbReqId);
+        $display("%0d AlexLog: CDP Rel TLB req sent for vaddr %h id %d", cur_cycle, candVaddr, tlbReqId);
     endrule
 
     // Consume TLB translation responses and enqueue to nextCandidateBuffer
@@ -372,9 +369,9 @@ provisos (
         tlbPendingCandQ.deq;
         if (!resp.haveException) begin
             nextCandidateBuffer.enq(NextCandT{paddr: resp.paddr, vaddr: candVaddr});
-            $display("%t AlexLog: CDP Rel TLB resp: vaddr %h -> paddr %h", $time, candVaddr, resp.paddr);
+            $display("%0d AlexLog: CDP Rel TLB resp: vaddr %h -> paddr %h", cur_cycle, candVaddr, resp.paddr);
         end else begin
-            $display("%t AlexLog: CDP Rel TLB resp: exception for vaddr %h, dropping prefetch", $time, candVaddr);
+            $display("%0d AlexLog: CDP Rel TLB resp: exception for vaddr %h, dropping prefetch", cur_cycle, candVaddr);
         end
     endrule
 
@@ -393,7 +390,7 @@ provisos (
         if (inited) begin
             let tmp = L1ToCDPT{req: req, line: line};
             l1ToCDP.enq(tmp);
-            $display("%t AlexLog: CDP Rel reportIncomingCacheLine", $time);
+            $display("%0d AlexLog: CDP Rel reportIncomingCacheLine", cur_cycle);
         end
     endmethod
 
@@ -405,9 +402,9 @@ provisos (
                 pcTableIdxT pctIdx = hash(pcHash);
                 pcTableRdReqFIFO.enq(tuple2(pctIdx,
                     tagged PrefetchIssue tuple3(addr, line, reqVpn)));
-                $display("%t AlexLog: CDP Rel prefetcher report %s addr %h pcHash %h", $time, hitMiss == HIT ? "HIT" : "MISS", addr, pcHash);
+                $display("%0d AlexLog: CDP Rel prefetcher report %s addr %h pcHash %h", cur_cycle, hitMiss == HIT ? "HIT" : "MISS", addr, pcHash);
             end
-            //$display("%t AlexLog: CDP Rel prefetcher report %s %h", $time, hitMiss == HIT ? "HIT" : "MISS", addr);
+            //$display("%0d AlexLog: CDP Rel prefetcher report %s %h", cur_cycle, hitMiss == HIT ? "HIT" : "MISS", addr);
         end
     endmethod
 
@@ -415,7 +412,7 @@ provisos (
         let x = nextCandidateBuffer.first;
         nextCandidateBuffer.deq;
         // paddr is already the correct translated physical address from the TLB
-        $display("%t AlexLog: CDP Rel Prefetch addr issued. lineAddr: %h | paddr: %h | vaddr: %h", $time, getLineAddr(x.paddr), x.paddr, x.vaddr);
+        $display("%0d AlexLog: CDP Rel Prefetch addr issued. lineAddr: %h | paddr: %h | vaddr: %h", cur_cycle, getLineAddr(x.paddr), x.paddr, x.vaddr);
         return PendingPrefetch {
             addr: x.paddr,
             vpn: getVpn(x.vaddr),
