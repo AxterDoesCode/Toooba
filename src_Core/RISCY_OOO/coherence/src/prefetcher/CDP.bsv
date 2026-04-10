@@ -166,9 +166,9 @@ provisos (
     RWSetAssocBramCore#(trainingTableIdxT, Bit#(2), TrainingTableEntryT, Addr) trainingTable
         <- mkRWSetAssocBramCoreForwarded(ttIsMatch, ttIsReplaceCandidate);
 
-    SupFifo#(9, 9, ttRespQT) ttRespQ <- mkSupFifo;
+    SupFifo#(16, 9, ttRespQT) ttRespQ <- mkSupFifo;
     // Carries (index, vaddr) — both needed by rdReq(addr, tag)
-    SupFifo#(9, 9, Tuple2#(trainingTableIdxT, Addr)) ttRdReqSupFIFO <- mkSupFifo;
+    SupFifo#(16, 9, Tuple2#(trainingTableIdxT, Addr)) ttRdReqSupFIFO <- mkSupFifo;
 
     // Flat PC confidence table
     RWBramCore#(pcTableIdxT, Maybe#(PCRelOffsetConfT)) pcTable <- mkRWBramCoreForwarded();
