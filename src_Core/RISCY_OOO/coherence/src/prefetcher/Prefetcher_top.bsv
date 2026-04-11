@@ -30,7 +30,8 @@ provisos (
         Parameter#(4096) pcTableSize <- mkParameter;
         Parameter#(64) decayInterval <- mkParameter;
         Parameter#(16)   matchBits <- mkParameter;
-        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelative(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits);
+        Parameter#(3)    confidenceThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelative(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold);
     `elsif DATA_PREFETCHER_CDP_NAIVE
         Parameter#(16)   matchBits <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPNaive(toTlb, matchBits);

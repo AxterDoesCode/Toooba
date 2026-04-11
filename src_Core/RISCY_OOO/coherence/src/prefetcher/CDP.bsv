@@ -153,7 +153,8 @@ module mkCDPStatefulRelative#(
     Parameter#(trainingTableSize) _,
     Parameter#(pcTableSize) __,
     Parameter#(decayInterval) ___,
-    Parameter#(matchBits) ____
+    Parameter#(matchBits) ____,
+    Parameter#(confidenceThreshold) _____
 )(CacheLinePrefetcher#(reqT))
 provisos (
     Bits#(reqT, _reqSz),
@@ -186,8 +187,9 @@ provisos (
     RWSetAssocBramCore#(trainingTableIdxT, Bit#(2), TrainingTableEntryT, Addr) trainingTable
         <- mkRWSetAssocBramCoreForwarded(ttIsMatch, ttIsReplaceCandidate);
 
+    // Slot 0: training trigger (hit-time from reportAccess OR miss-time from deqCacheLines — mutually exclusive)
+    // Slots 1-8: candidate pointer lookups (from deqCacheLines)
     SupFifo#(16, 9, ttRespQT) ttRespQ <- mkSupFifo;
-    // Carries (index, vaddr) — both needed by rdReq(addr, tag)
     SupFifo#(16, 9, Tuple2#(trainingTableIdxT, Addr)) ttRdReqSupFIFO <- mkSupFifo;
 
     // Flat PC confidence table
@@ -198,7 +200,8 @@ provisos (
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdTagQ    <- mkFIFO;
 
     // TLB translation pipeline for prefetch candidates
-    FIFO#(Addr) tlbReqFIFO <- mkSizedFIFO(16);        // decouples pcTableResp from TLB
+    // Up to 8 candidates can be issued per PrefetchIssue response (one per line word)
+    SupFifo#(16, 8, Addr) tlbReqFIFO <- mkSupFifo;   // decouples pcTableResp from TLB
     FIFO#(Addr) tlbPendingCandQ <- mkSizedFIFO(valueOf(LLCTlbReqNum)); // tracks in-flight vaddrs
     Reg#(LLCTlbReqIdx) tlbReqId <- mkReg(0);
 
@@ -355,10 +358,18 @@ provisos (
         pcTableRdTagQ.deq;
         case (tag) matches
             tagged Training {.pcHash, .relOffset}: begin
-                PCRelOffsetConfT curConf = case (rdResp) matches
-                    tagged Valid .e: e.conf;
-                    default:         replicate(0);
-                endcase;
+                // Improvement 3: collision detection — if the stored pcHash differs, a different
+                // PC owns this entry. Reset the confidence vector rather than corrupting it.
+                Bool collision = False;
+                PCRelOffsetConfT curConf = replicate(0);
+                if (rdResp matches tagged Valid .e) begin
+                    if (e.pcHash != pcHash) begin
+                        collision = True;
+                        $display("%0d AlexLog: CDP Rel PC table collision at idx: %d evicted pcHash: %h new pcHash: %h",
+                            cur_cycle, pctIdx, e.pcHash, pcHash);
+                    end else
+                        curConf = e.conf;
+                end
                 Bit#(4) vecIdx = pack(relOffset + 7);
                 Bit#(3) curVal = curConf[vecIdx];
                 Bit#(3) newVal = (curVal == maxBound) ? maxBound : curVal + 1;
@@ -369,27 +380,27 @@ provisos (
             tagged PrefetchIssue {.addr, .line, .reqVpn}: begin
                 if (rdResp matches tagged Valid .entry) begin
                     Int#(4) hitOffset = unpack(zeroExtend(getLineDataOffset(addr)));
-                    LineDataOffset bestOffset = 0;
-                    Bool foundHighConf = False;
-                    // Iterate high-to-low so lowest relative offset wins on tie
-                    for (Integer i = 14; i >= 0; i = i - 1) begin
-                        Int#(4) relOffset  = fromInteger(i - 7);
-                        Int#(4) absTarget  = hitOffset + relOffset;
-                        if (entry.conf[fromInteger(i)] >= 3 &&& absTarget >= 0 &&& absTarget <= 7) begin
-                            bestOffset = truncate(pack(absTarget));
-                            foundHighConf = True;
-                        end
-                    end
-                    Addr candidate = line[bestOffset];
                     Bit#(matchBits) addrUpper = truncateLSB(reqVpn);
-                    Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
-                    Bool isValidVaddr = candUpper == addrUpper;
-                    if (foundHighConf && isValidVaddr) begin
-                        tlbReqFIFO.enq(candidate);
-                        $display("%0d AlexLog: CDP Rel queued TLB req for candidate vaddr %h pcHash %h", cur_cycle, candidate, entry.pcHash);
-                    end
-                    if (foundHighConf && !isValidVaddr) begin
-                        $display("%0d AlexLog: CDP Rel Invalid address at best offset pcHash %h", cur_cycle, entry.pcHash);
+                    // Improvement 2: prefetch ALL high-confidence offsets, not just the best one
+                    Integer tlbEnqIdx = 0;
+                    for (Integer i = 0; i < 15; i = i + 1) begin
+                        Int#(4) relOffset = fromInteger(i - 7);
+                        Int#(4) absTarget = hitOffset + relOffset;
+                        if (entry.conf[fromInteger(i)] >= fromInteger(valueOf(confidenceThreshold))
+                            &&& absTarget >= 0 &&& absTarget <= 7) begin
+                            LineDataOffset targetOff = truncate(pack(absTarget));
+                            Addr candidate = line[targetOff];
+                            Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
+                            if (candUpper == addrUpper) begin // Issue a prefetch for this vaddr, need to translate first
+                                tlbReqFIFO.enqS[tlbEnqIdx].enq(candidate);
+                                $display("%0d AlexLog: CDP Rel queued TLB req for candidate vaddr %h pcHash %h relOffset %d",
+                                    cur_cycle, candidate, entry.pcHash, relOffset);
+                                tlbEnqIdx = tlbEnqIdx + 1;
+                            end else begin
+                                $display("%0d AlexLog: CDP Rel skipped invalid vaddr at relOffset %d pcHash %h",
+                                    cur_cycle, relOffset, entry.pcHash);
+                            end
+                        end
                     end
                 end
             end
@@ -405,8 +416,8 @@ provisos (
 
     // Drain tlbReqFIFO and issue requests to the TLB
     rule processTlbReq;
-        Addr candVaddr = tlbReqFIFO.first;
-        tlbReqFIFO.deq;
+        Addr candVaddr = tlbReqFIFO.deqS[0].first;
+        tlbReqFIFO.deqS[0].deq;
         toTlb.prefetcherReq(PrefetcherReqToTlb{vaddr: candVaddr, id: tlbReqId});
         tlbPendingCandQ.enq(candVaddr);
         tlbReqId <= tlbReqId + 1;
@@ -447,16 +458,28 @@ provisos (
     endmethod
 
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
-        if (inited && op == Ld) begin
-            // This rule does work only on HIT loads currently because we detect miss loads on the cache line fill from L2 with reportIncomingCacheLine
-            // In L1Bank we currently only reportAccess on demand (not prefetch)
-            if (hitMiss == HIT) begin
-                pcTableIdxT pctIdx = hash(pcHash);
-                pcTableRdReqFIFO.enq(tuple2(pctIdx,
-                    tagged PrefetchIssue tuple3(addr, line, reqVpn)));
-                $display("%0d AlexLog: CDP Rel prefetcher report %s addr %h pcHash %h", cur_cycle, hitMiss == HIT ? "HIT" : "MISS", addr, pcHash);
-            end
-            //$display("%0d AlexLog: CDP Rel prefetcher report %s %h", cur_cycle, hitMiss == HIT ? "HIT" : "MISS", addr);
+        if (inited && op == Ld && hitMiss == HIT) begin
+            // Prefetch issue: look up this PC's entry in the PC table
+            pcTableIdxT pctIdx = hash(pcHash);
+            pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple3(addr, line, reqVpn)));
+            // Training trigger (improvement 1): look up the hit vaddr in training table.
+            // Covers the case where the working set is warm and all accesses are hits —
+            // without this, no training trigger ever fires since reportIncomingCacheLine
+            // is only called on demand miss fills.
+            Addr hitVaddr = zeroExtend({pack(reqVpn), getPageOffset(addr)});
+            Bit#(39) hitVaddr39 = truncate(hitVaddr);
+            trainingTableIdxT hitIdx = hash(hitVaddr39);
+            // Shares slot 0 with deqCacheLines miss-time training trigger — BSC makes them
+            // mutually exclusive, which is fine since losing one training event per cycle
+            // is negligible for convergence.
+            ttRespQ.enqS[0].enq(TrainingTableRespQT{
+                req:              unpack(0), // req unused in isTrainingLookup=True path
+                ttIdx:            hitIdx,
+                isTrainingLookup: True,
+                offset:           0,
+                candVaddr:        hitVaddr});
+            ttRdReqSupFIFO.enqS[0].enq(tuple2(hitIdx, hitVaddr));
+            $display("%0d AlexLog: CDP Rel prefetcher report HIT addr %h pcHash %h", cur_cycle, addr, pcHash);
         end
     endmethod
 
