@@ -10,7 +10,7 @@ PROC := RV64G_OOO
 # core size
 CORE_SIZE ?= SMALL
 # cache size
-CACHE_SIZE ?= ALEX_SMALL
+CACHE_SIZE ?= ALEX_SMALLISH
 # always include perf counter
 PERF_COUNT := true
 # dram type in simulation: VC707 or AWSF1
@@ -61,7 +61,7 @@ else
 $(error unsupported CORE_SIZE)
 endif
 
-ifeq (,$(filter $(CACHE_SIZE),SMALL LARGE MC_1MB MC_2MB ALEX ALEX_SMALL ALEX_TINY))
+ifeq (,$(filter $(CACHE_SIZE),SMALL LARGE MC_1MB MC_2MB ALEX ALEX_SMALLISH ALEX_SMALL ALEX_TINY))
 $(error unsupported CACHE_SIZE)
 endif
 
@@ -77,7 +77,7 @@ endif
 ifeq (,$(filter $(DATA_PREFETCHER_LOCATION),NONE L1 L1LL LL L1_FORWARDING))
 	$(error unsupported DATA_PREFETCHER_LOCATION)
 endif
-ifeq (,$(filter $(DATA_PREFETCHER_TYPE),MARKOV MARKOV_ON_HIT MARKOV_ON_HIT_2 BLOCK STRIDE STRIDE_ADAPTIVE CDP))
+ifeq (,$(filter $(DATA_PREFETCHER_TYPE),MARKOV MARKOV_ON_HIT MARKOV_ON_HIT_2 BLOCK STRIDE STRIDE_ADAPTIVE CDP CDP_NAIVE))
 	$(error unsupported DATA_PREFETCHER_TYPE)
 endif
 

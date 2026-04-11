@@ -113,6 +113,18 @@ To further reduce confidence try tie in an access to a cache line to a cache evi
 
 More things I have thought:
     I think the decay is not aggressive enough on the PC table, and on the training table I can clearly see that fixing a vaddr to a single pc is not good
+    I made it 64 cycles and it still doesn't seem to be enough?
+    Made the TT overwrite, not sure that this was good, I think I want to add decay instead? Louis mentioned he did this.
+TODO:
+    Run all tests on CACHE_ALEX, 16 cache lines (in CACHE_ALEX_SMALL) is WAY too small to see any benefits of prefetching.
+    This is the same cache size that louis ran his tests on, but CHERI caps take up more space, maybe halve the lines in my CACHE_ALEX?
+    Patricia has about 55-60% accuracy, everything else sucks...
+    Confidence clearly needs to be tuned, and the overwriting of training table entry probably needs to be some sort of random decay instead?
+        Confidence needs to be tuned because for some benchmarks we are seeing no prefetches issued (like perimeter),
+        perhaps the condition of only issuing prefetches after confidence is 3 (seen this address demand miss 3 times already) is bad, investigate around
+    Is there a lot of same prefetches issued? Do I need to add filtering?
+    Overwriting is probably bad? This needs more thought.
+
 
 Summary of policy 10 April
 Here's how the full pipeline works end-to-end:

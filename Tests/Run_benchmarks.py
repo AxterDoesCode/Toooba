@@ -47,7 +47,7 @@ import multiprocessing
 # ================================================================
 # DEBUGGING ONLY: This exclude list allows skipping some specific test
 
-exclude_list = ["aes.bin", "limits.bin", "adpcm_decode.bin", "adpcm_encode.bin", "bitcount.bin", "blowfish.bin", "crc.bin", "picojpeg.bin", "qsort.bin", "randmath.bin", "rc4.bin", "rsa.bin", "sha.bin", "bh.bin", "basicmath.bin", "stringsearch.bin", "power.bin"]
+exclude_list = ["aes.bin", "limits.bin", "adpcm_decode.bin", "adpcm_encode.bin", "bitcount.bin", "blowfish.bin", "crc.bin", "picojpeg.bin", "qsort.bin", "randmath.bin", "rc4.bin", "rsa.bin", "sha.bin", "basicmath.bin", "stringsearch.bin", "power.bin"]
 # exclude_list = ["aes.bin", "limits.bin", "adpcm_decode.bin", "adpcm_encode.bin", "bitcount.bin", "blowfish.bin", "crc.bin", "picojpeg.bin", "qsort.bin", "randmath.bin", "rc4.bin", "rsa.bin", "sha.bin", "bh.bin", "basicmath.bin", "stringsearch.bin", "power.bin", "bisort.bin", "dijkstra.bin", "em3d.bin", "health.bin", "mst.bin", "patricia.bin", "perimeter.bin", "tsp.bin", "voronoi.bin"]
 # Everything but treeadd
 # exclude_list = []

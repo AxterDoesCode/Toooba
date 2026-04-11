@@ -155,6 +155,24 @@
 
 `endif
 
+// Do cache lines only contain 4 possible values in CHERI? If so to replicate CapChaser then I need to halve the size of the cache like this
+`ifdef CACHE_ALEX_SMALLISH
+
+    // L1
+    `define LOG_L1_LINES 7 // 8KB
+    `define LOG_L1_WAYS 2 // 4 ways
+    `define L1D_CRQ_NUM 8
+
+    // LLC
+    `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+    // There is already 20 cycles of baseline latency
+    `undef DRAM_LATENCY
+    `define DRAM_LATENCY 80
+
+`endif
+
 `ifdef CACHE_ALEX_SMALL
 
     // L1
