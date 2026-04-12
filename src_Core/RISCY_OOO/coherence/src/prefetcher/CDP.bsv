@@ -200,8 +200,7 @@ provisos (
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdTagQ    <- mkFIFO;
 
     // TLB translation pipeline for prefetch candidates
-    // Up to 8 candidates can be issued per PrefetchIssue response (one per line word)
-    SupFifo#(16, 8, Addr) tlbReqFIFO <- mkSupFifo;   // decouples pcTableResp from TLB
+    FIFO#(Addr) tlbReqFIFO <- mkSizedFIFO(16);   // decouples pcTableResp from TLB
     FIFO#(Addr) tlbPendingCandQ <- mkSizedFIFO(valueOf(LLCTlbReqNum)); // tracks in-flight vaddrs
     Reg#(LLCTlbReqIdx) tlbReqId <- mkReg(0);
 
@@ -381,31 +380,35 @@ provisos (
                 if (rdResp matches tagged Valid .entry) begin
                     Int#(4) hitOffset = unpack(zeroExtend(getLineDataOffset(addr)));
                     Bit#(matchBits) addrUpper = truncateLSB(reqVpn);
-                    // Improvement 2: prefetch ALL high-confidence offsets, not just the best one
                     Bit#(3) threshold = fromInteger(valueOf(confidenceThreshold));
-                    Integer tlbEnqIdx = 0;
-                    for (Integer i = 0; i < 15; i = i + 1) begin
+                    LineDataOffset bestOffset = 0;
+                    Bool foundHighConf = False;
+                    RelLineOffset bestRelOffset = 0;
+                    // Iterate high-to-low so lowest relative offset wins on tie
+                    for (Integer i = 14; i >= 0; i = i - 1) begin
                         Int#(4) relOffset = fromInteger(i - 7);
                         Int#(4) absTarget = hitOffset + relOffset;
                         if (entry.conf[fromInteger(i)] >= threshold) begin
                             if (absTarget >= 0 &&& absTarget <= 7) begin
-                                LineDataOffset targetOff = truncate(pack(absTarget));
-                                Addr candidate = line[targetOff];
-                                Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
-                                if (candUpper == addrUpper) begin
-                                    tlbReqFIFO.enqS[tlbEnqIdx].enq(candidate);
-                                    $display("%0d AlexLog: CDP Rel queued TLB req for candidate vaddr %h pcHash %h relOffset %d",
-                                        cur_cycle, candidate, entry.pcHash, relOffset);
-                                    tlbEnqIdx = tlbEnqIdx + 1;
-                                end else begin
-                                    $display("%0d AlexLog: CDP Rel skipped invalid vaddr at relOffset %d pcHash %h",
-                                        cur_cycle, relOffset, entry.pcHash);
-                                end
+                                bestOffset = truncate(pack(absTarget));
+                                bestRelOffset = fromInteger(i - 7);
+                                foundHighConf = True;
                             end else begin
                                 $display("%0d AlexLog: CDP Rel dropped high-conf prefetch: pcHash %h relOffset %d hitOffset %d absTarget out of bounds",
                                     cur_cycle, entry.pcHash, relOffset, hitOffset);
-                                // AlexNote: Maybe we can still issue a prefetch but for the cache line before/after depending if the absolute taget is less than 0 or above 7
                             end
+                        end
+                    end
+                    if (foundHighConf) begin
+                        Addr candidate = line[bestOffset];
+                        Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
+                        if (candUpper == addrUpper) begin
+                            tlbReqFIFO.enq(candidate);
+                            $display("%0d AlexLog: CDP Rel queued TLB req for candidate vaddr %h pcHash %h relOffset %d",
+                                cur_cycle, candidate, entry.pcHash, bestRelOffset);
+                        end else begin
+                            $display("%0d AlexLog: CDP Rel skipped invalid vaddr at relOffset %d pcHash %h",
+                                cur_cycle, bestRelOffset, entry.pcHash);
                         end
                     end
                 end
@@ -422,8 +425,8 @@ provisos (
 
     // Drain tlbReqFIFO and issue requests to the TLB
     rule processTlbReq;
-        Addr candVaddr = tlbReqFIFO.deqS[0].first;
-        tlbReqFIFO.deqS[0].deq;
+        Addr candVaddr = tlbReqFIFO.first;
+        tlbReqFIFO.deq;
         toTlb.prefetcherReq(PrefetcherReqToTlb{vaddr: candVaddr, id: tlbReqId});
         tlbPendingCandQ.enq(candVaddr);
         tlbReqId <= tlbReqId + 1;
