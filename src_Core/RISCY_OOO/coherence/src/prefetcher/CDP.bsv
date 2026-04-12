@@ -386,19 +386,24 @@ provisos (
                     for (Integer i = 0; i < 15; i = i + 1) begin
                         Int#(4) relOffset = fromInteger(i - 7);
                         Int#(4) absTarget = hitOffset + relOffset;
-                        if (entry.conf[fromInteger(i)] >= fromInteger(valueOf(confidenceThreshold))
-                            &&& absTarget >= 0 &&& absTarget <= 7) begin
-                            LineDataOffset targetOff = truncate(pack(absTarget));
-                            Addr candidate = line[targetOff];
-                            Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
-                            if (candUpper == addrUpper) begin // Issue a prefetch for this vaddr, need to translate first
-                                tlbReqFIFO.enqS[tlbEnqIdx].enq(candidate);
-                                $display("%0d AlexLog: CDP Rel queued TLB req for candidate vaddr %h pcHash %h relOffset %d",
-                                    cur_cycle, candidate, entry.pcHash, relOffset);
-                                tlbEnqIdx = tlbEnqIdx + 1;
+                        if (entry.conf[fromInteger(i)] >= (fromInteger(valueOf(confidenceThreshold)) :: Bit#(3))) begin
+                            if (absTarget >= 0 &&& absTarget <= 7) begin
+                                LineDataOffset targetOff = truncate(pack(absTarget));
+                                Addr candidate = line[targetOff];
+                                Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
+                                if (candUpper == addrUpper) begin
+                                    tlbReqFIFO.enqS[tlbEnqIdx].enq(candidate);
+                                    $display("%0d AlexLog: CDP Rel queued TLB req for candidate vaddr %h pcHash %h relOffset %d",
+                                        cur_cycle, candidate, entry.pcHash, relOffset);
+                                    tlbEnqIdx = tlbEnqIdx + 1;
+                                end else begin
+                                    $display("%0d AlexLog: CDP Rel skipped invalid vaddr at relOffset %d pcHash %h",
+                                        cur_cycle, relOffset, entry.pcHash);
+                                end
                             end else begin
-                                $display("%0d AlexLog: CDP Rel skipped invalid vaddr at relOffset %d pcHash %h",
-                                    cur_cycle, relOffset, entry.pcHash);
+                                $display("%0d AlexLog: CDP Rel dropped high-conf prefetch: pcHash %h relOffset %d hitOffset %d absTarget out of bounds",
+                                    cur_cycle, entry.pcHash, relOffset, hitOffset);
+                                // AlexNote: Maybe we can still issue a prefetch but for the cache line before/after depending if the absolute taget is less than 0 or above 7
                             end
                         end
                     end
