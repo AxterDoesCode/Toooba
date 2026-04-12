@@ -382,11 +382,12 @@ provisos (
                     Int#(4) hitOffset = unpack(zeroExtend(getLineDataOffset(addr)));
                     Bit#(matchBits) addrUpper = truncateLSB(reqVpn);
                     // Improvement 2: prefetch ALL high-confidence offsets, not just the best one
+                    Bit#(3) threshold = fromInteger(valueOf(confidenceThreshold));
                     Integer tlbEnqIdx = 0;
                     for (Integer i = 0; i < 15; i = i + 1) begin
                         Int#(4) relOffset = fromInteger(i - 7);
                         Int#(4) absTarget = hitOffset + relOffset;
-                        if (entry.conf[fromInteger(i)] >= (fromInteger(valueOf(confidenceThreshold)) :: Bit#(3))) begin
+                        if (entry.conf[fromInteger(i)] >= threshold) begin
                             if (absTarget >= 0 &&& absTarget <= 7) begin
                                 LineDataOffset targetOff = truncate(pack(absTarget));
                                 Addr candidate = line[targetOff];
