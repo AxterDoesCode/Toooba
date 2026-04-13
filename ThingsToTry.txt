@@ -100,7 +100,7 @@ Things to ask Jon:
 How should I size the training tables/PC table? What are reasonable sizes for these
 How do I make sure prefetches are timely, the current scheme identifies a vaddr in a line and then waits some amount of time until the candidate is accessed, perhaps this isn't timely?
     E.g the time between the first seen in some offset and then the actual demand miss for that line may be quite large, useless prefetches are those that weren't used before eviction. The training table sees ah I've seen this pointer at this PC and cache line offset in the past, next time lets prefetch it/update confidence, the issue is it could be very far in the past and so if we prefetch too early it could just get evicted before it is actually needed.
-Backbone - node prefetching, how do I stop repeat prefetching, another data structure?
+Backbone - node prefetching, how do I stop repeat prefetching, another data structure? Need some filter table sort of thing
 Discuss the cache line analysis thing again?
 
 Talk:
@@ -132,7 +132,9 @@ TODO: Investigate if the high confidence thing within all 15 entries in the PC t
 TODO: Next/Prev Line prefetching
     Currently we can prefetch before/after the cache line boundary, Probably need to check if the node spans a page boundary as well with this new stuff
     Prefetching before/after the cache line boundary isn't great by itself is it?
-        We know the offset within the before/after line that we think is a candidate vaddr, and if it is then we should probably issue a prefetch based on that
+        Turns out that this seems to improves performance, I suspect its because we are fetching in other parts of the node.
+        TODO: We know the offset within the before/after line that we think is a candidate vaddr, and if it is then we should probably issue a prefetch based on that
+         
 
 
 Summary of policy 10 April
