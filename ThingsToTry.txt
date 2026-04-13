@@ -128,6 +128,11 @@ TODO:
     If a data structure spans multiple cache lines, is the prefetcher even any good?
         Lets say some data structure spans two cache lines, we only see the vaddrs for the first line, and add them to the TT for that PC,
         some second half of the SAME node appears later on
+TODO: Investigate if the high confidence thing within all 15 entries in the PC table even works, feels like if there are multiple things contending then it has some undefined behaviour
+TODO: Next/Prev Line prefetching
+    Currently we can prefetch before/after the cache line boundary, Probably need to check if the node spans a page boundary as well with this new stuff
+    Prefetching before/after the cache line boundary isn't great by itself is it?
+        We know the offset within the before/after line that we think is a candidate vaddr, and if it is then we should probably issue a prefetch based on that
 
 
 Summary of policy 10 April

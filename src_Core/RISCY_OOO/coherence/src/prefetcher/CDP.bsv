@@ -189,8 +189,8 @@ provisos (
 
     // Slot 0: training trigger (hit-time from reportAccess OR miss-time from deqCacheLines — mutually exclusive)
     // Slots 1-8: candidate pointer lookups (from deqCacheLines)
-    SupFifo#(16, 9, ttRespQT) ttRespQ <- mkSupFifo;
-    SupFifo#(16, 9, Tuple2#(trainingTableIdxT, Addr)) ttRdReqSupFIFO <- mkSupFifo;
+    SupFifo#(16, 16, ttRespQT) ttRespQ <- mkSupFifo;
+    SupFifo#(16, 16, Tuple2#(trainingTableIdxT, Addr)) ttRdReqSupFIFO <- mkSupFifo;
 
     // Flat PC confidence table
     RWBramCore#(pcTableIdxT, Maybe#(PCTableEntryT)) pcTable <- mkRWBramCoreForwarded();
@@ -200,7 +200,8 @@ provisos (
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdTagQ    <- mkFIFO;
 
     // TLB translation pipeline for prefetch candidates
-    FIFO#(Addr) tlbReqFIFO <- mkSizedFIFO(16);   // decouples pcTableResp from TLB
+    // Port 0: main content-directed candidate; Port 1: neighbouring line (prev/next) when absTarget OOB
+    SupFifo#(2, 4, Addr) tlbReqFIFO <- mkSupFifo;
     FIFO#(Addr) tlbPendingCandQ <- mkSizedFIFO(valueOf(LLCTlbReqNum)); // tracks in-flight vaddrs
     Reg#(LLCTlbReqIdx) tlbReqId <- mkReg(0);
 
@@ -317,8 +318,8 @@ provisos (
             // Miss: this vaddr hasn't been seen as a pointer before — nothing to do
         end else begin
             // Candidate lookup: we looked up a pointer-like value from the incoming line.
-            // Always write the current (pcHash, relOffset) context — overwriting on hit keeps
-            // the entry current if the same vaddr is later seen by a different load PC.
+            // Overwrite the current (pcHash, relOffset) context if the pcHash differs for the vaddr
+            // overwriting on hit keeps the entry current if the same vaddr is later seen by a different load PC.
             LineDataOffset dataSel = getLineDataOffset(getReqAddr(respQ.req));
             RelLineOffset relOffset = unpack(zeroExtend(respQ.offset)) - unpack(zeroExtend(dataSel));
             TrainingTableEntryT newEntry = TrainingTableEntryT{
@@ -384,7 +385,12 @@ provisos (
                     LineDataOffset bestOffset = 0;
                     Bool foundHighConf = False;
                     RelLineOffset bestRelOffset = 0;
+                    // Track whether any high-conf slot fell outside 0..7 in each direction.
+                    // If so, the pointer lives in the previous/next cache line — prefetch it.
+                    Bool needPrevLine = False;
+                    Bool needNextLine = False;
                     // Iterate high-to-low so lowest relative offset wins on tie
+                    // AlexNote: I feel like this doesn't work, for loops in bluespec generate hardware paths in parallel, so setting bestOffset in two of these paths I'm not sure what happens
                     for (Integer i = 14; i >= 0; i = i - 1) begin
                         Int#(4) relOffset = fromInteger(i - 7);
                         Int#(4) absTarget = hitOffset + relOffset;
@@ -393,8 +399,13 @@ provisos (
                                 bestOffset = truncate(pack(absTarget));
                                 bestRelOffset = fromInteger(i - 7);
                                 foundHighConf = True;
+                            end else if (absTarget < 0) begin
+                                needPrevLine = True;
+                                $display("%0d AlexLog: CDP Rel high-conf pointer in prev line: pcHash %h relOffset %d hitOffset %d",
+                                    cur_cycle, entry.pcHash, relOffset, hitOffset);
                             end else begin
-                                $display("%0d AlexLog: CDP Rel dropped high-conf prefetch: pcHash %h relOffset %d hitOffset %d absTarget out of bounds",
+                                needNextLine = True;
+                                $display("%0d AlexLog: CDP Rel high-conf pointer in next line: pcHash %h relOffset %d hitOffset %d",
                                     cur_cycle, entry.pcHash, relOffset, hitOffset);
                             end
                         end
@@ -403,13 +414,35 @@ provisos (
                         Addr candidate = line[bestOffset];
                         Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
                         if (candUpper == addrUpper) begin
-                            tlbReqFIFO.enq(candidate);
+                            tlbReqFIFO.enqS[0].enq(candidate);
                             $display("%0d AlexLog: CDP Rel queued TLB req for candidate vaddr %h pcHash %h relOffset %d",
                                 cur_cycle, candidate, entry.pcHash, bestRelOffset);
                         end else begin
                             $display("%0d AlexLog: CDP Rel skipped invalid vaddr at relOffset %d pcHash %h",
                                 cur_cycle, bestRelOffset, entry.pcHash);
                         end
+                    end
+                    // Prefetch the neighbouring line if a high-conf pointer fell outside this line.
+                    // Compute the virtual base address of the current cache line then step ±64.
+                    // We use the virtual address so the TLB can validate and translate it,
+                    // handling cross-page boundaries correctly via its exception path.
+
+                    // AlexNote, looks like we prefetch the neighbouring line, but actually we know the offset within the neighbouring line we want to prefetch, 
+                    // it would make sense to tag a prefetch with nextLine and then when we see this prefetch come in we issue a prefetch for the virtual address within that line if it is a valid vaddr
+                    // Also here we could potentially cross a page boundary, need to have some handling to cut the path here for those cases.
+                    if (needPrevLine || needNextLine) begin
+                        // Reconstruct the cache-line-aligned virtual base address of the current miss.
+                        // getPageOffset gives 12 bits; the upper (12 - LgLineSzBytes) bits identify
+                        // the line within the page, and the lower LgLineSzBytes bits are the byte
+                        // offset within the line (always zero for an aligned line base).
+                        Bit#(TSub#(PageOffsetSz, LgLineSzBytes)) lineInPage = truncateLSB(getPageOffset(addr));
+                        Bit#(LgLineSzBytes) lineByteOff = 0;
+                        Addr curLineVbase = zeroExtend({pack(reqVpn), lineInPage, lineByteOff});
+                        Addr neighVaddr = needPrevLine ? curLineVbase - fromInteger(valueOf(TExp#(LgLineSzBytes)))
+                                                       : curLineVbase + fromInteger(valueOf(TExp#(LgLineSzBytes)));
+                        tlbReqFIFO.enqS[1].enq(neighVaddr);
+                        $display("%0d AlexLog: CDP Rel queued TLB req for %s line vaddr %h pcHash %h",
+                            cur_cycle, needPrevLine ? "prev" : "next", neighVaddr, entry.pcHash);
                     end
                 end
             end
@@ -425,8 +458,8 @@ provisos (
 
     // Drain tlbReqFIFO and issue requests to the TLB
     rule processTlbReq;
-        Addr candVaddr = tlbReqFIFO.first;
-        tlbReqFIFO.deq;
+        Addr candVaddr = tlbReqFIFO.deqS[0].first;
+        tlbReqFIFO.deqS[0].deq;
         toTlb.prefetcherReq(PrefetcherReqToTlb{vaddr: candVaddr, id: tlbReqId});
         tlbPendingCandQ.enq(candVaddr);
         tlbReqId <= tlbReqId + 1;
