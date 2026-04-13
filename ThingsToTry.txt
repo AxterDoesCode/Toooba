@@ -134,70 +134,56 @@ TODO: Next/Prev Line prefetching
     Prefetching before/after the cache line boundary isn't great by itself is it?
         Turns out that this seems to improves performance, I suspect its because we are fetching in other parts of the node.
         TODO: We know the offset within the before/after line that we think is a candidate vaddr, and if it is then we should probably issue a prefetch based on that
-         
-
-
-Summary of policy 10 April
-Here's how the full pipeline works end-to-end:
+            Maybe depending if the prev/next line hit in L1/L2 we can issue the pointer chasing prefetch?
+TODO: TT Overwrite needs investigating, if the vaddr does tagmatch and the PCHash is the same, can the relOffset be different?
 
 ---
 
-## CDP Stateful Relative — Prefetch Policy Overview
-
-### Core Idea
-The prefetcher learns that certain **load instructions** (identified by `pcHash`) tend to fetch cache lines that **contain pointer-like values**, and that those pointers are typically found at a **consistent relative offset** from the word that caused the miss. When confidence is high enough, it speculatively prefetches the cache line pointed to by the value at that offset.
-
----
+## mkCDPStatefulRelative — Current Mechanism (ac2822CDPImprovementsNextLine)
 
 ### Data Structures
 
-| Structure | Type | Purpose |
-|---|---|---|
-| **Training Table** | 4-way set-assoc BRAM, keyed by vaddr | Remembers: "this vaddr was seen as a pointer in a line loaded by `pcHash`, at `relOffset` from the miss word" |
-| **PC Table** | Flat BRAM, keyed by `hash(pcHash)` | Stores a confidence vector `Vector#(15, Bit#(3))` over relative offsets −7..+7 for each load PC |
+| Structure | Type | Keyed by | Stores |
+|---|---|---|---|
+| Training Table | 4-way set-assoc BRAM | hash(vaddr[38:0]) | {storedVaddr, pcHash, relOffset} |
+| PC Table | Flat BRAM | hash(pcHash) | {pcHash, Vector#(15, Bit#(3))} — confidence per relOffset -7..+7 |
 
----
+### On Demand Load Miss Fill (reportIncomingCacheLine)
 
-### Training Pipeline (on every L1 miss fill)
+Slot 0 — Training trigger: reconstruct virtual miss address {vpn, pageOffset(paddr)}, look up in training table.
+- Hit: the miss address was previously seen as a pointer by ttRdResp.pcHash at ttRdResp.lineOffset -> saturating-increment that confidence counter in the PC table. If stored pcHash doesn't match incoming pcHash (collision) -> reset confidence vector to zero before writing new entry.
+- Miss: nothing.
 
-When an L1 miss resolves and the filled cache line arrives (`reportIncomingCacheLine`):
+Slots 1-8 — Candidate scan: scan all 8 line words; any whose upper matchBits (=16) VPN bits match the miss address is a candidate pointer.
+- TT miss -> write new entry {candVaddr, currentPcHash, relOffset}.
+- TT hit, same pcHash -> no write.
+- TT hit, different pcHash -> overwrite with new pcHash/relOffset to keep entry current.
 
-1. **Training trigger (slot 0)**: Reconstruct the virtual miss address `{vpn, pageOffset(paddr)}` and look it up in the training table.
-   - **Hit**: This address was previously seen as a pointer value in some other line, stored there by a load with `ttRdResp.pcHash` at `ttRdResp.lineOffset`. → Saturating-increment that confidence counter in the PC table entry for that `pcHash`.
-   - **Miss**: Address has never been seen as a pointer — nothing to do.
+PrefetchIssue: one PC table lookup for the current pcHash — feeds the prefetch issue pipeline.
 
-2. **Candidate collection (slots 1–8)**: Scan all 8 words of the incoming cache line. Any word whose upper `matchBits` bits of VPN match the miss address's upper `matchBits` is treated as a candidate pointer.
-   - **Training table miss**: This is a new candidate — write `{storedVaddr=candVaddr, pcHash=currentPcHash, relOffset=candidatePos − missPos}` into the training table, so that if this address is ever accessed, we can train.
-   - **Training table hit**: Already recorded — skip.
+### On Demand Load Hit (reportAccess)
 
----
+- Enqueues a PrefetchIssue PC table lookup (same pipeline as miss fill).
+- Also enqueues a training trigger (slot 0, mutually exclusive with miss-time trigger) — covers warm working sets where fills never occur.
 
-### Prefetch Issue Pipeline (on every L1 hit or miss load)
+### Prefetch Issue Pipeline (PrefetchIssue PC table response)
 
-On `reportAccess` (HITs) and `reportIncomingCacheLine` (MISSes), a `PrefetchIssue` lookup is enqueued for the current PC's entry in the PC table. When that response arrives:
+Iterate all 15 confidence slots high-to-low (so lowest relOffset wins on tie). Find the single best slot where conf >= confidenceThreshold, regardless of whether absTarget = hitOffset + relOffset falls inside the current line or not.
 
-- Look through the confidence vector for any offset with confidence ≥ 3.
-- Compute `absTarget = missWordOffset + relOffset` — the absolute word position in the line to read the prefetch candidate from.
-- If `absTarget` is within 0–7 and the word there passes the `matchBits` upper-VPN check → enqueue the candidate vaddr for **TLB translation**.
-- TLB responds with a physical address → enqueue to `nextCandidateBuffer`.
-- `getNextPrefetchAddr` dequeues and issues the prefetch.
+If absTarget in 0-7 (in-bounds): read line[absTarget], validate upper matchBits of its VPN, enqueue to TLB for translation -> physical address -> nextCandidateBuffer -> prefetch issued.
 
----
-
-### Pointer Detection (`matchBits` parameter = 16)
-
-A value in a cache line is considered a candidate pointer if its upper 16 bits of VPN match the miss address's upper 16 bits of VPN. This covers a ±8MB address region around the miss, allowing **cross-page** pointer detection (previously only same-page pointers were found by requiring full VPN equality).
-
----
+If absTarget < 0 or > 7 (out-of-bounds): the pointer lives in the neighbouring cache line. Reconstruct the current line's virtual base address {vpn, lineInPage, 0} and step -64 (prev) or +64 (next) bytes. Enqueue that neighbouring line's vaddr to TLB -> prefetch the line itself so the CPU can read the pointer when it gets there.
 
 ### Confidence Decay
 
-An LFSR fires every `decayInterval` cycles, picks a random PC table index, and saturating-decrements all 15 confidence counters in that entry by 1. This evicts stale prefetch patterns over time without needing to invalidate training table entries.
+LFSR fires every decayInterval cycles, picks a random PC table index, saturating-decrements all 15 confidence counters by 1. Stale patterns fade over time.
 
----
+### Module Parameters
 
-### What's *Not* Done
-
-- **Store misses** are ignored everywhere — only loads train and trigger prefetches.
-- **Prefetch hits** don't trigger further prefetch issue (only demand loads do via `reportAccess`).
-- The training table has **no decay** — entries persist until evicted by the 4-way replacement policy. Only the PC table decays.
+| Parameter | Purpose |
+|---|---|
+| trainingTableSize | Number of sets in training table |
+| pcTableSize | Number of entries in PC table |
+| decayInterval | Cycles between decay events |
+| matchBits | Upper VPN bits used for candidate pointer detection (cross-page reach) |
+| confidenceThreshold | Minimum confidence to issue a prefetch |

@@ -386,6 +386,7 @@ provisos (
                     // Unified selection: best high-confidence offset wins regardless of whether
                     // absTarget falls within this cache line or in a neighbouring one.
                     // Iterate high-to-low so lowest relOffset wins on tie.
+                    // AlexNote: Unsure if this for loop works with multiple conf above threshold, i thought it generates a bunch of parallel hardware
                     Bool foundHighConf = False;
                     Int#(4) bestAbsTarget = 0;
                     RelLineOffset bestRelOffset = 0;
