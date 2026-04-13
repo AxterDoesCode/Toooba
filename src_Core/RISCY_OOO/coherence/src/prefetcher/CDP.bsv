@@ -200,8 +200,8 @@ provisos (
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdTagQ    <- mkFIFO;
 
     // TLB translation pipeline for prefetch candidates
-    // At most one prefetch issued per pcTableResp firing: main candidate takes priority,
-    // neighbouring line only issued when no high-conf in-bounds offset found.
+    // At most one prefetch issued per pcTableResp firing per cycle.
+    // Highest prefetch confidence is used regardless of if the best offset crosses a cache line boundary
     FIFO#(Addr) tlbReqFIFO <- mkSizedFIFO(4);
     FIFO#(Addr) tlbPendingCandQ <- mkSizedFIFO(valueOf(LLCTlbReqNum)); // tracks in-flight vaddrs
     Reg#(LLCTlbReqIdx) tlbReqId <- mkReg(0);
