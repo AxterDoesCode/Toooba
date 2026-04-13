@@ -33,7 +33,7 @@ provisos (
     Bits#(reqT, _reqSz),
     FShow#(reqT),
     IsProcRq#(reqT),
-    Add#(a__, matchBits, 27)
+Add#(a__, matchBits, 27)
 );
 
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
@@ -86,7 +86,7 @@ provisos (
         end
     endrule
 
-    method Action reportIncomingCacheLine(reqT req, Line line);
+    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss);
         l1ToCDP.enq(L1ToCDPT{req: req, line: line});
         $display("%0d AlexLog: CDP Naive reportIncomingCacheLine", cur_cycle);
     endmethod
@@ -474,24 +474,26 @@ provisos (
         pcTableRdReqFIFO.enq(tuple2(decayIdx, tagged Decay));
     endrule
 
-    method Action reportIncomingCacheLine(reqT req, Line line);
-        if (inited) begin
+   method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss);
+        // On demand miss cache fill
+        if (inited && getReqOp(req) == Ld && !cRqIsPrefetch && wasMiss) begin
             let tmp = L1ToCDPT{req: req, line: line};
             l1ToCDP.enq(tmp);
             $display("%0d AlexLog: CDP Rel reportIncomingCacheLine", cur_cycle);
-        end
-    endmethod
-
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
-        if (inited && op == Ld && hitMiss == HIT) begin
-            // Prefetch issue: look up this PC's entry in the PC table
-            pcTableIdxT pctIdx = hash(pcHash);
-            pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple3(addr, line, reqVpn)));
+        end else if ( // On demand hit (we have seen the cache line before so don't need to inspect all of the candidate vaddrs)
+        inited &&
+        getReqOp(req) == Ld &&
+        !wasMiss
+        ) begin
+            let reqVpn = getReqVpn(req);
+            pcTableIdxT pctIdx = hash(getPcHash(req));
+            // AlexNote: Fairly certain this FIFO can trigger on the same cycle as the deqCacheLines rule, needs amending
+            pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple3(getReqAddr(req), line, reqVpn)));
             // Training trigger (improvement 1): look up the hit vaddr in training table.
             // Covers the case where the working set is warm and all accesses are hits —
             // without this, no training trigger ever fires since reportIncomingCacheLine
             // is only called on demand miss fills.
-            Addr hitVaddr = zeroExtend({pack(reqVpn), getPageOffset(addr)});
+            Addr hitVaddr = zeroExtend({pack(reqVpn), getPageOffset(getReqAddr(req))});
             Bit#(39) hitVaddr39 = truncate(hitVaddr);
             trainingTableIdxT hitIdx = hash(hitVaddr39);
             // Shares slot 0 with deqCacheLines miss-time training trigger — BSC makes them
@@ -504,8 +506,16 @@ provisos (
                 offset:           0,
                 candVaddr:        hitVaddr});
             ttRdReqSupFIFO.enqS[0].enq(tuple2(hitIdx, hitVaddr));
-            $display("%0d AlexLog: CDP Rel prefetcher report HIT addr %h pcHash %h", cur_cycle, addr, pcHash);
         end
+    endmethod
+
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
+        //if (inited && op == Ld && hitMiss == HIT) begin
+        //    // Prefetch issue: look up this PC's entry in the PC table
+        //    pcTableIdxT pctIdx = hash(pcHash);
+        //    pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple3(addr, line, reqVpn)));
+        //$display("%0d AlexLog: CDP Rel prefetcher report HIT addr %h pcHash %h", cur_cycle, addr, pcHash);
+        //end
     endmethod
 
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr;

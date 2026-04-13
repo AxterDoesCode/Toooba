@@ -757,9 +757,10 @@ endfunction
                 cRqRetryIndexQ.enq(nextInQueue);
                 cRqMshr.manageQueue.resetEntry(nextInQueue);
             end
-            if (!cRqIsPrefetch[n] && !wasMiss) begin
-                prefetcher.reportAccess(req.addr, req.pcHash, HIT, ram.line, req.vpn, req.op, cRqIsPrefetch[n]);
-            end
+            //if (!cRqIsPrefetch[n] && !wasMiss) begin
+            prefetcher.reportAccess(req.addr, req.pcHash, HIT, ram.line, req.vpn, req.op, cRqIsPrefetch[n]);
+            //if (!cRqIsPrefetch[n] && req.op == Ld) begin
+            prefetcher.reportIncomingCacheLine(req, ram.line, cRqIsPrefetch[n], wasMiss);
             if (verbose)
                 $display("%t L1 %m pipelineResp: Hit func: update ram: ", $time,
                     fshow(newLine), " ; ",
@@ -1148,18 +1149,6 @@ endfunction
             procRqT procRq = pipeOutCRq;
             doAssert(ram.info.cs >= procRq.toState && ram.info.tag == getTag(procRq.addr), ("pRs must be a hit"));
             cRqHit(cOwner, procRq, True);
-            // AlexNote: Virtual address matcher and prefetch issue needs to be inside this rule, on the parent (L2) response...
-            // The garbage values were from the mkDoNothingPrefetcher..., currently passing ? into the Vpn value on prefetch rule but I need to explore prefetch depth stuff later so should probably pass the Vpn in.
-            // Also if I want to combine with a stride prefetcher then need to do it that way
-            if(!cRqIsPrefetch[cOwner] && procRq.op == Ld) begin // Only forward loads into the prefetcher
-                $display("AlexLog: L1 pipelineResp_pRs (not prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
-                Line curLine = ram.line;
-                // Only report incoming demand miss lines
-                prefetcher.reportIncomingCacheLine(procRq, curLine);
-            end
-            else 
-                // For now disregard chaining prefetches
-                $display("AlexLog: L1 pipelineResp_pRs (prefetch) vpn: ", fshow(procRq.vpn), " op: ", fshow(procRq.op), " id: ", fshow(procRq.id));
 
             // performance counter: miss cRq
             if (!cRqIsPrefetch[cOwner]) begin
