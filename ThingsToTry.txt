@@ -7,27 +7,6 @@ Combine with stride prefetcher..
 What proportion of misses can actually be eliminated?
 Try get Olden benchmarks building
 
-
-CDP Relative Policy:
-**Training (building confidence)**
-
-When a cache line arrives on a MISS, each word is checked for same-page pointer candidates (VPN match). For each candidate at absolute position `i`:
-- Its vaddr is XOR-folded into a training table index
-- If no entry exists, one is created storing the PC hash, the relative offset `i - dataSel` (where `dataSel` is the miss word position in this line), and the full vaddr for collision detection
-- If an entry already exists AND this candidate is the word that was actually missed (`missedOnThisVaddr`), the pcTable confidence counter for the stored relative offset is saturating-incremented
-
-**Prefetch issue (two paths)**
-
-1. **On MISS** — one pcTable lookup is issued per incoming line using the request's PC hash. If any relative offset has confidence ≥ 3, the value at `line[hitOffset + relOffset]` is used as the prefetch target, bounds-checked to ensure the resulting absolute offset stays within 0–7, and VPN-validated before enqueuing
-2. **On HIT** — same pcTable lookup and same selection logic, triggered from `reportAccess`
-
-**Confidence decay**
-
-Every `decayInterval` cycles a randomly selected pcTable entry has all 15 of its confidence counters saturating-decremented by 1, preventing stale patterns from persisting indefinitely.
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-Does UGSupFIFO even dequeue from head sequentially? Can quickly add some extra logs on normal stateless CDP
-
 Jon Talk:
 Two-way set associative, 16 lines.
 Drop the cache size down and see if the number cache misses jumps up
@@ -139,7 +118,7 @@ TODO: TT Overwrite needs investigating, if the vaddr does tagmatch and the PCHas
 TODO: Refactor is running, need to see if theses changes did anything new, If not, then carry on refactor and implement nextLinePointerChase
 ---
 
-## mkCDPStatefulRelative — Current Mechanism (ac2822CDPImprovementsNextLine)
+## mkCDPStatefulRelative — Current Mechanism (ac2822CDPNextLinePointerChasing)
 
 ### Data Structures
 
@@ -154,7 +133,7 @@ Slot 0 — Training trigger: reconstruct virtual miss address {vpn, pageOffset(p
 - Hit: the miss address was previously seen as a pointer by ttRdResp.pcHash at ttRdResp.lineOffset -> saturating-increment that confidence counter in the PC table. If stored pcHash doesn't match incoming pcHash (collision) -> reset confidence vector to zero before writing new entry.
 - Miss: nothing.
 
-Slots 1-8 — Candidate scan: scan all 8 line words; any whose upper matchBits (=16) VPN bits match the miss address is a candidate pointer.
+Slots 1-8 — Candidate scan: scan all 8 line words; any whose upper matchBits VPN bits match the miss address VPN is a candidate pointer.
 - TT miss -> write new entry {candVaddr, currentPcHash, relOffset}.
 - TT hit, same pcHash -> no write.
 - TT hit, different pcHash -> overwrite with new pcHash/relOffset to keep entry current.
@@ -168,11 +147,21 @@ PrefetchIssue: one PC table lookup for the current pcHash — feeds the prefetch
 
 ### Prefetch Issue Pipeline (PrefetchIssue PC table response)
 
-Iterate all 15 confidence slots high-to-low (so lowest relOffset wins on tie). Find the single best slot where conf >= confidenceThreshold, regardless of whether absTarget = hitOffset + relOffset falls inside the current line or not.
+Iterate all 15 confidence slots high-to-low (lowest relOffset wins on tie). Find the single best slot where conf >= confidenceThreshold.
 
-If absTarget in 0-7 (in-bounds): read line[absTarget], validate upper matchBits of its VPN, enqueue to TLB for translation -> physical address -> nextCandidateBuffer -> prefetch issued.
+absTarget = hitOffset + bestRelOffset
 
-If absTarget < 0 or > 7 (out-of-bounds): the pointer lives in the neighbouring cache line. Reconstruct the current line's virtual base address {vpn, lineInPage, 0} and step -64 (prev) or +64 (next) bytes. Enqueue that neighbouring line's vaddr to TLB -> prefetch the line itself so the CPU can read the pointer when it gets there.
+If absTarget in 0-7 (in-bounds): read line[absTarget], validate upper matchBits of its VPN, enqueue to TLB -> physical address -> nextCandidateBuffer -> prefetch issued. Tagged isNeighbourLine=False.
+
+If absTarget out of bounds (<0 or >7): the pointer lives in the neighbouring cache line. We know the exact word offset within that neighbour:
+- wordInNeigh = absTarget + 8  (prev case, absTarget in -7..-1)
+- wordInNeigh = absTarget - 8  (next case)
+Reconstruct curLineVbase = {vpn, lineInPage, 0}, step +-64 bytes to get neighLineVaddr, then compute the exact word vaddr: neighWordVaddr = neighLineVaddr + (wordInNeigh * 8).
+Enqueue neighWordVaddr to TLB -> prefetch that cache line. Tagged isNeighbourLine=True.
+
+### Neighbour-Line Pointer Chasing (wasNeighbourPrefetch path in reportIncomingCacheLine)
+
+When a neighbour-line prefetch returns (hit or miss), reportIncomingCacheLine is called with wasNeighbourPrefetch=True. Since req.addr carries the word-level paddr (set from prefetch.addr in L1Bank), getLineDataOffset(req.addr) recovers the exact word index within the now-resident line. That word is read, its upper matchBits VPN bits are checked against req.vpn, and if it passes it is enqueued directly to tlbReqFIFO as a normal candidate (isNeighbourLine=False), feeding into the standard TLB -> nextCandidateBuffer -> prefetch issue pipeline. If the VPN check fails the candidate is dropped.
 
 ### Confidence Decay
 

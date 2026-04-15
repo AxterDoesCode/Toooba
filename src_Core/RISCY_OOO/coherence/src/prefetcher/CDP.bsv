@@ -383,7 +383,9 @@ provisos (
             end
             tagged PrefetchIssue {.addr, .line, .reqVpn}: begin
                 if (rdResp matches tagged Valid .entry) begin
-                    Int#(4) hitOffset = unpack(zeroExtend(getLineDataOffset(addr)));
+                    // Use Int#(5) to avoid overflow: hitOffset (0-7) + relOffset (-7..+7) = -7..+14
+                    // which exceeds Int#(4)'s range of -8..+7 for the positive end.
+                    Int#(5) hitOffset = unpack(zeroExtend(getLineDataOffset(addr)));
                     Bit#(matchBits) addrUpper = truncateLSB(reqVpn);
                     Bit#(3) threshold = fromInteger(valueOf(confidenceThreshold));
                     // Unified selection: best high-confidence offset wins regardless of whether
@@ -391,11 +393,11 @@ provisos (
                     // Iterate high-to-low so lowest relOffset wins on tie.
                     // AlexNote: Unsure if this for loop works with multiple conf above threshold, i thought it generates a bunch of parallel hardware
                     Bool foundHighConf = False;
-                    Int#(4) bestAbsTarget = 0;
+                    Int#(5) bestAbsTarget = 0;
                     RelLineOffset bestRelOffset = 0;
                     for (Integer i = 14; i >= 0; i = i - 1) begin
-                        Int#(4) relOffset = fromInteger(i - 7);
-                        Int#(4) absTarget = hitOffset + relOffset;
+                        Int#(5) relOffset = fromInteger(i - 7);
+                        Int#(5) absTarget = hitOffset + relOffset;
                         if (entry.conf[fromInteger(i)] >= threshold) begin
                             bestAbsTarget  = absTarget;
                             bestRelOffset  = fromInteger(i - 7);
@@ -425,8 +427,10 @@ provisos (
                             Addr neighLineVaddr = isPrev ? curLineVbase - fromInteger(valueOf(TExp#(LgLineSzBytes)))
                                                          : curLineVbase + fromInteger(valueOf(TExp#(LgLineSzBytes)));
                             // Compute exact word vaddr within the neighbouring line.
-                            // Pack to Bit#(4) first so the literals 8 fit (Int#(4) max is +7).
-                            Bit#(4) absTargetBits = pack(bestAbsTarget);
+                            // Int#(5) avoids overflow so isPrev is always correct.
+                            // prev: absTarget in -7..-1 → wordInNeigh = absTarget+8, range 1..7
+                            // next: absTarget in 8..14  → wordInNeigh = absTarget-8, range 0..6
+                            Bit#(5) absTargetBits = pack(bestAbsTarget);
                             Bit#(3) wordInNeigh = isPrev ? truncate(absTargetBits + 8)
                                                          : truncate(absTargetBits - 8);
                             Addr neighWordVaddr = neighLineVaddr + zeroExtend({wordInNeigh, 3'b0});
@@ -484,7 +488,7 @@ provisos (
 
    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
         // On demand miss cache fill
-        if (inited && getReqOp(req) == Ld && !cRqIsPrefetch && wasMiss) begin
+        if (inited && getReqOp(req) == Ld && !cRqIsPrefetch && wasMiss !wasNeighbourPrefetch) begin
             let tmp = L1ToCDPT{req: req, line: line};
             l1ToCDP.enq(tmp);
             $display("%0d AlexLog: CDP Rel reportIncomingCacheLine", cur_cycle);
@@ -493,6 +497,7 @@ provisos (
         getReqOp(req) == Ld &&
         !wasMiss &&
         !cRqIsPrefetch
+        !wasNeighbourPrefetch &&
         ) begin
             let reqVpn = getReqVpn(req);
             pcTableIdxT pctIdx = hash(getPcHash(req));
