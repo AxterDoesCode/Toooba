@@ -136,7 +136,7 @@ typedef struct {
 // mkCDPStatefulRelative
 // Same as mkCDPStateful but trains on the offset of the candidate vaddr
 // *relative* to the missed word position, so negative offsets are possible.
-// Uses 4-way set-associative BRAMs (RWSetAssocBramCoreForwarded) for both
+// Uses 2-way set-associative BRAMs (RWSetAssocBramCoreForwarded) for both
 // the training table and PC table.
 // ============================================================================
 
@@ -186,8 +186,8 @@ provisos (
 
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
 
-    // 4-way set-associative training table
-    // addrT = trainingTableIdxT, wayT = Bit#(2), dataT = TrainingTableEntryT, tagT = Addr
+    // 2-way set-associative training table
+    // addrT = trainingTableIdxT, wayT = Bit#(1), dataT = TrainingTableEntryT, tagT = Addr
     function Bool ttIsMatch(TrainingTableEntryT e, Addr tag) = e.valid && e.storedVaddr == tag;
     function Bool ttIsReplaceCandidate(TrainingTableEntryT e) = !e.valid;
     RWSetAssocBramCore#(trainingTableIdxT, Bit#(1), TrainingTableEntryT, Addr) trainingTable
@@ -213,29 +213,33 @@ provisos (
     FIFO#(LineAddr) evictionQ <- mkSizedFIFO(4);
 
     // TLB translation pipeline for prefetch candidates
-    // At most one prefetch issued per pcTableResp firing per cycle.
-    // Highest prefetch confidence is used regardless of if the best offset crosses a cache line boundary
-    // AlexNote: Looks like the TLB needs initing and has some number of requests it can accept before blocking?, look into capChaser impl
+    // Free-list of TLB request slot IDs: dequeue to get a slot before issuing, enqueue back on response.
+    // This gives natural backpressure — processTlbReq blocks when all LLCTlbReqNum slots are in use,
+    // preventing the monotonically-incrementing counter approach from aliasing in-flight requests.
     FIFO#(Tuple2#(Addr, Bool)) tlbReqFIFO <- mkSizedFIFO(4); // Tuple2 of Vaddr and isNeighbourLine
-    FIFO#(Tuple2#(Addr, Bool)) tlbPendingCandQ <- mkSizedFIFO(valueOf(LLCTlbReqNum)); // tracks in-flight vaddrs and isNeighbourLine
-    Reg#(LLCTlbReqIdx) tlbReqId <- mkReg(0);
+    Fifo#(LLCTlbReqNum, LLCTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
+    Vector#(LLCTlbReqNum, Reg#(Addr)) pendCandVaddr  <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(Bool)) pendIsNeighbourLine <- replicateM(mkRegU);
 
     // Init: write unpack(0) (valid=False) to every (addr, way) pair for training table
     Reg#(Bool) ttInited <- mkConfigReg(False);
-    Reg#(Bit#(TAdd#(trainingTableIdxBits, 2))) ttInitCount <- mkReg(0);
+    Reg#(Bit#(TAdd#(trainingTableIdxBits, 1))) ttInitCount <- mkReg(0);
     // Flat PC table init
     Reg#(Bool) pcInited <- mkConfigReg(False);
     Reg#(Bit#(pcTableIdxBits)) pcInitCount <- mkReg(0);
     // Prefetch filter init (64 entries)
     Reg#(Bool) filterInited <- mkConfigReg(False);
     Reg#(Bit#(6)) filterInitCount <- mkReg(0);
+    // TLB free-queue init
+    Reg#(Bool) tlbReqFreeQInited <- mkConfigReg(False);
+    Reg#(LLCTlbReqIdx) tlbReqFreeQInitCount <- mkReg(0);
 
     // Confidence decay
     LFSR#(Bit#(16)) decayLfsr <- mkLFSR_16;
     Reg#(Bit#(32))  decayCounter <- mkReg(fromInteger(valueOf(decayInterval)));
 
     function Bool inited;
-        return ttInited && pcInited && filterInited;
+        return ttInited && pcInited && filterInited && tlbReqFreeQInited;
     endfunction
 
     (* mutually_exclusive = "doTrainingTableInit, processTtRdReq, ttAccess" *)
@@ -269,6 +273,16 @@ provisos (
             $display("%0d AlexLog: CDP Rel prefetch filter inited", cur_cycle);
         end
         filterInitCount <= filterInitCount + 1;
+    endrule
+
+    (* mutually_exclusive = "doTlbReqFreeQInit, processTlbResp" *)
+    rule doTlbReqFreeQInit(!tlbReqFreeQInited);
+        tlbReqFreeQ.enq(tlbReqFreeQInitCount);
+        if (tlbReqFreeQInitCount == ~0) begin
+            tlbReqFreeQInited <= True;
+            $display("%0d AlexLog: CDP Rel TLB free queue inited", cur_cycle);
+        end
+        tlbReqFreeQInitCount <= tlbReqFreeQInitCount + 1;
     endrule
 
     (* descending_urgency = "deqCacheLines, processTtRdReq, ttAccess" *)
@@ -475,22 +489,27 @@ provisos (
         endcase
     endrule
 
-    // Drain tlbReqFIFO and issue requests to the TLB
+    // Drain tlbReqFIFO and issue requests to the TLB.
+    // Dequeue a free slot ID — blocks naturally if all LLCTlbReqNum slots are in use.
     rule processTlbReq;
         match {.candVaddr, .isNeighbourLine} = tlbReqFIFO.first;
         tlbReqFIFO.deq;
-        toTlb.prefetcherReq(PrefetcherReqToTlb{vaddr: candVaddr, id: tlbReqId});
-        tlbPendingCandQ.enq(tuple2(candVaddr, isNeighbourLine));
-        tlbReqId <= tlbReqId + 1;
-        $display("%0d AlexLog: CDP Rel TLB req sent for vaddr %h id %d", cur_cycle, candVaddr, tlbReqId);
+        LLCTlbReqIdx id = tlbReqFreeQ.first;
+        tlbReqFreeQ.deq;
+        toTlb.prefetcherReq(PrefetcherReqToTlb{vaddr: candVaddr, id: id});
+        pendCandVaddr[id]       <= candVaddr;
+        pendIsNeighbourLine[id] <= isNeighbourLine;
+        $display("%0d AlexLog: CDP Rel TLB req sent for vaddr %h id %d", cur_cycle, candVaddr, id);
     endrule
 
     // Stage 1: TLB response → read prefetch filter (1-cycle BRAM latency)
     rule processTlbResp;
         let resp = toTlb.prefetcherResp;
         toTlb.deqPrefetcherResp;
-        match {.candVaddr, .isNeighbourLine} = tlbPendingCandQ.first;
-        tlbPendingCandQ.deq;
+        LLCTlbReqIdx id = resp.id;
+        Addr candVaddr       = pendCandVaddr[id];
+        Bool isNeighbourLine = pendIsNeighbourLine[id];
+        tlbReqFreeQ.enq(id); // return slot to free list
         if (!resp.haveException) begin
             NextCandT cand = NextCandT{paddr: resp.paddr, vaddr: candVaddr, isNeighbourLine: isNeighbourLine};
             LineAddr lineAddr = getLineAddr(resp.paddr);
@@ -524,7 +543,7 @@ provisos (
     rule doEvictionClear(filterInited);
         LineAddr lineAddr = evictionQ.first;
         evictionQ.deq;
-        Bit#(6) filterIdx = truncate(pack(lineAddr));
+        Bit#(6) filterIdx = hash(lineAddr);
         prefetchFilter.wrReq(filterIdx, Invalid);
         $display("%0d AlexLog: CDP Rel filter eviction clear: lineAddr %h idx %d", cur_cycle, lineAddr, filterIdx);
     endrule
