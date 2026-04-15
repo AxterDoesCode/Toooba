@@ -26,11 +26,11 @@ provisos (
     `elsif DATA_PREFETCHER_MARKOV_ON_HIT_2
         let m <- mkPCToCacheLinePrefetcherAdapter(mkPCPrefetcherAdapter(mkMarkovOnHit2Prefetcher));
     `elsif DATA_PREFETCHER_CDP
-        Parameter#(4096) trainingTableSize <- mkParameter;
-        Parameter#(4096) pcTableSize <- mkParameter;
-        Parameter#(64) decayInterval <- mkParameter;
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter; // For downsize 2 configuration, used a 128 size pcTable, whilst decayInterval remained at 16, I'm guessing the high confidence patterns stayed (for Voronoi).
+        Parameter#(16) decayInterval <- mkParameter;
         Parameter#(16)   matchBits <- mkParameter;
-        Parameter#(3)    confidenceThreshold <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelative(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold);
     `elsif DATA_PREFETCHER_CDP_NAIVE
         Parameter#(16)   matchBits <- mkParameter;

@@ -116,9 +116,18 @@ TODO: Next/Prev Line prefetching
             Maybe depending if the prev/next line hit in L1/L2 we can issue the pointer chasing prefetch?
 TODO: TT Overwrite needs investigating, if the vaddr does tagmatch and the PCHash is the same, can the relOffset be different?
 TODO: Maybe the nextLine pointer chasing prefetches need to only go ahead if the nextLine call hits the L1?
+    Rationale for this is because then we have to suffer potentially two full miss latencies?
 TODO: Louis had some tlb init stuff, I want to get that in
 TODO: Filter table for removing redundant prefetches
+    This is added
 TODO: Resize TT and PCT, TT I want to decay entries after I resize this
+    Currently investigating, seeing if a vastly smaller pc table does anything, 
+    Inconclusive
+TODO: Look at latePrefetches, and prefetchOwned
+TODO: If it is a same page prefetch then we can skip the TLB?
+TODO: Confidence is currently a saturating counter, I feel like seeing a pattern 3 times could potentially be too much?
+    Confidence is typically some multiplication operation instead... TSP for example issues no prefetches in statefulRelative because confidence is too low but in Naive it recognises and has about 50% acc
+TODO: Maybe play with matchBits?
 ---
 
 ## mkCDPStatefulRelative — Current Mechanism (ac2822CDPNextLinePointerChasing)

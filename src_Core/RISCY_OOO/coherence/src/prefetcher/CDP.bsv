@@ -190,7 +190,7 @@ provisos (
     // addrT = trainingTableIdxT, wayT = Bit#(2), dataT = TrainingTableEntryT, tagT = Addr
     function Bool ttIsMatch(TrainingTableEntryT e, Addr tag) = e.valid && e.storedVaddr == tag;
     function Bool ttIsReplaceCandidate(TrainingTableEntryT e) = !e.valid;
-    RWSetAssocBramCore#(trainingTableIdxT, Bit#(2), TrainingTableEntryT, Addr) trainingTable
+    RWSetAssocBramCore#(trainingTableIdxT, Bit#(1), TrainingTableEntryT, Addr) trainingTable
         <- mkRWSetAssocBramCoreForwarded(ttIsMatch, ttIsReplaceCandidate);
 
     // Slot 0: training trigger (hit-time from reportAccess OR miss-time from deqCacheLines — mutually exclusive)
@@ -241,7 +241,7 @@ provisos (
     (* mutually_exclusive = "doTrainingTableInit, processTtRdReq, ttAccess" *)
     rule doTrainingTableInit(!ttInited);
         trainingTableIdxT addr = truncateLSB(ttInitCount);
-        Bit#(2) way = truncate(ttInitCount);
+        Bit#(1) way = truncate(ttInitCount);
         trainingTable.wrReq(addr, way, unpack(0));
         if (ttInitCount == maxBound) begin
             ttInited <= True;
@@ -494,7 +494,7 @@ provisos (
         if (!resp.haveException) begin
             NextCandT cand = NextCandT{paddr: resp.paddr, vaddr: candVaddr, isNeighbourLine: isNeighbourLine};
             LineAddr lineAddr = getLineAddr(resp.paddr);
-            Bit#(6) filterIdx = truncate(pack(lineAddr));
+            Bit#(6) filterIdx = hash(lineAddr);
             prefetchFilter.rdReq(filterIdx);
             filterPendingQ.enq(tuple2(filterIdx, cand));
             $display("%0d AlexLog: CDP Rel TLB resp: vaddr %h -> paddr %h lineAddr %h", cur_cycle, candVaddr, resp.paddr, lineAddr);
