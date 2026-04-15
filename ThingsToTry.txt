@@ -115,7 +115,10 @@ TODO: Next/Prev Line prefetching
         TODO: We know the offset within the before/after line that we think is a candidate vaddr, and if it is then we should probably issue a prefetch based on that
             Maybe depending if the prev/next line hit in L1/L2 we can issue the pointer chasing prefetch?
 TODO: TT Overwrite needs investigating, if the vaddr does tagmatch and the PCHash is the same, can the relOffset be different?
-TODO: Refactor is running, need to see if theses changes did anything new, If not, then carry on refactor and implement nextLinePointerChase
+TODO: Maybe the nextLine pointer chasing prefetches need to only go ahead if the nextLine call hits the L1?
+TODO: Louis had some tlb init stuff, I want to get that in
+TODO: Filter table for removing redundant prefetches
+TODO: Resize TT and PCT, TT I want to decay entries after I resize this
 ---
 
 ## mkCDPStatefulRelative — Current Mechanism (ac2822CDPNextLinePointerChasing)

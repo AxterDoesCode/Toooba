@@ -488,7 +488,7 @@ provisos (
 
    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
         // On demand miss cache fill
-        if (inited && getReqOp(req) == Ld && !cRqIsPrefetch && wasMiss !wasNeighbourPrefetch) begin
+        if (inited && getReqOp(req) == Ld && !cRqIsPrefetch && wasMiss && !wasNeighbourPrefetch) begin
             let tmp = L1ToCDPT{req: req, line: line};
             l1ToCDP.enq(tmp);
             $display("%0d AlexLog: CDP Rel reportIncomingCacheLine", cur_cycle);
@@ -496,8 +496,8 @@ provisos (
         inited &&
         getReqOp(req) == Ld &&
         !wasMiss &&
-        !cRqIsPrefetch
-        !wasNeighbourPrefetch &&
+        !cRqIsPrefetch &&
+        !wasNeighbourPrefetch
         ) begin
             let reqVpn = getReqVpn(req);
             pcTableIdxT pctIdx = hash(getPcHash(req));
