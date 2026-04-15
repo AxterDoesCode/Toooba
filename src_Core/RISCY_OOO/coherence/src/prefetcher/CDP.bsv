@@ -23,6 +23,7 @@ typedef struct {
 typedef struct {
     Addr paddr;
     Addr vaddr;
+    Bool isNeighbourLine;
 } NextCandT deriving (Bits, FShow, Eq);
 
 module mkCDPNaive#(
@@ -102,7 +103,8 @@ Add#(a__, matchBits, 27)
         return PendingPrefetch {
             addr: x.paddr,
             vpn: getVpn(x.vaddr),
-            nextLevel: False
+            nextLevel: False,
+            isNeighbourLine: False
         };
     endmethod
 endmodule
@@ -202,8 +204,9 @@ provisos (
     // TLB translation pipeline for prefetch candidates
     // At most one prefetch issued per pcTableResp firing per cycle.
     // Highest prefetch confidence is used regardless of if the best offset crosses a cache line boundary
-    FIFO#(Addr) tlbReqFIFO <- mkSizedFIFO(4);
-    FIFO#(Addr) tlbPendingCandQ <- mkSizedFIFO(valueOf(LLCTlbReqNum)); // tracks in-flight vaddrs
+    // AlexNote: Looks like the TLB needs initing and has some number of requests it can accept before blocking?, look into capChaser impl
+    FIFO#(Tuple2#(Addr, Bool)) tlbReqFIFO <- mkSizedFIFO(4); // Tuple2 of Vaddr and isNeighbourLine
+    FIFO#(Tuple2#(Addr, Bool)) tlbPendingCandQ <- mkSizedFIFO(valueOf(LLCTlbReqNum)); // tracks in-flight vaddrs and isNeighbourLine
     Reg#(LLCTlbReqIdx) tlbReqId <- mkReg(0);
 
     // Init: write unpack(0) (valid=False) to every (addr, way) pair for training table
@@ -406,7 +409,7 @@ provisos (
                             Addr candidate = line[targetOff];
                             Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
                             if (candUpper == addrUpper) begin
-                                tlbReqFIFO.enq(candidate);
+                                tlbReqFIFO.enq(tuple2(candidate, False));
                                 $display("%0d AlexLog: CDP Rel queued TLB req for candidate vaddr %h pcHash %h relOffset %d",
                                     cur_cycle, candidate, entry.pcHash, bestRelOffset);
                             end else begin
@@ -422,7 +425,7 @@ provisos (
                             // AlexNote: Need to double check this logic is okay
                             Addr neighVaddr = isPrev ? curLineVbase - fromInteger(valueOf(TExp#(LgLineSzBytes)))
                                                      : curLineVbase + fromInteger(valueOf(TExp#(LgLineSzBytes)));
-                            tlbReqFIFO.enq(neighVaddr);
+                            tlbReqFIFO.enq(tuple2(neighVaddr, True));
                             $display("%0d AlexLog: CDP Rel queued TLB req for %s line vaddr %h pcHash %h relOffset %d",
                                 cur_cycle, isPrev ? "prev" : "next", neighVaddr, entry.pcHash, bestRelOffset);
                         end
@@ -441,10 +444,10 @@ provisos (
 
     // Drain tlbReqFIFO and issue requests to the TLB
     rule processTlbReq;
-        Addr candVaddr = tlbReqFIFO.first;
+        match {.candVaddr, isNeighourLine} candVaddr = tlbReqFIFO.first;
         tlbReqFIFO.deq;
         toTlb.prefetcherReq(PrefetcherReqToTlb{vaddr: candVaddr, id: tlbReqId});
-        tlbPendingCandQ.enq(candVaddr);
+        tlbPendingCandQ.enq(tuple2(candVaddr, isNeighourLine));
         tlbReqId <= tlbReqId + 1;
         $display("%0d AlexLog: CDP Rel TLB req sent for vaddr %h id %d", cur_cycle, candVaddr, tlbReqId);
     endrule
@@ -453,10 +456,10 @@ provisos (
     rule processTlbResp;
         let resp = toTlb.prefetcherResp;
         toTlb.deqPrefetcherResp;
-        Addr candVaddr = tlbPendingCandQ.first;
+        match {.candVaddr, .isNeighourLine} = tlbPendingCandQ.first;
         tlbPendingCandQ.deq;
         if (!resp.haveException) begin
-            nextCandidateBuffer.enq(NextCandT{paddr: resp.paddr, vaddr: candVaddr});
+            nextCandidateBuffer.enq(NextCandT{paddr: resp.paddr, vaddr: candVaddr, isNeighourLine: isNeighourLine});
             $display("%0d AlexLog: CDP Rel TLB resp: vaddr %h -> paddr %h", cur_cycle, candVaddr, resp.paddr);
         end else begin
             $display("%0d AlexLog: CDP Rel TLB resp: exception for vaddr %h, dropping prefetch", cur_cycle, candVaddr);
@@ -474,7 +477,7 @@ provisos (
         pcTableRdReqFIFO.enq(tuple2(decayIdx, tagged Decay));
     endrule
 
-   method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss);
+   method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
         // On demand miss cache fill
         if (inited && getReqOp(req) == Ld && !cRqIsPrefetch && wasMiss) begin
             let tmp = L1ToCDPT{req: req, line: line};
@@ -483,22 +486,21 @@ provisos (
         end else if ( // On demand hit (we have seen the cache line before so don't need to inspect all of the candidate vaddrs)
         inited &&
         getReqOp(req) == Ld &&
-        !wasMiss
+        !wasMiss &&
+        !cRqIsPrefetch
         ) begin
             let reqVpn = getReqVpn(req);
             pcTableIdxT pctIdx = hash(getPcHash(req));
-            // AlexNote: Fairly certain this FIFO can trigger on the same cycle as the deqCacheLines rule, needs amending
+            // AlexNote: Fairly certain this FIFO can trigger on the same cycle as the deqCacheLines rule?
             pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple3(getReqAddr(req), line, reqVpn)));
             // Training trigger (improvement 1): look up the hit vaddr in training table.
-            // Covers the case where the working set is warm and all accesses are hits —
+            // Covers the case where the working set is warm and all accesses are hits
             // without this, no training trigger ever fires since reportIncomingCacheLine
             // is only called on demand miss fills.
             Addr hitVaddr = zeroExtend({pack(reqVpn), getPageOffset(getReqAddr(req))});
             Bit#(39) hitVaddr39 = truncate(hitVaddr);
             trainingTableIdxT hitIdx = hash(hitVaddr39);
-            // Shares slot 0 with deqCacheLines miss-time training trigger — BSC makes them
-            // mutually exclusive, which is fine since losing one training event per cycle
-            // is negligible for convergence.
+            // Shares slot 0 with deqCacheLines miss-time training trigger which should be mutually exclusive, 
             ttRespQ.enqS[0].enq(TrainingTableRespQT{
                 req:              unpack(0), // req unused in isTrainingLookup=True path
                 ttIdx:            hitIdx,
@@ -506,6 +508,13 @@ provisos (
                 offset:           0,
                 candVaddr:        hitVaddr});
             ttRdReqSupFIFO.enqS[0].enq(tuple2(hitIdx, hitVaddr));
+        end else if ( // For all prefetched lines (hit or miss)
+        inited &&
+        getReqOp(req) == Ld &&
+        cRqIsPrefetch &&
+        wasNeighbourPrefetch
+        ) begin
+            // We want to issue a prefetch just for the next-line neighbour
         end
     endmethod
 
@@ -526,7 +535,8 @@ provisos (
         return PendingPrefetch {
             addr: x.paddr,
             vpn: getVpn(x.vaddr),
-            nextLevel: False
+            nextLevel: False,
+            isNeighbourLine: x.isNeighbourLine // prev/next line prefetch issuance ( we have an offset at the vaddr of the neighbour that we want to "chain" on)
         };
     endmethod
 endmodule

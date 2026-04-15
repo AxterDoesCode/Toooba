@@ -190,7 +190,9 @@ module mkL1Bank#(
     // we process AMO resp in a new cycle to cut critical path
     Reg#(Maybe#(AmoHitInfo#(cRqIdxT, procRqT))) processAmo <- mkReg(Invalid);
 
+    // MSHR extension for prefetch requests
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
+    Vector#(cRqNum, Reg#(Bool)) cRqIsNeighbourPrefetch <- replicateM(mkReg(?));
 
     // A queue for responses from LL prefetches
     // We should inform the prefetcher that its prefetch to the LLC hit, but that might conflict with telling the prefetcher
@@ -356,6 +358,7 @@ endfunction
             mshrIdx: n
         }));
         cRqIsPrefetch[n] <= False;
+        cRqIsNeighbourPrefetch[n] <= False;
         // performance counter: cRq type
         incrReqCnt(r.op);
         if (verbose) begin
@@ -462,6 +465,7 @@ endfunction
                 mshrIdx: n
             }));
             cRqIsPrefetch[n] <= True;
+            cRqIsNeighbourPrefetch[n] <= prefetch.isNeighbourLine;
             if (prefetchVerbose)
                 $display("%t L1D cRq creation: mshr: %d, addr: 0x%h, vpn: 0x%h, pcHash: 0x%h, mshrInUse: %d/%d, isPrefetch: 1, isRetry: 0, reqCs: ", 
                     cur_cycle, 
@@ -760,7 +764,7 @@ endfunction
             //if (!cRqIsPrefetch[n] && !wasMiss) begin
             prefetcher.reportAccess(req.addr, req.pcHash, HIT, ram.line, req.vpn, req.op, cRqIsPrefetch[n]);
             //if (!cRqIsPrefetch[n] && req.op == Ld) begin
-            prefetcher.reportIncomingCacheLine(req, ram.line, cRqIsPrefetch[n], wasMiss);
+            prefetcher.reportIncomingCacheLine(req, ram.line, cRqIsPrefetch[n], wasMiss, cRqIsNeighbourPrefetch[n]);
             if (verbose)
                 $display("%t L1 %m pipelineResp: Hit func: update ram: ", $time,
                     fshow(newLine), " ; ",

@@ -7,6 +7,7 @@ typedef struct {
     Addr addr;
     Vpn  vpn;
     Bool nextLevel;
+    Bool neighbourLine;
 } PendingPrefetch deriving (Bits, Eq, FShow);
 
 typedef enum {
