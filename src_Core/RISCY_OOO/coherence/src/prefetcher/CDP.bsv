@@ -92,6 +92,10 @@ Add#(a__, matchBits, 27)
         $display("%0d AlexLog: CDP Naive reportIncomingCacheLine", cur_cycle);
     endmethod
 
+    method Action reportEviction(LineAddr lineAddr);
+        noAction;
+    endmethod
+
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
         $display("%0d AlexLog: CDP Naive prefetcher report %s addr %h", cur_cycle, hitMiss == HIT ? "HIT" : "MISS", addr);
     endmethod
@@ -197,9 +201,16 @@ provisos (
     // Flat PC confidence table
     RWBramCore#(pcTableIdxT, Maybe#(PCTableEntryT)) pcTable <- mkRWBramCoreForwarded();
 
+    // 64-entry direct-mapped prefetch filter: avoids issuing duplicate prefetches for the same cache line
+    RWBramCore#(Bit#(6), Maybe#(LineAddr)) prefetchFilter <- mkRWBramCoreForwarded();
+
     Fifo#(16, NextCandT) nextCandidateBuffer <- mkOverflowBypassFifo;
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdReqFIFO <- mkSizedFIFO(64);
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdTagQ    <- mkFIFO;
+    // Filter pipeline: (filterIdx, candidate) queued after TLB resp, consumed by processFilterResp
+    FIFO#(Tuple2#(Bit#(6), NextCandT)) filterPendingQ <- mkFIFO;
+    // Eviction notifications from L1: clear filter entry for evicted prefetch lines
+    FIFO#(LineAddr) evictionQ <- mkSizedFIFO(4);
 
     // TLB translation pipeline for prefetch candidates
     // At most one prefetch issued per pcTableResp firing per cycle.
@@ -215,13 +226,16 @@ provisos (
     // Flat PC table init
     Reg#(Bool) pcInited <- mkConfigReg(False);
     Reg#(Bit#(pcTableIdxBits)) pcInitCount <- mkReg(0);
+    // Prefetch filter init (64 entries)
+    Reg#(Bool) filterInited <- mkConfigReg(False);
+    Reg#(Bit#(6)) filterInitCount <- mkReg(0);
 
     // Confidence decay
     LFSR#(Bit#(16)) decayLfsr <- mkLFSR_16;
     Reg#(Bit#(32))  decayCounter <- mkReg(fromInteger(valueOf(decayInterval)));
 
     function Bool inited;
-        return ttInited && pcInited;
+        return ttInited && pcInited && filterInited;
     endfunction
 
     (* mutually_exclusive = "doTrainingTableInit, processTtRdReq, ttAccess" *)
@@ -245,6 +259,16 @@ provisos (
             $display("%0d AlexLog: CDP Rel PC table inited", cur_cycle);
         end
         pcInitCount <= pcInitCount + 1;
+    endrule
+
+    (* mutually_exclusive = "doFilterInit, processFilterResp, doEvictionClear" *)
+    rule doFilterInit(!filterInited);
+        prefetchFilter.wrReq(filterInitCount, Invalid);
+        if (filterInitCount == ~0) begin
+            filterInited <= True;
+            $display("%0d AlexLog: CDP Rel prefetch filter inited", cur_cycle);
+        end
+        filterInitCount <= filterInitCount + 1;
     endrule
 
     (* descending_urgency = "deqCacheLines, processTtRdReq, ttAccess" *)
@@ -461,18 +485,48 @@ provisos (
         $display("%0d AlexLog: CDP Rel TLB req sent for vaddr %h id %d", cur_cycle, candVaddr, tlbReqId);
     endrule
 
-    // Consume TLB translation responses and enqueue to nextCandidateBuffer
+    // Stage 1: TLB response → read prefetch filter (1-cycle BRAM latency)
     rule processTlbResp;
         let resp = toTlb.prefetcherResp;
         toTlb.deqPrefetcherResp;
         match {.candVaddr, .isNeighbourLine} = tlbPendingCandQ.first;
         tlbPendingCandQ.deq;
         if (!resp.haveException) begin
-            nextCandidateBuffer.enq(NextCandT{paddr: resp.paddr, vaddr: candVaddr, isNeighbourLine: isNeighbourLine});
-            $display("%0d AlexLog: CDP Rel TLB resp: vaddr %h -> paddr %h", cur_cycle, candVaddr, resp.paddr);
+            NextCandT cand = NextCandT{paddr: resp.paddr, vaddr: candVaddr, isNeighbourLine: isNeighbourLine};
+            LineAddr lineAddr = getLineAddr(resp.paddr);
+            Bit#(6) filterIdx = truncate(pack(lineAddr));
+            prefetchFilter.rdReq(filterIdx);
+            filterPendingQ.enq(tuple2(filterIdx, cand));
+            $display("%0d AlexLog: CDP Rel TLB resp: vaddr %h -> paddr %h lineAddr %h", cur_cycle, candVaddr, resp.paddr, lineAddr);
         end else begin
             $display("%0d AlexLog: CDP Rel TLB resp: exception for vaddr %h, dropping prefetch", cur_cycle, candVaddr);
         end
+    endrule
+
+    // Stage 2: filter check → issue prefetch or drop duplicate
+    (* descending_urgency = "doEvictionClear, processFilterResp" *)
+    rule processFilterResp(inited);
+        let rdResp = prefetchFilter.rdResp;
+        prefetchFilter.deqRdResp;
+        match {.filterIdx, .cand} = filterPendingQ.first;
+        filterPendingQ.deq;
+        LineAddr lineAddr = getLineAddr(cand.paddr);
+        if (rdResp matches tagged Valid .storedAddr &&& storedAddr == lineAddr) begin
+            $display("%0d AlexLog: CDP Rel filter HIT: dropped duplicate prefetch for lineAddr %h", cur_cycle, lineAddr);
+        end else begin
+            prefetchFilter.wrReq(filterIdx, Valid(lineAddr));
+            nextCandidateBuffer.enq(cand);
+            $display("%0d AlexLog: CDP Rel filter MISS: issuing prefetch for lineAddr %h", cur_cycle, lineAddr);
+        end
+    endrule
+
+    // Clear filter entry when a prefetched line is evicted from L1
+    rule doEvictionClear(filterInited);
+        LineAddr lineAddr = evictionQ.first;
+        evictionQ.deq;
+        Bit#(6) filterIdx = truncate(pack(lineAddr));
+        prefetchFilter.wrReq(filterIdx, Invalid);
+        $display("%0d AlexLog: CDP Rel filter eviction clear: lineAddr %h idx %d", cur_cycle, lineAddr, filterIdx);
     endrule
 
     rule tickDecayCounter(inited);
@@ -546,6 +600,10 @@ provisos (
         //    pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple3(addr, line, reqVpn)));
         //$display("%0d AlexLog: CDP Rel prefetcher report HIT addr %h pcHash %h", cur_cycle, addr, pcHash);
         //end
+    endmethod
+
+    method Action reportEviction(LineAddr lineAddr);
+        evictionQ.enq(lineAddr);
     endmethod
 
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr;

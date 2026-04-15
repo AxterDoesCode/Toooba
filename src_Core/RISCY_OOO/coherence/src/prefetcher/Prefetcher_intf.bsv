@@ -32,6 +32,7 @@ interface CacheLinePrefetcher#(
     (* always_ready *)
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
     method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
+    method Action reportEviction(LineAddr lineAddr);
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr();
 endinterface
 
@@ -50,5 +51,8 @@ module mkPCToCacheLinePrefetcherAdapter#(module#(PCPrefetcher) mkPCPrefetcher)(C
     endmethod
     method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
         $display("%t AlexLog: CDP reportIncomingCacheLine", $time);
+    endmethod
+    method Action reportEviction(LineAddr lineAddr);
+        noAction;
     endmethod
 endmodule

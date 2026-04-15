@@ -962,9 +962,11 @@ endfunction
             if(linkAddr == Valid (repLineAddr)) begin
                 linkAddr <= Invalid;
             end
-            if (ram.info.other.wasPrefetch)
+            if (ram.info.other.wasPrefetch) begin
                 $display("%t AlexLog: L1 evicted PREFETCHED line lineAddr %h (evicted by req for paddr %h)",
                     $time, repLineAddr, procRq.addr);
+                prefetcher.reportEviction(repLineAddr);
+            end
             if (prefetchVerbose)
                 $display("%t L1D cRq miss (rep): mshr: %d, addr: 0x%h, old line addr: 0x%h, wasPrefetch: %d, cRq is prefetch: %d, ramCs: ",
                     cur_cycle,
