@@ -80,14 +80,14 @@ Add#(a__, matchBits, 27)
         Addr candVaddr = tlbPendingCandQ.first;
         tlbPendingCandQ.deq;
         if (!resp.haveException) begin
-            nextCandidateBuffer.enq(NextCandT{paddr: resp.paddr, vaddr: candVaddr});
+            nextCandidateBuffer.enq(NextCandT{paddr: resp.paddr, vaddr: candVaddr, isNeighbourLine: False});
             $display("%0d AlexLog: CDP Naive TLB resp: vaddr %h -> paddr %h", cur_cycle, candVaddr, resp.paddr);
         end else begin
             $display("%0d AlexLog: CDP Naive TLB resp: exception for vaddr %h, dropping", cur_cycle, candVaddr);
         end
     endrule
 
-    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss);
+    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
         l1ToCDP.enq(L1ToCDPT{req: req, line: line});
         $display("%0d AlexLog: CDP Naive reportIncomingCacheLine", cur_cycle);
     endmethod
@@ -422,12 +422,17 @@ provisos (
                             Bit#(LgLineSzBytes) lineByteOff = 0;
                             Addr curLineVbase = zeroExtend({pack(reqVpn), lineInPage, lineByteOff});
                             Bool isPrev = bestAbsTarget < 0;
-                            // AlexNote: Need to double check this logic is okay
-                            Addr neighVaddr = isPrev ? curLineVbase - fromInteger(valueOf(TExp#(LgLineSzBytes)))
-                                                     : curLineVbase + fromInteger(valueOf(TExp#(LgLineSzBytes)));
-                            tlbReqFIFO.enq(tuple2(neighVaddr, True));
-                            $display("%0d AlexLog: CDP Rel queued TLB req for %s line vaddr %h pcHash %h relOffset %d",
-                                cur_cycle, isPrev ? "prev" : "next", neighVaddr, entry.pcHash, bestRelOffset);
+                            Addr neighLineVaddr = isPrev ? curLineVbase - fromInteger(valueOf(TExp#(LgLineSzBytes)))
+                                                         : curLineVbase + fromInteger(valueOf(TExp#(LgLineSzBytes)));
+                            // Compute exact word vaddr within the neighbouring line.
+                            // Pack to Bit#(4) first so the literals 8 fit (Int#(4) max is +7).
+                            Bit#(4) absTargetBits = pack(bestAbsTarget);
+                            Bit#(3) wordInNeigh = isPrev ? truncate(absTargetBits + 8)
+                                                         : truncate(absTargetBits - 8);
+                            Addr neighWordVaddr = neighLineVaddr + zeroExtend({wordInNeigh, 3'b0});
+                            tlbReqFIFO.enq(tuple2(neighWordVaddr, True));
+                            $display("%0d AlexLog: CDP Rel queued TLB req for %s line word vaddr %h (word %d) pcHash %h relOffset %d",
+                                cur_cycle, isPrev ? "prev" : "next", neighWordVaddr, wordInNeigh, entry.pcHash, bestRelOffset);
                         end
                     end
                 end
@@ -444,10 +449,10 @@ provisos (
 
     // Drain tlbReqFIFO and issue requests to the TLB
     rule processTlbReq;
-        match {.candVaddr, isNeighourLine} candVaddr = tlbReqFIFO.first;
+        match {.candVaddr, .isNeighbourLine} = tlbReqFIFO.first;
         tlbReqFIFO.deq;
         toTlb.prefetcherReq(PrefetcherReqToTlb{vaddr: candVaddr, id: tlbReqId});
-        tlbPendingCandQ.enq(tuple2(candVaddr, isNeighourLine));
+        tlbPendingCandQ.enq(tuple2(candVaddr, isNeighbourLine));
         tlbReqId <= tlbReqId + 1;
         $display("%0d AlexLog: CDP Rel TLB req sent for vaddr %h id %d", cur_cycle, candVaddr, tlbReqId);
     endrule
@@ -456,10 +461,10 @@ provisos (
     rule processTlbResp;
         let resp = toTlb.prefetcherResp;
         toTlb.deqPrefetcherResp;
-        match {.candVaddr, .isNeighourLine} = tlbPendingCandQ.first;
+        match {.candVaddr, .isNeighbourLine} = tlbPendingCandQ.first;
         tlbPendingCandQ.deq;
         if (!resp.haveException) begin
-            nextCandidateBuffer.enq(NextCandT{paddr: resp.paddr, vaddr: candVaddr, isNeighourLine: isNeighourLine});
+            nextCandidateBuffer.enq(NextCandT{paddr: resp.paddr, vaddr: candVaddr, isNeighbourLine: isNeighbourLine});
             $display("%0d AlexLog: CDP Rel TLB resp: vaddr %h -> paddr %h", cur_cycle, candVaddr, resp.paddr);
         end else begin
             $display("%0d AlexLog: CDP Rel TLB resp: exception for vaddr %h, dropping prefetch", cur_cycle, candVaddr);
@@ -508,13 +513,24 @@ provisos (
                 offset:           0,
                 candVaddr:        hitVaddr});
             ttRdReqSupFIFO.enqS[0].enq(tuple2(hitIdx, hitVaddr));
-        end else if ( // For all prefetched lines (hit or miss)
+        end else if ( // Neighbour-line prefetch returned: check the specific word we targeted
         inited &&
         getReqOp(req) == Ld &&
         cRqIsPrefetch &&
         wasNeighbourPrefetch
         ) begin
-            // We want to issue a prefetch just for the next-line neighbour
+            // req.addr is the word-level paddr we sent to the TLB, so getLineDataOffset
+            // recovers the exact word index within this cache line.
+            LineDataOffset wordOff = getLineDataOffset(getReqAddr(req));
+            Addr candidate = line[wordOff];
+            Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
+            Bit#(matchBits) addrUpper = truncateLSB(getReqVpn(req));
+            if (candUpper == addrUpper) begin
+                tlbReqFIFO.enq(tuple2(candidate, False));
+                $display("%0d AlexLog: CDP Rel neighbour chain: word %d candidate vaddr %h queued for TLB", cur_cycle, wordOff, candidate);
+            end else begin
+                $display("%0d AlexLog: CDP Rel neighbour chain: word %d vaddr %h failed VPN check, dropping", cur_cycle, wordOff, candidate);
+            end
         end
     endmethod
 

@@ -7,7 +7,7 @@ typedef struct {
     Addr addr;
     Vpn  vpn;
     Bool nextLevel;
-    Bool neighbourLine;
+    Bool isNeighbourLine;
 } PendingPrefetch deriving (Bits, Eq, FShow);
 
 typedef enum {
@@ -31,7 +31,7 @@ interface CacheLinePrefetcher#(
 );
     (* always_ready *)
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
-    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss);
+    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr();
 endinterface
 
@@ -48,7 +48,7 @@ module mkPCToCacheLinePrefetcherAdapter#(module#(PCPrefetcher) mkPCPrefetcher)(C
             nextLevel: False
         };
     endmethod
-    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss);
+    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
         $display("%t AlexLog: CDP reportIncomingCacheLine", $time);
     endmethod
 endmodule
