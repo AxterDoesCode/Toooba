@@ -372,11 +372,10 @@ provisos (
             };
             if (rdResp matches tagged Valid {.hitWay, .ttRdResp}) begin
                 // Only overwrite if pcHash has changed — avoids a write when context is stable
-                if (ttRdResp.pcHash != getPcHash(respQ.req)) begin
+                //if (ttRdResp.pcHash != getPcHash(respQ.req)) begin
                     trainingTable.wrReq(respQ.ttIdx, hitWay, newEntry);
                     $display("%0d AlexLog: CDP Rel Overwrote training table, idx: %d candVaddr: %h oldPcHash: %h newPcHash: %h relOffset: %d",
                         cur_cycle, respQ.ttIdx, respQ.candVaddr, ttRdResp.pcHash, getPcHash(respQ.req), relOffset);
-                end
             end else begin
                 // New candidate — insert into replacement way
                 trainingTable.wrReq(respQ.ttIdx, rdRepl, newEntry);
