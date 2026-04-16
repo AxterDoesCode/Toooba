@@ -762,7 +762,8 @@ endfunction
                 cRqMshr.manageQueue.resetEntry(nextInQueue);
             end
             //if (!cRqIsPrefetch[n] && !wasMiss) begin
-            prefetcher.reportAccess(req.addr, req.pcHash, HIT, ram.line, req.vpn, req.op, cRqIsPrefetch[n]);
+            Bool hitOnPrefetchedLine = ram.info.other.wasPrefetch && !lineTouched;
+            prefetcher.reportAccess(req.addr, req.pcHash, HIT, ram.line, req.vpn, req.op, cRqIsPrefetch[n], hitOnPrefetchedLine);
             //if (!cRqIsPrefetch[n] && req.op == Ld) begin
             prefetcher.reportIncomingCacheLine(req, ram.line, cRqIsPrefetch[n], wasMiss, cRqIsNeighbourPrefetch[n]);
             if (verbose)
@@ -910,7 +911,7 @@ endfunction
                 line: ram.line
             }, pipeOutNextInQueue, False);
             if (!cRqIsPrefetch[n]) begin
-                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, ?, procRq.vpn, procRq.op, cRqIsPrefetch[n]);
+                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, ?, procRq.vpn, procRq.op, cRqIsPrefetch[n], False);
             end
             LineAddr repLineAddr = getLineAddr({ram.info.tag, truncate(procRq.addr)});
             if (prefetchVerbose)
@@ -953,7 +954,7 @@ endfunction
             });
             cRqMshr.pipelineResp.setData(n, ram.info.cs == M ? Valid (ram.line) : Invalid);
             if (!cRqIsPrefetch[n]) begin
-                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, ?, procRq.vpn, procRq.op, cRqIsPrefetch[n]);
+                prefetcher.reportAccess(procRq.addr, procRq.pcHash, MISS, ?, procRq.vpn, procRq.op, cRqIsPrefetch[n], False);
             end
             // send replacement resp to parent
             rsToPIndexQ.enq(CRq (n));

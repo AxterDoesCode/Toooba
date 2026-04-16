@@ -96,7 +96,7 @@ Add#(a__, matchBits, 27)
         noAction;
     endmethod
 
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch, Bool hitOnPrefetchedLine);
         $display("%0d AlexLog: CDP Naive prefetcher report %s addr %h", cur_cycle, hitMiss == HIT ? "HIT" : "MISS", addr);
     endmethod
 
@@ -140,12 +140,13 @@ typedef struct {
 // the training table and PC table.
 // ============================================================================
 
-// Confidence vector indexed by (relOffset + 7), covering offsets -7..+7 (15 slots)
-typedef Vector#(15, Bit#(3)) PCRelOffsetConfT;
+// Per-offset training count indexed by (relOffset + 7), covering offsets -7..+7 (15 slots)
+typedef Vector#(15, Bit#(4)) PCRelOffsetConfT;
 
 typedef struct {
     Bit#(16)         pcHash;
-    PCRelOffsetConfT conf;
+    PCRelOffsetConfT cDelta; // per-offset training event count
+    Bit#(4)          cSig;  // total training events for this PC
 } PCTableEntryT deriving (Bits, FShow, Eq);
 
 typedef union tagged {
@@ -234,9 +235,15 @@ provisos (
     Reg#(Bool) tlbReqFreeQInited <- mkConfigReg(False);
     Reg#(LLCTlbReqIdx) tlbReqFreeQInitCount <- mkReg(0);
 
+    // Global prefetch accuracy counters for SPP-style confidence
+    Reg#(Bit#(10)) cTotal  <- mkReg(0); // prefetches issued
+    Reg#(Bit#(10)) cUseful <- mkReg(0); // demand hits on prefetched lines
+
     // Confidence decay
     LFSR#(Bit#(16)) decayLfsr <- mkLFSR_16;
     Reg#(Bit#(32))  decayCounter <- mkReg(fromInteger(valueOf(decayInterval)));
+
+    function Bit#(4) shrink1(Bit#(4) x) = x >> 1;
 
     function Bool inited;
         return ttInited && pcInited && filterInited && tlbReqFreeQInited;
@@ -399,24 +406,33 @@ provisos (
         pcTableRdTagQ.deq;
         case (tag) matches
             tagged Training {.pcHash, .relOffset}: begin
-                // Improvement 3: collision detection — if the stored pcHash differs, a different
-                // PC owns this entry. Reset the confidence vector rather than corrupting it.
-                Bool collision = False;
-                PCRelOffsetConfT curConf = replicate(0);
+                // Collision detection — if stored pcHash differs, reset counters
+                PCRelOffsetConfT curCDelta = replicate(0);
+                Bit#(4) curCSig = 0;
                 if (rdResp matches tagged Valid .e) begin
                     if (e.pcHash != pcHash) begin
-                        collision = True;
                         $display("%0d AlexLog: CDP Rel PC table collision at idx: %d evicted pcHash: %h new pcHash: %h",
                             cur_cycle, pctIdx, e.pcHash, pcHash);
-                    end else
-                        curConf = e.conf;
+                    end else begin
+                        curCDelta = e.cDelta;
+                        curCSig   = e.cSig;
+                    end
                 end
                 Bit#(4) vecIdx = pack(relOffset + 7);
-                Bit#(3) curVal = curConf[vecIdx];
-                Bit#(3) newVal = (curVal == maxBound) ? maxBound : curVal + 1;
-                pcTable.wrReq(pctIdx, Valid(PCTableEntryT{pcHash: pcHash, conf: update(curConf, vecIdx, newVal)}));
-                $display("%0d AlexLog: CDP Rel PC table updated, idx: %d pcHash: %h relOffset: %d conf: %d -> %d",
-                         cur_cycle, pctIdx, pcHash, relOffset, curVal, newVal);
+                // Aging: when cSig is saturated, halve all counts to preserve ratios while making room
+                Bool saturated = (curCSig == 15);
+                PCRelOffsetConfT agedCDelta = saturated ? map(shrink1, curCDelta) : curCDelta;
+                Bit#(4) agedCSig            = saturated ? (curCSig >> 1)         : curCSig;
+                Bit#(4) curVal = agedCDelta[vecIdx];
+                Bit#(4) newVal = (curVal == 15) ? 15 : curVal + 1;
+                Bit#(4) newCSig = (agedCSig == 15) ? 15 : agedCSig + 1;
+                pcTable.wrReq(pctIdx, Valid(PCTableEntryT{
+                    pcHash: pcHash,
+                    cDelta: update(agedCDelta, vecIdx, newVal),
+                    cSig:   newCSig
+                }));
+                $display("%0d AlexLog: CDP Rel PC table updated, idx: %d pcHash: %h relOffset: %d cDelta: %d -> %d cSig: %d -> %d",
+                         cur_cycle, pctIdx, pcHash, relOffset, curVal, newVal, curCSig, newCSig);
             end
             tagged PrefetchIssue {.addr, .line, .reqVpn}: begin
                 if (rdResp matches tagged Valid .entry) begin
@@ -424,18 +440,26 @@ provisos (
                     // which exceeds Int#(4)'s range of -8..+7 for the positive end.
                     Int#(5) hitOffset = unpack(zeroExtend(getLineDataOffset(addr)));
                     Bit#(matchBits) addrUpper = truncateLSB(reqVpn);
-                    Bit#(3) threshold = fromInteger(valueOf(confidenceThreshold));
+                    // SPP-style threshold: issue if (cDelta[i]/cSig) * (cUseful/cTotal) >= 1/confidenceThreshold
+                    // Rearranged (no division): cDelta[i] * cUseful * confidenceThreshold >= cSig * cTotal
+                    // All values extended to Bit#(32) so there is no overflow before comparison.
+                    // Max LHS = 15 * 1023 * confidenceThreshold; Max RHS = 15 * 1023 — both << 2^32.
+                    Bit#(32) threshDenom = fromInteger(valueOf(confidenceThreshold));
+                    Bit#(32) cUseful32   = extend(cUseful);
+                    Bit#(32) cTotal32    = extend(cTotal);
+                    Bit#(32) cSig32      = extend(entry.cSig);
                     // Unified selection: best high-confidence offset wins regardless of whether
                     // absTarget falls within this cache line or in a neighbouring one.
                     // Iterate high-to-low so lowest relOffset wins on tie.
-                    // AlexNote: Unsure if this for loop works with multiple conf above threshold, i thought it generates a bunch of parallel hardware
                     Bool foundHighConf = False;
                     Int#(5) bestAbsTarget = 0;
                     RelLineOffset bestRelOffset = 0;
                     for (Integer i = 14; i >= 0; i = i - 1) begin
                         Int#(5) relOffset = fromInteger(i - 7);
                         Int#(5) absTarget = hitOffset + relOffset;
-                        if (entry.conf[fromInteger(i)] >= threshold) begin
+                        Bit#(32) lhs = extend(entry.cDelta[fromInteger(i)]) * cUseful32 * threshDenom;
+                        Bit#(32) rhs = cSig32 * cTotal32;
+                        if (entry.cSig > 0 && cTotal > 0 && lhs >= rhs) begin
                             bestAbsTarget  = absTarget;
                             bestRelOffset  = fromInteger(i - 7);
                             foundHighConf  = True;
@@ -480,8 +504,12 @@ provisos (
             end
             tagged Decay: begin
                 if (rdResp matches tagged Valid .entry) begin
-                    function Bit#(3) satDec(Bit#(3) x) = (x == 0) ? 0 : x - 1;
-                    pcTable.wrReq(pctIdx, Valid(PCTableEntryT{pcHash: entry.pcHash, conf: map(satDec, entry.conf)}));
+                    // Right-shift preserves cDelta/cSig ratios while aging the entry
+                    pcTable.wrReq(pctIdx, Valid(PCTableEntryT{
+                        pcHash: entry.pcHash,
+                        cDelta: map(shrink1, entry.cDelta),
+                        cSig:   entry.cSig >> 1
+                    }));
                     $display("%0d AlexLog: CDP Rel decay applied to pcTable idx: %d pcHash: %h", cur_cycle, pctIdx, entry.pcHash);
                 end
             end
@@ -614,13 +642,11 @@ provisos (
         end
     endmethod
 
-    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
-        //if (inited && op == Ld && hitMiss == HIT) begin
-        //    // Prefetch issue: look up this PC's entry in the PC table
-        //    pcTableIdxT pctIdx = hash(pcHash);
-        //    pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple3(addr, line, reqVpn)));
-        //$display("%0d AlexLog: CDP Rel prefetcher report HIT addr %h pcHash %h", cur_cycle, addr, pcHash);
-        //end
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch, Bool hitOnPrefetchedLine);
+        if (hitOnPrefetchedLine) begin
+            cUseful <= (cUseful == maxBound) ? cUseful : cUseful + 1;
+            $display("%0d AlexLog: CDP Rel useful prefetch hit addr %h cUseful %d", cur_cycle, addr, cUseful + 1);
+        end
     endmethod
 
     method Action reportEviction(LineAddr lineAddr);
@@ -630,8 +656,9 @@ provisos (
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
         let x = nextCandidateBuffer.first;
         nextCandidateBuffer.deq;
+        cTotal <= (cTotal == maxBound) ? cTotal : cTotal + 1;
         // paddr is already the correct translated physical address from the TLB
-        $display("%0d AlexLog: CDP Rel Prefetch addr issued. lineAddr: %h | paddr: %h | vaddr: %h", cur_cycle, getLineAddr(x.paddr), x.paddr, x.vaddr);
+        $display("%0d AlexLog: CDP Rel Prefetch addr issued. lineAddr: %h | paddr: %h | vaddr: %h cTotal %d cUseful %d", cur_cycle, getLineAddr(x.paddr), x.paddr, x.vaddr, cTotal + 1, cUseful);
         return PendingPrefetch {
             addr: x.paddr,
             vpn: getVpn(x.vaddr),
