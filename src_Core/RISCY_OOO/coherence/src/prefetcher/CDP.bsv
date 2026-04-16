@@ -235,9 +235,11 @@ provisos (
     Reg#(Bool) tlbReqFreeQInited <- mkConfigReg(False);
     Reg#(LLCTlbReqIdx) tlbReqFreeQInitCount <- mkReg(0);
 
-    // Global prefetch accuracy counters for SPP-style confidence
-    Reg#(Bit#(10)) cTotal  <- mkReg(0); // prefetches issued
-    Reg#(Bit#(10)) cUseful <- mkReg(0); // demand hits on prefetched lines
+    // Global prefetch accuracy counters for SPP-style confidence.
+    // Initialized to 1 (neutral prior: 100% accuracy with low weight) so the
+    // threshold check is active immediately without a cold-start deadlock.
+    Reg#(Bit#(10)) cTotal  <- mkReg(1); // prefetches issued
+    Reg#(Bit#(10)) cUseful <- mkReg(1); // demand hits on prefetched lines
 
     // Confidence decay
     LFSR#(Bit#(16)) decayLfsr <- mkLFSR_16;
@@ -459,7 +461,7 @@ provisos (
                         Int#(5) absTarget = hitOffset + relOffset;
                         Bit#(32) lhs = extend(entry.cDelta[fromInteger(i)]) * cUseful32 * threshDenom;
                         Bit#(32) rhs = cSig32 * cTotal32;
-                        if (entry.cSig > 0 && cTotal > 0 && lhs >= rhs) begin
+                        if (entry.cSig > 0 && lhs >= rhs) begin
                             bestAbsTarget  = absTarget;
                             bestRelOffset  = fromInteger(i - 7);
                             foundHighConf  = True;
