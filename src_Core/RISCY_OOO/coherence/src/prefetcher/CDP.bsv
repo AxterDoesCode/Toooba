@@ -560,13 +560,15 @@ provisos (
 
    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
         // On demand miss cache fill
-        if (inited && getReqOp(req) == Ld && !cRqIsPrefetch && wasMiss && !wasNeighbourPrefetch) begin
+        if (inited && 
+            //getReqOp(req) == Ld && 
+            !cRqIsPrefetch && wasMiss && !wasNeighbourPrefetch) begin
             let tmp = L1ToCDPT{req: req, line: line};
             l1ToCDP.enq(tmp);
             $display("%0d AlexLog: CDP Rel reportIncomingCacheLine", cur_cycle);
         end else if ( // On demand hit (we have seen the cache line before so don't need to inspect all of the candidate vaddrs)
         inited &&
-        getReqOp(req) == Ld &&
+        //getReqOp(req) == Ld &&
         !wasMiss &&
         !cRqIsPrefetch &&
         !wasNeighbourPrefetch
@@ -594,7 +596,7 @@ provisos (
         // If the neighbour line was a miss (not already in cache), the prefetch was too early
         // and any chained pointer prefetch would likely also be evicted before use — drop it.
         inited &&
-        getReqOp(req) == Ld &&
+        //getReqOp(req) == Ld &&
         cRqIsPrefetch &&
         wasNeighbourPrefetch &&
         !wasMiss // AlexNote: Maybe toggle inbetween these
