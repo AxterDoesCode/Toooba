@@ -591,11 +591,14 @@ provisos (
                 offset:           0,
                 candVaddr:        hitVaddr});
             ttRdReqSupFIFO.enqS[0].enq(tuple2(hitIdx, hitVaddr));
-        end else if ( // Neighbour-line prefetch returned: check the specific word we targeted
+        end else if ( // Neighbour-line prefetch returned a HIT: check the specific word we targeted.
+        // If the neighbour line was a miss (not already in cache), the prefetch was too early
+        // and any chained pointer prefetch would likely also be evicted before use — drop it.
         inited &&
         getReqOp(req) == Ld &&
         cRqIsPrefetch &&
-        wasNeighbourPrefetch
+        wasNeighbourPrefetch &&
+        !wasMiss // AlexNote: Maybe toggle inbetween these
         ) begin
             // req.addr is the word-level paddr we sent to the TLB, so getLineDataOffset
             // recovers the exact word index within this cache line.
