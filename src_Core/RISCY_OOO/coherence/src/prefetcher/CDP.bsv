@@ -442,13 +442,10 @@ provisos (
                     // which exceeds Int#(4)'s range of -8..+7 for the positive end.
                     Int#(5) hitOffset = unpack(zeroExtend(getLineDataOffset(addr)));
                     Bit#(matchBits) addrUpper = truncateLSB(reqVpn);
-                    // SPP-style threshold: issue if (cDelta[i]/cSig) * (cUseful/cTotal) >= 1/confidenceThreshold
-                    // Rearranged (no division): cDelta[i] * cUseful * confidenceThreshold >= cSig * cTotal
-                    // All values extended to Bit#(32) so there is no overflow before comparison.
-                    // Max LHS = 15 * 1023 * confidenceThreshold; Max RHS = 15 * 1023 — both << 2^32.
+                    // Local confidence threshold: issue if cDelta[i]/cSig >= 1/confidenceThreshold
+                    // Rearranged (no division): cDelta[i] * confidenceThreshold >= cSig
+                    // cTotal/cUseful are still tracked for observability but not used in the check.
                     Bit#(32) threshDenom = fromInteger(valueOf(confidenceThreshold));
-                    Bit#(32) cUseful32   = extend(cUseful);
-                    Bit#(32) cTotal32    = extend(cTotal);
                     Bit#(32) cSig32      = extend(entry.cSig);
                     // Unified selection: best high-confidence offset wins regardless of whether
                     // absTarget falls within this cache line or in a neighbouring one.
@@ -459,9 +456,8 @@ provisos (
                     for (Integer i = 14; i >= 0; i = i - 1) begin
                         Int#(5) relOffset = fromInteger(i - 7);
                         Int#(5) absTarget = hitOffset + relOffset;
-                        Bit#(32) lhs = extend(entry.cDelta[fromInteger(i)]) * cUseful32 * threshDenom;
-                        Bit#(32) rhs = cSig32 * cTotal32;
-                        if (entry.cSig > 0 && lhs >= rhs) begin
+                        Bit#(32) lhs = extend(entry.cDelta[fromInteger(i)]) * threshDenom;
+                        if (entry.cSig > 0 && lhs >= cSig32) begin
                             bestAbsTarget  = absTarget;
                             bestRelOffset  = fromInteger(i - 7);
                             foundHighConf  = True;
