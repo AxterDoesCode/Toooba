@@ -292,46 +292,44 @@ provisos (
         l1ToCDP.deq;
         Bit#(matchBits) missUpper = truncateLSB(getReqVpn(x.req));
         $display("%0d AlexLog: CDP Rel deqCacheLines", cur_cycle);
-        if (getReqOp(x.req) == Ld) begin
-            // Slot 0: training trigger — look up the virtual miss address in training table.
-            // If this address was previously seen as a pointer in another cache line, we can
-            // reinforce the PC table entry for the PC that originally stored it.
-            Addr missVaddr = zeroExtend({pack(getReqVpn(x.req)), getPageOffset(getReqAddr(x.req))});
-            Bit#(39) missVaddr39 = truncate(missVaddr);
-            trainingTableIdxT missIdx = hash(missVaddr39);
-            ttRespQ.enqS[0].enq(TrainingTableRespQT{
-                req:              x.req,
-                ttIdx:            missIdx,
-                isTrainingLookup: True,
-                offset:           dataSel,
-                candVaddr:        missVaddr});
-            ttRdReqSupFIFO.enqS[0].enq(tuple2(missIdx, missVaddr));
-            // Slots 1..8: candidate pointer lookups — scan incoming line for pointer-like values
-            Integer enqIdx = 1;
-            for (Integer i = 0; i < 8; i = i + 1) begin
-                Bit#(matchBits) candUpper = truncateLSB(getVpn(x.line[i]));
-                if (candUpper == missUpper) begin
-                    Bit#(39) vaddr39 = truncate(x.line[i]);
-                    trainingTableIdxT idx = hash(vaddr39);
-                    ttRespQ.enqS[enqIdx].enq(TrainingTableRespQT{
-                        req:              x.req,
-                        ttIdx:            idx,
-                        isTrainingLookup: False,
-                        offset:           fromInteger(i),
-                        candVaddr:        x.line[i]});
-                    ttRdReqSupFIFO.enqS[enqIdx].enq(tuple2(idx, x.line[i]));
-                    LineDataOffset iOff = fromInteger(i);
-                    RelLineOffset relOffset = unpack(zeroExtend(iOff)) - unpack(zeroExtend(dataSel));
-                    $display("%0d AlexLog: CDP Rel candidate vaddr relOffset: %d pcHash: %h candVaddr: %h crossPage: %b",
-                        cur_cycle, relOffset, getPcHash(x.req), x.line[i], getVpn(x.line[i]) != getReqVpn(x.req));
-                    enqIdx = enqIdx + 1;
-                end
+        // Slot 0: training trigger — look up the virtual miss address in training table.
+        // If this address was previously seen as a pointer in another cache line, we can
+        // reinforce the PC table entry for the most recent PC that stored it.
+        Addr missVaddr = zeroExtend({pack(getReqVpn(x.req)), getPageOffset(getReqAddr(x.req))});
+        Bit#(39) missVaddr39 = truncate(missVaddr);
+        trainingTableIdxT missIdx = hash(missVaddr39);
+        ttRespQ.enqS[0].enq(TrainingTableRespQT{
+            req:              x.req,
+            ttIdx:            missIdx,
+            isTrainingLookup: True,
+            offset:           dataSel,
+            candVaddr:        missVaddr});
+        ttRdReqSupFIFO.enqS[0].enq(tuple2(missIdx, missVaddr));
+        // Slots 1..8: candidate pointer lookups — scan incoming line for pointer-like values
+        Integer enqIdx = 1;
+        for (Integer i = 0; i < 8; i = i + 1) begin
+            Bit#(matchBits) candUpper = truncateLSB(getVpn(x.line[i]));
+            if (candUpper == missUpper) begin
+                Bit#(39) vaddr39 = truncate(x.line[i]);
+                trainingTableIdxT idx = hash(vaddr39);
+                ttRespQ.enqS[enqIdx].enq(TrainingTableRespQT{
+                    req:              x.req,
+                    ttIdx:            idx,
+                    isTrainingLookup: False,
+                    offset:           fromInteger(i),
+                    candVaddr:        x.line[i]});
+                ttRdReqSupFIFO.enqS[enqIdx].enq(tuple2(idx, x.line[i]));
+                LineDataOffset iOff = fromInteger(i);
+                RelLineOffset relOffset = unpack(zeroExtend(iOff)) - unpack(zeroExtend(dataSel));
+                $display("%0d AlexLog: CDP Rel candidate vaddr relOffset: %d pcHash: %h candVaddr: %h crossPage: %b",
+                    cur_cycle, relOffset, getPcHash(x.req), x.line[i], getVpn(x.line[i]) != getReqVpn(x.req));
+                enqIdx = enqIdx + 1;
             end
-            // One pcTable lookup per incoming line (for prefetch issue on future hits)
-            pcTableIdxT pctIdx = hash(getPcHash(x.req));
-            pcTableRdReqFIFO.enq(tuple2(pctIdx,
-                tagged PrefetchIssue tuple3(getReqAddr(x.req), x.line, getReqVpn(x.req))));
         end
+        // One pcTable lookup per incoming line (for prefetch issue on future hits)
+        pcTableIdxT pctIdx = hash(getPcHash(x.req));
+        pcTableRdReqFIFO.enq(tuple2(pctIdx,
+            tagged PrefetchIssue tuple3(getReqAddr(x.req), x.line, getReqVpn(x.req))));
     endrule
 
     rule processTtRdReq(inited);
@@ -425,9 +423,7 @@ provisos (
                     Int#(5) hitOffset = unpack(zeroExtend(getLineDataOffset(addr)));
                     Bit#(matchBits) addrUpper = truncateLSB(reqVpn);
                     Bit#(3) threshold = fromInteger(valueOf(confidenceThreshold));
-                    // Unified selection: best high-confidence offset wins regardless of whether
-                    // absTarget falls within this cache line or in a neighbouring one.
-                    // Iterate high-to-low so lowest relOffset wins on tie.
+                    // Idea is that best high-confidence offset wins regardless of whether absTarget falls within this cache line or in a neighbouring one.
                     // AlexNote: Unsure if this for loop works with multiple conf above threshold, i thought it generates a bunch of parallel hardware
                     Bool foundHighConf = False;
                     Int#(5) bestAbsTarget = 0;
@@ -585,6 +581,7 @@ provisos (
             Bit#(39) hitVaddr39 = truncate(hitVaddr);
             trainingTableIdxT hitIdx = hash(hitVaddr39);
             // Shares slot 0 with deqCacheLines miss-time training trigger which should be mutually exclusive, 
+            // AlexNote: This might not be blocking reportIncomingCacheLine from firing which in turn blocks the processor?
             ttRespQ.enqS[0].enq(TrainingTableRespQT{
                 req:              unpack(0), // req unused in isTrainingLookup=True path
                 ttIdx:            hitIdx,
@@ -592,11 +589,9 @@ provisos (
                 offset:           0,
                 candVaddr:        hitVaddr});
             ttRdReqSupFIFO.enqS[0].enq(tuple2(hitIdx, hitVaddr));
-        end else if ( // Neighbour-line prefetch returned a HIT: check the specific word we targeted.
-        // If the neighbour line was a miss (not already in cache), the prefetch was too early
-        // and any chained pointer prefetch would likely also be evicted before use — drop it.
+        end else if ( // Neighbour line prefetches stuff
         inited &&
-        //getReqOp(req) == Ld &&
+        getReqOp(req) == Ld &&
         cRqIsPrefetch &&
         wasNeighbourPrefetch &&
         !wasMiss // AlexNote: Maybe toggle inbetween these

@@ -456,7 +456,7 @@ endfunction
                 data: ?,
                 amoInst: ?,
                 //loadTags: ?,
-                pcHash: ?
+                pcHash: ? //There is no associated PC with a prefetch
             };
             cRqIdxT n <- cRqMshr.cRqTransfer.getEmptyEntryInit(r);
             crqMshrEnqs <= crqMshrEnqs + 1;
