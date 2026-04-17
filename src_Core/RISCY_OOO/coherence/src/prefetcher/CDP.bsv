@@ -216,10 +216,11 @@ provisos (
     // Free-list of TLB request slot IDs: dequeue to get a slot before issuing, enqueue back on response.
     // This gives natural backpressure — processTlbReq blocks when all LLCTlbReqNum slots are in use,
     // preventing the monotonically-incrementing counter approach from aliasing in-flight requests.
-    FIFO#(Tuple2#(Addr, Bool)) tlbReqFIFO <- mkSizedFIFO(4); // Tuple2 of Vaddr and isNeighbourLine
+    FIFO#(Tuple3#(Addr, Bool, Bool)) tlbReqFIFO <- mkSizedFIFO(4); // (vaddr, isNeighbourLine, crossPage)
     Fifo#(LLCTlbReqNum, LLCTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
     Vector#(LLCTlbReqNum, Reg#(Addr)) pendCandVaddr  <- replicateM(mkRegU);
     Vector#(LLCTlbReqNum, Reg#(Bool)) pendIsNeighbourLine <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(Bool)) pendCrossPage <- replicateM(mkRegU);
 
     // Init: write unpack(0) (valid=False) to every (addr, way) pair for training table
     Reg#(Bool) ttInited <- mkConfigReg(False);
@@ -459,7 +460,7 @@ provisos (
                             Addr candidate = line[targetOff];
                             Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
                             if (candUpper == addrUpper) begin
-                                tlbReqFIFO.enq(tuple2(candidate, False));
+                                tlbReqFIFO.enq(tuple3(candidate, False, getVpn(candidate) != reqVpn));
                                 $display("%0d AlexLog: CDP Rel queued TLB req for candidate vaddr %h pcHash %h relOffset %d",
                                     cur_cycle, candidate, entry.pcHash, bestRelOffset);
                             end else begin
@@ -482,7 +483,7 @@ provisos (
                             Bit#(3) wordInNeigh = isPrev ? truncate(absTargetBits + 8)
                                                          : truncate(absTargetBits - 8);
                             Addr neighWordVaddr = neighLineVaddr + zeroExtend({wordInNeigh, 3'b0});
-                            tlbReqFIFO.enq(tuple2(neighWordVaddr, True));
+                            tlbReqFIFO.enq(tuple3(neighWordVaddr, True, getVpn(neighWordVaddr) != reqVpn));
                             $display("%0d AlexLog: CDP Rel queued TLB req for %s line word vaddr %h (word %d) pcHash %h relOffset %d",
                                 cur_cycle, isPrev ? "prev" : "next", neighWordVaddr, wordInNeigh, entry.pcHash, bestRelOffset);
                         end
@@ -502,13 +503,14 @@ provisos (
     // Drain tlbReqFIFO and issue requests to the TLB.
     // Dequeue a free slot ID — blocks naturally if all LLCTlbReqNum slots are in use.
     rule processTlbReq;
-        match {.candVaddr, .isNeighbourLine} = tlbReqFIFO.first;
+        match {.candVaddr, .isNeighbourLine, .crossPage} = tlbReqFIFO.first;
         tlbReqFIFO.deq;
         LLCTlbReqIdx id = tlbReqFreeQ.first;
         tlbReqFreeQ.deq;
         toTlb.prefetcherReq(PrefetcherReqToTlb{vaddr: candVaddr, id: id});
         pendCandVaddr[id]       <= candVaddr;
         pendIsNeighbourLine[id] <= isNeighbourLine;
+        pendCrossPage[id]       <= crossPage;
         $display("%0d AlexLog: CDP Rel TLB req sent for vaddr %h id %d", cur_cycle, candVaddr, id);
     endrule
 
@@ -519,6 +521,7 @@ provisos (
         LLCTlbReqIdx id = resp.id;
         Addr candVaddr       = pendCandVaddr[id];
         Bool isNeighbourLine = pendIsNeighbourLine[id];
+        Bool crossPage       = pendCrossPage[id];
         tlbReqFreeQ.enq(id); // return slot to free list
         if (!resp.haveException) begin
             NextCandT cand = NextCandT{paddr: resp.paddr, vaddr: candVaddr, isNeighbourLine: isNeighbourLine};
@@ -526,7 +529,8 @@ provisos (
             Bit#(6) filterIdx = hash(lineAddr);
             prefetchFilter.rdReq(filterIdx);
             filterPendingQ.enq(tuple2(filterIdx, cand));
-            $display("%0d AlexLog: CDP Rel TLB resp: vaddr %h -> paddr %h lineAddr %h", cur_cycle, candVaddr, resp.paddr, lineAddr);
+            $display("%0d AlexLog: CDP Rel TLB resp: vaddr %h -> paddr %h lineAddr %h crossPage %b",
+                cur_cycle, candVaddr, resp.paddr, lineAddr, crossPage);
         end else begin
             $display("%0d AlexLog: CDP Rel TLB resp: exception for vaddr %h, dropping prefetch", cur_cycle, candVaddr);
         end
@@ -617,7 +621,7 @@ provisos (
             Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
             Bit#(matchBits) addrUpper = truncateLSB(getReqVpn(req));
             if (candUpper == addrUpper) begin
-                tlbReqFIFO.enq(tuple2(candidate, False));
+                tlbReqFIFO.enq(tuple3(candidate, False, getVpn(candidate) != getReqVpn(req)));
                 $display("%0d AlexLog: CDP Rel neighbour chain: word %d candidate vaddr %h queued for TLB", cur_cycle, wordOff, candidate);
             end else begin
                 $display("%0d AlexLog: CDP Rel neighbour chain: word %d vaddr %h failed VPN check, dropping", cur_cycle, wordOff, candidate);
