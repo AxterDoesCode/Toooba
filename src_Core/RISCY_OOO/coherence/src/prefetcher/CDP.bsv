@@ -463,8 +463,19 @@ provisos (
                             foundHighConf  = True;
                         end
                     end
+                    if (!foundHighConf) begin
+                        Bit#(4) maxDelta = 0;
+                        for (Integer i = 0; i < 15; i = i + 1)
+                            if (entry.cDelta[fromInteger(i)] > maxDelta) maxDelta = entry.cDelta[fromInteger(i)];
+                        $display("%0d AlexLog: CDP Rel no high-conf offset: pcHash %h maxCDelta %d cSig %d",
+                            cur_cycle, entry.pcHash, maxDelta, entry.cSig);
+                    end
                     if (foundHighConf) begin
-                        if (bestAbsTarget >= 0 &&& bestAbsTarget <= 7) begin
+                        Bit#(4) bestIdx = pack(bestRelOffset + 7);
+                        Bool isNeighbour = !(bestAbsTarget >= 0 &&& bestAbsTarget <= 7);
+                        $display("%0d AlexLog: CDP Rel prefetch decision: pcHash %h relOffset %d cDelta %d cSig %d isNeighbour %b",
+                            cur_cycle, entry.pcHash, bestRelOffset, entry.cDelta[bestIdx], entry.cSig, isNeighbour);
+                        if (!isNeighbour) begin
                             // In-bounds: chase the pointer value stored at that word
                             LineDataOffset targetOff = truncate(pack(bestAbsTarget));
                             Addr candidate = line[targetOff];
