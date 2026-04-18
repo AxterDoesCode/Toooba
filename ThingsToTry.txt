@@ -129,6 +129,16 @@ TODO: If it is a same page prefetch then we can skip the TLB?
 TODO: Confidence is currently a saturating counter, I feel like seeing a pattern 3 times could potentially be too much?
     Confidence is typically some multiplication operation instead... TSP for example issues no prefetches in statefulRelative because confidence is too low but in Naive it recognises and has about 50% acc
 TODO: Maybe play with matchBits?
+After speaking with Jon:
+TODO: ToobaLogParser, add cycle count
+TODO: Have some low probability that we do the training table update, give things in the training table some longer lifetime
+TODO: Keep in mind that whether some sort of global history is doing, learn some sort of global history?
+    Maybe store the last 4 memory accesses
+    We want a characteristic of the path that we took to get there
+    When mem access gets to the execute stage, its possible that they could have branch global history attached to them
+    Could take the pcs that were previously accessed, hash them down to 4 bits, then hash those down to four bits
+        Then you use this as a key into the confidence
+    Maybe pipe branch predictor behaviour into the prefetcher
 ---
 
 ## mkCDPStatefulRelative — Current Mechanism (ac2822CDPNextLinePointerChasing)
@@ -137,7 +147,7 @@ TODO: Maybe play with matchBits?
 
 | Structure | Type | Keyed by | Stores |
 |---|---|---|---|
-| Training Table | 4-way set-assoc BRAM | hash(vaddr[38:0]) | {storedVaddr, pcHash, relOffset} |
+| Training Table | 2-way set-assoc BRAM | hash(vaddr[38:0]) | {storedVaddr, pcHash, relOffset} |
 | PC Table | Flat BRAM | hash(pcHash) | {pcHash, Vector#(15, Bit#(3))} — confidence per relOffset -7..+7 |
 
 ### On Demand Load Miss Fill (reportIncomingCacheLine)
