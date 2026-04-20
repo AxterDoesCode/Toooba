@@ -689,6 +689,9 @@ endfunction
             usefulPrefetchCnt <= usefulPrefetchCnt + 1;
             $display("%0d AlexLog: CDP Rel useful prefetch hit addr %h cUseful %d",
                 cur_cycle, req.addr, usefulPrefetchCnt + 1);
+            // Notify the prefetcher so adaptive/kill-switch variants can
+            // attribute the useful hit back to the owning PC (filter-indexed).
+            prefetcher.reportUsefulPrefetch(getLineAddr(req.addr));
         `ifdef PERF_COUNT
             usedPrefetchCnt.incr(1);
         `endif

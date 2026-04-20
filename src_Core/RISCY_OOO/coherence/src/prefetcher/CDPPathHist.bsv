@@ -1,0 +1,421 @@
+// CDPPathHist.bsv — Variant D: path-history-keyed CDP.
+//
+// Same core mechanism as mkCDPStatefulRelative but the PC-table key is a
+// *path signature*: a rolling 16-bit shift-XOR of recent load pcHashes.
+//
+//   pathSig <= (pathSig << 4) ^ pcHash_of_current_load;
+//
+// Every point where the baseline uses `hash(pcHash)` to index the PC table
+// uses `hash(pcHash ^ pathSig)` instead. The training table stores that
+// already-combined signature (repurposing the pcHash field) so a later
+// Training lookup reaches the same pc-table entry without needing to know
+// the scan-time pathSig.
+//
+// Motivation: inspired by SPP (Path Confidence Based Lookahead Prefetching)
+// — same raw PC arriving via different control-flow paths has different
+// prefetch futures, and the baseline's PC-only key can't distinguish them.
+// Particularly expected to help treeadd (recursive depth-first) and patricia
+// (data-dependent branching) where path context is a better predictor of
+// next access than raw PC identity. Noted as a planned TODO in the user's
+// ThingsToTry.txt lines 136-142.
+
+import MemoryTypes::*;
+import TlbTypes ::*;
+import CCTypes ::*;
+import FIFO::*;
+import Fifos::*;
+import Ehr::*;
+import Vector::*;
+import ConfigReg::*;
+import LFSR::*;
+import ProcTypes::*;
+
+import Types::*;
+import RWBramCore::*;
+import RWSetAssocBramCore::*;
+import Prefetcher_intf::*;
+import Cur_Cycle::*;
+import CDP::*;
+
+module mkCDPStatefulRelativePathHist#(
+    TlbToPrefetcher toTlb,
+    Parameter#(trainingTableSize) _,
+    Parameter#(pcTableSize) __,
+    Parameter#(decayInterval) ___,
+    Parameter#(matchBits) ____,
+    Parameter#(confidenceThreshold) _____
+)(CacheLinePrefetcher#(reqT))
+provisos (
+    Bits#(reqT, _reqSz),
+    FShow#(reqT),
+    IsProcRq#(reqT),
+
+    NumAlias#(trainingTableIdxBits, TLog#(trainingTableSize)),
+    Alias#(trainingTableIdxT, Bit#(trainingTableIdxBits)),
+
+    NumAlias#(pcTableIdxBits, TLog#(pcTableSize)),
+    Alias#(pcTableIdxT, Bit#(pcTableIdxBits)),
+    Alias#(ttRespQT, TrainingTableRespQT#(reqT, trainingTableIdxT)),
+
+    Add#(a__, TLog#(trainingTableSize), 64),
+    Add#(b__, TLog#(pcTableSize), 16),
+    Add#(c__, TLog#(trainingTableSize), 33),
+    Add#(1, d__, TDiv#(39, TLog#(trainingTableSize))),
+    Add#(e__, 39, TMul#(TDiv#(39, TLog#(trainingTableSize)), TLog#(trainingTableSize))),
+    Add#(1, f__, TDiv#(16, TLog#(pcTableSize))),
+    Add#(g__, 16, TMul#(TDiv#(16, TLog#(pcTableSize)), TLog#(pcTableSize))),
+    Add#(h__, matchBits, 27)
+);
+
+    FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
+
+    function Bool ttIsMatch(TrainingTableEntryT e, Addr tag) = e.valid && e.storedVaddr == tag;
+    function Bool ttIsReplaceCandidate(TrainingTableEntryT e) = !e.valid;
+    RWSetAssocBramCore#(trainingTableIdxT, Bit#(1), TrainingTableEntryT, Addr) trainingTable
+        <- mkRWSetAssocBramCoreForwarded(ttIsMatch, ttIsReplaceCandidate);
+
+    SupFifo#(16, 16, ttRespQT) ttRespQ <- mkSupFifo;
+    SupFifo#(16, 16, Tuple2#(trainingTableIdxT, Addr)) ttRdReqSupFIFO <- mkSupFifo;
+
+    RWBramCore#(pcTableIdxT, Maybe#(PCTableEntryT)) pcTable <- mkRWBramCoreForwarded();
+    RWBramCore#(Bit#(8), Maybe#(LineAddr)) prefetchFilter <- mkRWBramCoreForwarded();
+
+    Fifo#(16, NextCandT) nextCandidateBuffer <- mkOverflowBypassFifo;
+    FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdReqFIFO <- mkSizedFIFO(64);
+    FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdTagQ    <- mkFIFO;
+    FIFO#(Tuple2#(Bit#(8), NextCandT)) filterPendingQ <- mkFIFO;
+    FIFO#(LineAddr) evictionQ <- mkSizedFIFO(4);
+
+    FIFO#(Tuple3#(Addr, Bool, Bool)) tlbReqFIFO <- mkSizedFIFO(4);
+    Fifo#(LLCTlbReqNum, LLCTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
+    Vector#(LLCTlbReqNum, Reg#(Addr)) pendCandVaddr  <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(Bool)) pendIsNeighbourLine <- replicateM(mkRegU);
+    Vector#(LLCTlbReqNum, Reg#(Bool)) pendCrossPage <- replicateM(mkRegU);
+
+    // NEW: rolling 16-bit path signature, updated on every demand load seen by
+    // reportIncomingCacheLine. Shift-left 4 bits then XOR in the new pcHash.
+    // Rate of mixing: after ~4 loads the initial PC contribution is shifted out.
+    Reg#(Bit#(16)) pathSig <- mkReg(0);
+
+    Reg#(Bool) ttInited <- mkConfigReg(False);
+    Reg#(Bit#(TAdd#(trainingTableIdxBits, 1))) ttInitCount <- mkReg(0);
+    Reg#(Bool) pcInited <- mkConfigReg(False);
+    Reg#(Bit#(pcTableIdxBits)) pcInitCount <- mkReg(0);
+    Reg#(Bool) filterInited <- mkConfigReg(False);
+    Reg#(Bit#(8)) filterInitCount <- mkReg(0);
+    Reg#(Bool) tlbReqFreeQInited <- mkConfigReg(False);
+    Reg#(LLCTlbReqIdx) tlbReqFreeQInitCount <- mkReg(0);
+
+    LFSR#(Bit#(16)) decayLfsr <- mkLFSR_16;
+    Reg#(Bit#(32))  decayCounter <- mkReg(fromInteger(valueOf(decayInterval)));
+
+    function Bool inited;
+        return ttInited && pcInited && filterInited && tlbReqFreeQInited;
+    endfunction
+
+    (* mutually_exclusive = "doTrainingTableInit, processTtRdReq, ttAccess" *)
+    rule doTrainingTableInit(!ttInited);
+        trainingTableIdxT addr = truncateLSB(ttInitCount);
+        Bit#(1) way = truncate(ttInitCount);
+        trainingTable.wrReq(addr, way, unpack(0));
+        if (ttInitCount == maxBound) begin ttInited <= True; decayLfsr.seed('hA5F1); end
+        ttInitCount <= ttInitCount + 1;
+    endrule
+
+    (* mutually_exclusive = "doPcTableInit, processPcTableRdReq, pcTableResp" *)
+    rule doPcTableInit(!pcInited);
+        pcTable.wrReq(pcInitCount, Invalid);
+        if (pcInitCount == ~0) pcInited <= True;
+        pcInitCount <= pcInitCount + 1;
+    endrule
+
+    (* mutually_exclusive = "doFilterInit, processFilterResp, doEvictionClear" *)
+    rule doFilterInit(!filterInited);
+        prefetchFilter.wrReq(filterInitCount, Invalid);
+        if (filterInitCount == ~0) filterInited <= True;
+        filterInitCount <= filterInitCount + 1;
+    endrule
+
+    (* mutually_exclusive = "doTlbReqFreeQInit, processTlbResp" *)
+    rule doTlbReqFreeQInit(!tlbReqFreeQInited);
+        tlbReqFreeQ.enq(tlbReqFreeQInitCount);
+        if (tlbReqFreeQInitCount == ~0) tlbReqFreeQInited <= True;
+        tlbReqFreeQInitCount <= tlbReqFreeQInitCount + 1;
+    endrule
+
+    (* descending_urgency = "deqCacheLines, processTtRdReq, ttAccess" *)
+    rule deqCacheLines;
+        L1ToCDPT#(reqT) x = l1ToCDP.first;
+        LineDataOffset dataSel = getLineDataOffset(getReqAddr(x.req));
+        l1ToCDP.deq;
+        Bit#(matchBits) missUpper = truncateLSB(getReqVpn(x.req));
+        // Path signature at scan time. The TT will store this signature (via the
+        // pcHash field) so that later Training lookups reach the same PC-table
+        // entry without needing to know scan-time pathSig.
+        Bit#(16) scanSig = getPcHash(x.req) ^ pathSig;
+        if (getReqOp(x.req) == Ld) begin
+            Addr missVaddr = zeroExtend({pack(getReqVpn(x.req)), getPageOffset(getReqAddr(x.req))});
+            Bit#(39) missVaddr39 = truncate(missVaddr);
+            trainingTableIdxT missIdx = hash(missVaddr39);
+            ttRespQ.enqS[0].enq(TrainingTableRespQT{
+                req: x.req, ttIdx: missIdx, isTrainingLookup: True,
+                offset: dataSel, candVaddr: missVaddr});
+            ttRdReqSupFIFO.enqS[0].enq(tuple2(missIdx, missVaddr));
+            Integer enqIdx = 1;
+            for (Integer i = 0; i < 8; i = i + 1) begin
+                Bit#(matchBits) candUpper = truncateLSB(getVpn(x.line[i]));
+                if (candUpper == missUpper) begin
+                    Bit#(39) vaddr39 = truncate(x.line[i]);
+                    trainingTableIdxT idx = hash(vaddr39);
+                    ttRespQ.enqS[enqIdx].enq(TrainingTableRespQT{
+                        req: x.req, ttIdx: idx, isTrainingLookup: False,
+                        offset: fromInteger(i), candVaddr: x.line[i]});
+                    ttRdReqSupFIFO.enqS[enqIdx].enq(tuple2(idx, x.line[i]));
+                    LineDataOffset iOff = fromInteger(i);
+                    RelLineOffset relOffset = unpack(zeroExtend(iOff)) - unpack(zeroExtend(dataSel));
+                    $display("%t AlexLog: CDP PathHist candidate vaddr relOffset: %d scanSig: %h candVaddr: %h",
+                        cur_cycle, relOffset, scanSig, x.line[i]);
+                    enqIdx = enqIdx + 1;
+                end
+            end
+            // Key the PC table by SIGNATURE, not raw pcHash.
+            pcTableIdxT pctIdx = hash(scanSig);
+            pcTableRdReqFIFO.enq(tuple2(pctIdx,
+                tagged PrefetchIssue tuple3(getReqAddr(x.req), x.line, getReqVpn(x.req))));
+        end
+    endrule
+
+    rule processTtRdReq(inited);
+        match {.idx, .vaddr} = ttRdReqSupFIFO.deqS[0].first;
+        ttRdReqSupFIFO.deqS[0].deq;
+        trainingTable.rdReq(idx, vaddr);
+    endrule
+
+    rule ttAccess(inited);
+        let rdResp = trainingTable.rdResp;
+        let rdRepl = trainingTable.rdRepl;
+        trainingTable.deqRdResp;
+        ttRespQT respQ = ttRespQ.deqS[0].first;
+        ttRespQ.deqS[0].deq;
+        if (respQ.isTrainingLookup) begin
+            if (rdResp matches tagged Valid {.hitWay, .ttRdResp}) begin
+                // ttRdResp.pcHash holds the SIGNATURE that was active when this
+                // candidate was first scanned. Use it directly as the PC-table key.
+                pcTableIdxT pctIdx = hash(ttRdResp.pcHash);
+                pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged Training tuple2(ttRdResp.pcHash, ttRdResp.lineOffset)));
+                $display("%t AlexLog: CDP PathHist Training hit: missVaddr %h seen before by sig %h at relOffset %d",
+                    cur_cycle, respQ.candVaddr, ttRdResp.pcHash, ttRdResp.lineOffset);
+            end
+        end else begin
+            LineDataOffset dataSel = getLineDataOffset(getReqAddr(respQ.req));
+            RelLineOffset relOffset = unpack(zeroExtend(respQ.offset)) - unpack(zeroExtend(dataSel));
+            // Store SIGNATURE (not raw pcHash) in TT. Repurpose the pcHash field.
+            Bit#(16) scanSig = getPcHash(respQ.req) ^ pathSig;
+            TrainingTableEntryT newEntry = TrainingTableEntryT{
+                valid: True, storedVaddr: respQ.candVaddr,
+                pcHash: scanSig, lineOffset: relOffset };
+            if (rdResp matches tagged Valid {.hitWay, .ttRdResp})
+                trainingTable.wrReq(respQ.ttIdx, hitWay, newEntry);
+            else
+                trainingTable.wrReq(respQ.ttIdx, rdRepl, newEntry);
+        end
+    endrule
+
+    rule processPcTableRdReq(inited);
+        match {.pctIdx, .tag} = pcTableRdReqFIFO.first;
+        pcTableRdReqFIFO.deq;
+        pcTable.rdReq(pctIdx);
+        pcTableRdTagQ.enq(tuple2(pctIdx, tag));
+    endrule
+
+    rule pcTableResp(inited);
+        let rdResp = pcTable.rdResp;
+        pcTable.deqRdResp;
+        match {.pctIdx, .tag} = pcTableRdTagQ.first;
+        pcTableRdTagQ.deq;
+        case (tag) matches
+            tagged Training {.pcHash, .relOffset}: begin
+                // pcHash here is the signature (stored in TT at scan time).
+                PCRelOffsetConfT curConf = replicate(0);
+                if (rdResp matches tagged Valid .e &&& e.pcHash == pcHash) curConf = e.conf;
+                Bit#(4) vecIdx = pack(relOffset + 7);
+                Bit#(3) curVal = curConf[vecIdx];
+                Bit#(3) newVal = (curVal == maxBound) ? maxBound : curVal + 1;
+                pcTable.wrReq(pctIdx, Valid(PCTableEntryT{pcHash: pcHash, conf: update(curConf, vecIdx, newVal)}));
+                $display("%t AlexLog: CDP PathHist PC table updated, idx: %d sig: %h relOffset: %d conf: %d -> %d",
+                         cur_cycle, pctIdx, pcHash, relOffset, curVal, newVal);
+            end
+            tagged PrefetchIssue {.addr, .line, .reqVpn}: begin
+                if (rdResp matches tagged Valid .entry) begin
+                    Int#(5) hitOffset = unpack(zeroExtend(getLineDataOffset(addr)));
+                    Bit#(matchBits) addrUpper = truncateLSB(reqVpn);
+                    Bit#(3) threshold = fromInteger(valueOf(confidenceThreshold));
+                    Bool foundHighConf = False;
+                    Int#(5) bestAbsTarget = 0;
+                    RelLineOffset bestRelOffset = 0;
+                    for (Integer i = 14; i >= 0; i = i - 1) begin
+                        Int#(5) relOffset = fromInteger(i - 7);
+                        Int#(5) absTarget = hitOffset + relOffset;
+                        if (entry.conf[fromInteger(i)] >= threshold) begin
+                            bestAbsTarget = absTarget;
+                            bestRelOffset = fromInteger(i - 7);
+                            foundHighConf = True;
+                        end
+                    end
+                    if (!foundHighConf) begin
+                        Bit#(3) maxConf = 0;
+                        for (Integer i = 0; i < 15; i = i + 1)
+                            if (entry.conf[fromInteger(i)] > maxConf) maxConf = entry.conf[fromInteger(i)];
+                        $display("%t AlexLog: CDP PathHist no high-conf offset: sig %h maxConf %d",
+                            cur_cycle, entry.pcHash, maxConf);
+                    end
+                    if (foundHighConf) begin
+                        Bit#(4) bestIdx = pack(bestRelOffset + 7);
+                        Bool isNeighbour = !(bestAbsTarget >= 0 &&& bestAbsTarget <= 7);
+                        $display("%t AlexLog: CDP PathHist prefetch decision: sig %h relOffset %d conf %d isNeighbour %b",
+                            cur_cycle, entry.pcHash, bestRelOffset, entry.conf[bestIdx], isNeighbour);
+                        if (bestAbsTarget >= 0 &&& bestAbsTarget <= 7) begin
+                            LineDataOffset targetOff = truncate(pack(bestAbsTarget));
+                            Addr candidate = line[targetOff];
+                            if (truncateLSB(getVpn(candidate)) == addrUpper)
+                                tlbReqFIFO.enq(tuple3(candidate, False, getVpn(candidate) != reqVpn));
+                        end else begin
+                            Bit#(TSub#(PageOffsetSz, LgLineSzBytes)) lineInPage = truncateLSB(getPageOffset(addr));
+                            Bit#(LgLineSzBytes) lineByteOff = 0;
+                            Addr curLineVbase = zeroExtend({pack(reqVpn), lineInPage, lineByteOff});
+                            Bool isPrev = bestAbsTarget < 0;
+                            Addr neighLineVaddr = isPrev ? curLineVbase - fromInteger(valueOf(TExp#(LgLineSzBytes)))
+                                                         : curLineVbase + fromInteger(valueOf(TExp#(LgLineSzBytes)));
+                            Bit#(5) absTargetBits = pack(bestAbsTarget);
+                            Bit#(3) wordInNeigh = isPrev ? truncate(absTargetBits + 8)
+                                                         : truncate(absTargetBits - 8);
+                            Addr neighWordVaddr = neighLineVaddr + zeroExtend({wordInNeigh, 3'b0});
+                            tlbReqFIFO.enq(tuple3(neighWordVaddr, True, getVpn(neighWordVaddr) != reqVpn));
+                        end
+                    end
+                end
+            end
+            tagged Decay: begin
+                if (rdResp matches tagged Valid .entry) begin
+                    function Bit#(3) satDec(Bit#(3) x) = (x == 0) ? 0 : x - 1;
+                    pcTable.wrReq(pctIdx, Valid(PCTableEntryT{pcHash: entry.pcHash, conf: map(satDec, entry.conf)}));
+                end
+            end
+        endcase
+    endrule
+
+    rule processTlbReq;
+        match {.candVaddr, .isNeighbourLine, .crossPage} = tlbReqFIFO.first;
+        tlbReqFIFO.deq;
+        LLCTlbReqIdx id = tlbReqFreeQ.first;
+        tlbReqFreeQ.deq;
+        toTlb.prefetcherReq(PrefetcherReqToTlb{vaddr: candVaddr, id: id});
+        pendCandVaddr[id]       <= candVaddr;
+        pendIsNeighbourLine[id] <= isNeighbourLine;
+        pendCrossPage[id]       <= crossPage;
+    endrule
+
+    rule processTlbResp;
+        let resp = toTlb.prefetcherResp;
+        toTlb.deqPrefetcherResp;
+        LLCTlbReqIdx id = resp.id;
+        Addr candVaddr       = pendCandVaddr[id];
+        Bool isNeighbourLine = pendIsNeighbourLine[id];
+        tlbReqFreeQ.enq(id);
+        if (!resp.haveException) begin
+            NextCandT cand = NextCandT{paddr: resp.paddr, vaddr: candVaddr, isNeighbourLine: isNeighbourLine};
+            LineAddr lineAddr = getLineAddr(resp.paddr);
+            Bit#(8) filterIdx = hash(lineAddr);
+            prefetchFilter.rdReq(filterIdx);
+            filterPendingQ.enq(tuple2(filterIdx, cand));
+        end
+    endrule
+
+    (* descending_urgency = "doEvictionClear, processFilterResp" *)
+    rule processFilterResp(inited);
+        let rdResp = prefetchFilter.rdResp;
+        prefetchFilter.deqRdResp;
+        match {.filterIdx, .cand} = filterPendingQ.first;
+        filterPendingQ.deq;
+        LineAddr lineAddr = getLineAddr(cand.paddr);
+        if (rdResp matches tagged Valid .storedAddr &&& storedAddr == lineAddr) begin
+            $display("%t AlexLog: CDP PathHist filter HIT: dropped duplicate prefetch for lineAddr %h", cur_cycle, lineAddr);
+        end else begin
+            prefetchFilter.wrReq(filterIdx, Valid(lineAddr));
+            nextCandidateBuffer.enq(cand);
+            $display("%t AlexLog: CDP PathHist filter MISS: issuing prefetch for lineAddr %h", cur_cycle, lineAddr);
+        end
+    endrule
+
+    rule doEvictionClear(filterInited);
+        LineAddr lineAddr = evictionQ.first;
+        evictionQ.deq;
+        Bit#(8) filterIdx = hash(lineAddr);
+        prefetchFilter.wrReq(filterIdx, Invalid);
+    endrule
+
+    rule tickDecayCounter(inited);
+        decayCounter <= (decayCounter == 0) ? fromInteger(valueOf(decayInterval)) : decayCounter - 1;
+    endrule
+
+    (* descending_urgency = "issuePcTableDecay, tickDecayCounter" *)
+    rule issuePcTableDecay(inited && decayCounter == 0);
+        pcTableIdxT decayIdx = truncate(decayLfsr.value);
+        decayLfsr.next;
+        pcTableRdReqFIFO.enq(tuple2(decayIdx, tagged Decay));
+    endrule
+
+    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
+        if (inited && getReqOp(req) == Ld && !cRqIsPrefetch && wasMiss && !wasNeighbourPrefetch) begin
+            // Shift in new pcHash, dropping the oldest — order-independent 4-PC set.
+            pathSig <= (pathSig << 4) ^ getPcHash(req);
+            let tmp = L1ToCDPT{req: req, line: line};
+            l1ToCDP.enq(tmp);
+        end else if (inited && getReqOp(req) == Ld && !wasMiss && !cRqIsPrefetch && !wasNeighbourPrefetch) begin
+            // Demand-load hit: also shift the ring buffer.
+            pathSig <= (pathSig << 4) ^ getPcHash(req);
+            let reqVpn = getReqVpn(req);
+            // PC-table key at issue time uses pre-shift signature (the write to
+            // pathHist is not visible on this same cycle's read).
+            pcTableIdxT pctIdx = hash(getPcHash(req) ^ pathSig);
+            pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple3(getReqAddr(req), line, reqVpn)));
+            Addr hitVaddr = zeroExtend({pack(reqVpn), getPageOffset(getReqAddr(req))});
+            Bit#(39) hitVaddr39 = truncate(hitVaddr);
+            trainingTableIdxT hitIdx = hash(hitVaddr39);
+            ttRespQ.enqS[0].enq(TrainingTableRespQT{
+                req: unpack(0), ttIdx: hitIdx, isTrainingLookup: True,
+                offset: 0, candVaddr: hitVaddr});
+            ttRdReqSupFIFO.enqS[0].enq(tuple2(hitIdx, hitVaddr));
+        end else if (inited && getReqOp(req) == Ld && cRqIsPrefetch && wasNeighbourPrefetch && !wasMiss) begin
+            LineDataOffset wordOff = getLineDataOffset(getReqAddr(req));
+            Addr candidate = line[wordOff];
+            Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
+            Bit#(matchBits) addrUpper = truncateLSB(getReqVpn(req));
+            if (candUpper == addrUpper)
+                tlbReqFIFO.enq(tuple3(candidate, False, getVpn(candidate) != getReqVpn(req)));
+        end
+    endmethod
+
+    method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
+    endmethod
+
+    method Action reportEviction(LineAddr lineAddr);
+        evictionQ.enq(lineAddr);
+    endmethod
+
+    method Action reportUsefulPrefetch(LineAddr lineAddr);
+        noAction;
+    endmethod
+
+    method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
+        let x = nextCandidateBuffer.first;
+        nextCandidateBuffer.deq;
+        $display("%t AlexLog: CDP PathHist Prefetch addr issued. lineAddr: %h", cur_cycle, getLineAddr(x.paddr));
+        return PendingPrefetch {
+            addr: x.paddr,
+            vpn: getVpn(x.vaddr),
+            nextLevel: False,
+            isNeighbourLine: x.isNeighbourLine
+        };
+    endmethod
+endmodule
