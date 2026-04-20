@@ -194,6 +194,10 @@ module mkL1Bank#(
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
     Vector#(cRqNum, Reg#(Bool)) cRqIsNeighbourPrefetch <- replicateM(mkReg(?));
 
+    // Running count of demand loads that hit on a line brought in by a prefetch.
+    // Emitted in the "CDP Rel useful prefetch hit" log line so parselogNew can compute accuracy.
+    Reg#(Bit#(32)) usefulPrefetchCnt <- mkReg(0);
+
     // A queue for responses from LL prefetches
     // We should inform the prefetcher that its prefetch to the LLC hit, but that might conflict with telling the prefetcher
     // about a hit in the L1. Therefore we need to queue up the responses and tell the prefetcher about them
@@ -682,7 +686,9 @@ endfunction
         LineDataOffset dataSel = getLineDataOffset(req.addr);
         if (ram.info.other.wasPrefetch && !cRqIsPrefetch[n] && req.op == Ld) begin
             //Hit on a prefetched cache line!
-            $display("%t AlexLog: Hit on a prefetched cache line! paddr: %h | lineAddr: %h", $time, req.addr, getLineAddr(req.addr));
+            usefulPrefetchCnt <= usefulPrefetchCnt + 1;
+            $display("%0d AlexLog: CDP Rel useful prefetch hit addr %h cUseful %d",
+                cur_cycle, req.addr, usefulPrefetchCnt + 1);
         `ifdef PERF_COUNT
             usedPrefetchCnt.incr(1);
         `endif

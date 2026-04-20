@@ -128,8 +128,9 @@ TODO: Look at latePrefetches, and prefetchOwned
 TODO: If it is a same page prefetch then we can skip the TLB?
 TODO: Confidence is currently a saturating counter, I feel like seeing a pattern 3 times could potentially be too much?
     Confidence is typically some multiplication operation instead... TSP for example issues no prefetches in statefulRelative because confidence is too low but in Naive it recognises and has about 50% acc
-TODO: Maybe play with matchBits?
+
 After speaking with Jon:
+TODO: Maybe play with matchBits?
 TODO: ToobaLogParser, add cycle count
 TODO: Have some low probability that we do the training table update, give things in the training table some longer lifetime
 TODO: Keep in mind that whether some sort of global history is doing, learn some sort of global history?
