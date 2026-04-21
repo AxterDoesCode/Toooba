@@ -1,0 +1,276 @@
+== Variants ranked by TOTAL usefulPrefetch (L1 + LLC, across 8 benches) ==
+variant                                                       L1pref  L1use  L1perm  L1late LLCpref  LLCuse LLCless
+variantPureStride_CDP_PURESTRIDE_2026-04-20                    56610   5597   27633    3000       0       0       0
+variantPureStride_8bench_2026-04-20                            97035   5519   31386    3102       0       0       0
+variantBMGSDeg_CDP_BMGSDEG_2026-04-20                          59512   5502   27370    2650       0       0       0
+variantBMEarly3_CDP_BITMATCHEARLY3_2026-04-20                  63209   5488   28623    3571       0       0       0
+variantBMEarly4_CDP_BITMATCHEARLY4_2026-04-20                  65903   5457   24810    2352       0       0       0
+variantBMEarly2_CDP_BITMATCHEARLY2_2026-04-20                  60440   2580   30990    3240       0       0       0
+variantBMEarly_CDP_BITMATCHEARLY_2026-04-20                    57501   2504   28649    6315       0       0       0
+variantBMPolyEarly2_CDP_BITMATCHPOLYEARLY2_2026-04-20          43641   2492   24264    2545      60       4       0
+variantBMPolyEarly_CDP_BITMATCHPOLYEARLY_2026-04-20            39547   2415   20280    6083      60       3       0
+variantL2_CDP_HYBRID2_2026-04-20                               49665   1532    9167    1568       0       0       0
+exp10_filter256_2026-04-20                                     44905   1528    8385    1407       0       0       0
+exp13_CDP_deepFIFOs_2026-04-20                                 44905   1528    8385    1407       0       0       0
+variantL_CDP_HYBRID_2026-04-20                                 48447   1519    8256    1462       0       0       0
+exp8_decay1024_2026-04-20                                      65585   1503    8525    2781       0       0       0
+exp7_decay256_2026-04-20                                       64039   1493    7585    1814       0       0       0
+exp9_decay256_highConf_2026-04-20                              69203   1493    9554    2860       0       0       0
+variantF_CDP_PROBTT_2026-04-20                                 47517   1491    8275    1565       0       0       0
+variantO_CDP_UTILCONF_2026-04-20                               37266   1479    7603    2380       0       0       0
+variantJ_CDP_ATTRIB_2026-04-20                                 36832   1460    7001    2317       0       0       0
+variantJ2_CDP_ATTRIB_kt2_2026-04-20                            36589   1459    6161    2165       0       0       0
+variantN_CDP_PPFROUTE_2026-04-20                               35845   1458    8046    2329      48       0       0
+exp6_decay64_2026-04-20                                        62255   1454    9330    2824       0       0       0
+variantE3_CDP_ADAPTIVE_L1default_2026-04-20                    42951   1450    7688    1989      57       0       0
+variantYY_CDP_GLOBALGATE_2026-04-20                            34546   1448    6742    2304       0       0       0
+variantIRATIO_v2_CDP_IRATIO_128t5_2026-04-20                    5053   1444     961      71       0       0       0
+variantH4_CDP_KILLSWITCH_ratio_2026-04-20                      25308   1438    4946    1284       0       0       0
+variantIRATIO_v1_CDP_IRATIO_2026-04-20                          3533   1410     682      47       0       0       0
+variantM_CDP_PPF_2026-04-20                                    26746   1313    6694    2356       0       0       0
+Logs                                                          166008   1196   18113    4336       0       0       0
+baseline_decay16_2026-04-20                                    59387   1157    8959    2913       0       0       0
+exp4_highestConf_2026-04-20                                    59881   1048    9821    3134       0       0       0
+variantBMStride_CDP_BITMATCHSTRIDE_2026-04-20                  50726    915   25511    4475       0       0       0
+exp3_TT1024_2026-04-20                                         64800    902    8230    2661       0       0       0
+exp5_crossPageGate_2026-04-20                                  30612    851    5757    1448       0       0       0
+variantBMPolyStride_CDP_BITMATCHPOLYSTRIDE_2026-04-20          25017    830   15250    2790      60       1       0
+variantH3_CDP_KILLSWITCH_amp3_kt5_2026-04-20                   14044    491    2562    1174       0       0       0
+variantH2_CDP_KILLSWITCH_kt5_filt1024_2026-04-20               20209    474    3117    1176       0       0       0
+variantH_CDP_KILLSWITCH_kt3_2026-04-20                         29415    433    4912    2230       0       0       0
+variantBM_8bench_2026-04-21                                    47213    421   18510    6817       0       0       0
+variantE4_CDP_ADAPTIVE_strict_2026-04-20                       17241    386    3519     919      60       0       0
+variantD2_CDP_PATHHIST_XOR_2026-04-20                          51796    196    8585    2498       0       0       0
+variantD_CDP_PATHHIST_2026-04-20                               43880    157    9843    2774       0       0       0
+variantBMAligned_CDP_BMALIGNED_2026-04-20                      43498    102   16351    5963       0       0       0
+variantBMv3_CDP_BITMATCH_paddrgate_2026-04-20                  45861     92   17971    6465       0       0       0
+variantBMmb20_CDP_BITMATCH_mb20_2026-04-21                     45660     70   18523    6438       0       0       0
+variantBMalignmb20_2026-04-21                                  21969     39    8181    3864       0       0       0
+variantBMmb24_CDP_BITMATCH_mb24_2026-04-21                     33645     29   12014    4597       0       0       0
+variantBMPolyMB20_2026-04-21                                    9417     23    4765    3652      60       0       0
+variantBMPoly_CDP_BITMATCHPOLY_2026-04-20                       9373     18    4732    3612      60       1       0
+variantZ_CDP_UTILCONFROUTE_2026-04-20                              0      0       0       0      60      11       0
+variantBMmb27_CDP_BITMATCH_mb27_2026-04-21                     31157      7    9804    4173       0       0       0
+variantBMDensThreshMB27_2026-04-21                              9712      7    1332    1118       0       0       0
+variantBM_CDP_BITMATCH_samepage_2026-04-20                     30798      7    9430    4171       0       0       0
+variantBMAlign8SuppMB27_2026-04-21                              9959      6    1407    1146       0       0       0
+variantBMPolySuppMB27_2026-04-21                                9961      6    1407    1146       0       0       0
+variantBMPolyMB27_2026-04-21                                   12099      5    2684    2385      60       0       0
+variantBMPolyGradMB27_2026-04-21                               12146      5    2665    2361      60       0       0
+exp11_llcRouted_2026-04-20                                         0      0       0       0      60       3       0
+variantE_CDP_ADAPTIVE_2026-04-20                                   0      0       0       0      60       3       0
+variantB_CDP_LLC_2026-04-20                                        0      0       0       0      60       3       0
+variantC_CDP_MULTIISSUE_2026-04-20                                 0      0       0       0      60       3       0
+variantE2_CDP_ADAPTIVE_withFeedback_2026-04-20                     0      0       0       0      60       3       0
+variantBMPolyMB24_2026-04-21                                    9292      3    2744    2372      60       0       0
+variantBMAlignSuppMB24_2026-04-21                               3967      2    1188    1046       0       0       0
+baseline_noPrefetcher_2026-04-20                                   0      0       0       0       0       0       0
+baseline_NoPref_8bench_2026-04-21                                  0      0       0       0       0       0       0
+variantBMAlignSuppConfMB27_2026-04-21                           2262      0     884     681       0       0       0
+variantBMAlignSuppMB27_2026-04-21                               4177      0    1289    1082       0       0       0
+variantBMAlignSuppConfT1MB27_2026-04-21                         1983      0     877     666       0       0       0
+
+== Top variants with >0 usefulPrefetch (L1+LLC), per-bench detail ==
+
+--- variantPureStride_CDP_PURESTRIDE_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                329     66     122       2       0       0
+  health            27525    402   18098     205       0       0
+  patricia           7615   5080     133      78       0       0
+  treeadd           20683      3    9273    2715       0       0
+  voronoi             458     46       7       0       0       0
+
+--- variantPureStride_8bench_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  bh                  130     54       0       0       0       0
+  bisort            26750     51    3171      97       0       0
+  em3d                329     66     122       2       0       0
+  health            27525    269   18177     205       0       0
+  patricia           7615   5067     137      78       0       0
+  perimeter            18      2       0       1       0       0
+  treeadd           20683      6    9273    2715       0       0
+  tsp               13985      4     506       4       0       0
+
+--- variantBMGSDeg_CDP_BMGSDEG_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                333     69     113       0       0       0
+  health            29592    341   16537     194       0       0
+  patricia           8226   5034     155      70       0       0
+  treeadd           20817     10   10536    2386       0       0
+  voronoi             544     48      29       0       0       0
+
+--- variantBMEarly3_CDP_BITMATCHEARLY3_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                332     93      30       2       0       0
+  health            32218    292   18383     126       0       0
+  patricia           8891   5033     282     110       0       0
+  treeadd           21202     25    9906    3333       0       0
+  voronoi             566     45      22       0       0       0
+
+--- variantBMEarly4_CDP_BITMATCHEARLY4_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                336     88      31       4       0       0
+  health            34184    282   16931     118       0       0
+  patricia           9584   5016     295     113       0       0
+  treeadd           21228     24    7536    2117       0       0
+  voronoi             571     47      17       0       0       0
+
+--- variantBMEarly2_CDP_BITMATCHEARLY2_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                337     89      28       1       0       0
+  health            31150    185   18276     158       0       0
+  patricia           7379   2233     266      93       0       0
+  treeadd           21051     25   12394    2983       0       0
+  voronoi             523     48      26       5       0       0
+
+--- variantBMEarly_CDP_BITMATCHEARLY_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                317     87      32       7       0       0
+  health            29019    104   17728     464       0       0
+  patricia           6667   2267     244      83       0       0
+  treeadd           21068     16   10614    5756       0       0
+  voronoi             430     30      31       5       0       0
+
+--- variantBMPolyEarly2_CDP_BITMATCHPOLYEARLY2_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                192     68      23       0      12       0
+  health            23405    136   14696      73      12       1
+  patricia           6619   2237     118      63      12       0
+  treeadd           13020      3    9425    2409      12       3
+  voronoi             405     48       2       0      12       0
+
+--- variantBMPolyEarly_CDP_BITMATCHPOLYEARLY_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                185     60      22       1      12       0
+  health            20157     86   12892     391      12       0
+  patricia           5913   2239     112      59      12       0
+  treeadd           12972      1    7251    5632      12       3
+  voronoi             320     29       3       0      12       0
+
+--- variantL2_CDP_HYBRID2_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                253      1      19       9       0       0
+  health            26546     52    5185    1052       0       0
+  patricia           4121   1455     208     164       0       0
+  treeadd           18502      0    3734     341       0       0
+  voronoi             243     24      21       2       0       0
+
+--- exp10_filter256_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                253      2      16       7       0       0
+  health            23488     46    5954    1193       0       0
+  patricia           4121   1455     208     164       0       0
+  treeadd           16800      1    2186      41       0       0
+  voronoi             243     24      21       2       0       0
+
+--- exp13_CDP_deepFIFOs_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                253      2      16       7       0       0
+  health            23488     46    5954    1193       0       0
+  patricia           4121   1455     208     164       0       0
+  treeadd           16800      1    2186      41       0       0
+  voronoi             243     24      21       2       0       0
+
+--- variantL_CDP_HYBRID_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                252      2      15       7       0       0
+  health            26423     38    5826    1245       0       0
+  patricia           4121   1455     208     164       0       0
+  treeadd           17408      0    2186      44       0       0
+  voronoi             243     24      21       2       0       0
+
+--- exp8_decay1024_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                332      3      12       4       0       0
+  health            28969     45    4854    1252       0       0
+  patricia          16397   1453     412     409       0       0
+  treeadd           19301      1    3131    1059       0       0
+  voronoi             586      1     116      57       0       0
+
+--- exp7_decay256_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                397      1      25       7       0       0
+  health            27287     47    4918    1279       0       0
+  patricia          18226   1443     445     461       0       0
+  treeadd           17874      1    2165      63       0       0
+  voronoi             255      1      32       4       0       0
+
+--- exp9_decay256_highConf_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                324      1      17       3       0       0
+  health            27439     53    5725    1303       0       0
+  patricia          21328   1437     522     482       0       0
+  treeadd           19871      0    3258    1070       0       0
+  voronoi             241      2      32       2       0       0
+
+--- variantF_CDP_PROBTT_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                248      0      11       5       0       0
+  health            25209     45    5780    1332       0       0
+  patricia           4255   1439     236     176       0       0
+  treeadd           17525      2    2204      40       0       0
+  voronoi             280      5      44      12       0       0
+
+--- variantO_CDP_UTILCONF_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                226      0      14       4       0       0
+  health            16396     12    4594    1254       0       0
+  patricia           2373   1462      69      59       0       0
+  treeadd           18085      0    2899    1062       0       0
+  voronoi             186      5      27       1       0       0
+
+--- variantJ_CDP_ATTRIB_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                192      2      13       6       0       0
+  health            16057      0    3990    1164       0       0
+  patricia           2321   1452      73      65       0       0
+  treeadd           18085      1    2902    1081       0       0
+  voronoi             177      5      23       1       0       0
+
+--- variantJ2_CDP_ATTRIB_kt2_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                222      1       8       6       0       0
+  health            15784      1    3152    1010       0       0
+  patricia           2321   1452      73      65       0       0
+  treeadd           18085      0    2905    1083       0       0
+  voronoi             177      5      23       1       0       0
+
+--- variantN_CDP_PPFROUTE_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                181      0       7       6      12       0
+  health            15954      1    4860    1035      12       0
+  patricia           2205   1455      27      41      12       0
+  treeadd           17375      1    3142    1246      12       0
+  voronoi             130      1      10       1       0       0
+
+--- exp6_decay64_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                329      2      19       1       0       0
+  health            26118     46    5717    1341       0       0
+  patricia          15713   1381     373     436       0       0
+  treeadd           19666      2    3179    1042       0       0
+  voronoi             429     23      42       4       0       0
+
+--- variantE3_CDP_ADAPTIVE_L1default_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                209      1      17       8      12       0
+  health            20719      0    4954    1436      12       0
+  patricia           3783   1447     199     173      12       0
+  treeadd           18040      1    2494     369      12       0
+  voronoi             200      1      24       3       9       0
+
+--- variantYY_CDP_GLOBALGATE_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                132      0       8       1       0       0
+  health            13777     13    3737    1181       0       0
+  patricia           2366   1430      71      59       0       0
+  treeadd           18085      0    2899    1062       0       0
+  voronoi             186      5      27       1       0       0
+
+--- variantIRATIO_v2_CDP_IRATIO_128t5_2026-04-20 ---
+  bench            L1pref  L1use  L1perm  L1late LLCpref  LLCuse
+  em3d                128      2       3       0       0       0
+  health             1935      0     593      52       0       0
+  patricia           1719   1425       4       2       0       0
+  treeadd            1110      0     348      17       0       0
+  voronoi             161     17      13       0       0       0

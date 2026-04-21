@@ -11,6 +11,33 @@ import CDPKillSwitch::*;
 import CDPAttrib::*;
 import CDPHybrid::*;
 import CDPHybrid2::*;
+import CDPPerceptron::*;
+import CDPPPFRoute::*;
+import CDPUtilConf::*;
+import CDPUtilConfRoute::*;
+import CDPGlobalGate::*;
+import CDPBitMatch::*;
+import CDPBitMatchPoly::*;
+import CDPBMPolySupp::*;
+import CDPBMPolyGrad::*;
+import CDPBMDensThresh::*;
+import CDPBMAlignSupp::*;
+import CDPBMAlign8Supp::*;
+import CDPBMAlignSuppConf::*;
+import CDPBMChainScan::*;
+import CDPBMAlignSuppConfT1::*;
+import CDPBitMatchStride::*;
+import CDPBitMatchPolyStride::*;
+import CDPBitMatchEarly::*;
+import CDPBitMatchPolyEarly::*;
+import CDPBitMatchEarly2::*;
+import CDPBitMatchEarly3::*;
+import CDPBitMatchPolyEarly2::*;
+import CDPBitMatchEarly4::*;
+import CDPPureStride::*;
+import CDPBMGSDeg::*;
+import CDPBMAligned::*;
+import CDPIRatio::*;
 import CCTypes::*;
 import Types::*;
 import TlbTypes::*;
@@ -105,6 +132,32 @@ provisos (
         Parameter#(1)    confidenceThreshold <- mkParameter;
         Parameter#(5)    killThreshold <- mkParameter;   // 5 uselessBumps → blacklist (with 1024-entry filter for better attribution)
         CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitch(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_MB20
+        // H4 at matchBits=20 (tighter than default 16 — fewer noise candidates).
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(20)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitch(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_MB24
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(24)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitch(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_MB27
+        // H4 at matchBits=27 (same-page only — tightest possible).
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(27)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitch(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
     `elsif DATA_PREFETCHER_CDP_PROBTT
         // Variant F: probabilistic TT overwrite. Same as baseline CDP but a TT
         // existing-entry overwrite is accepted only ttOverwriteNum / ttOverwriteDenom
@@ -155,9 +208,179 @@ provisos (
         Parameter#(1)    confidenceThreshold <- mkParameter;
         Parameter#(3)    strideClassThreshold <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeHybrid2(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, strideClassThreshold);
+    `elsif DATA_PREFETCHER_CDP_PPF
+        // Variant M: per-(PC, relOff) perceptron filter. Replaces H-family
+        // kill-switch with a 256-entry signed-weight table. Weight +1 on
+        // useful-hit, -1 on useless-evict; issue iff weight >= 0.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(0)    killThreshold <- mkParameter;    // issue iff perceptron >= 0
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativePPF(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_UTILCONF
+        // Variant O: utility-gated conf. Training hits only make patterns
+        // eligible (conf = threshold); useful/useless attribution events
+        // climb/demote the conf within the existing pcTable infrastructure.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(0)    killThreshold <- mkParameter;    // unused in O
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeUtilConf(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_GLOBALGATE
+        // Variant YY: global sliding trust score gates all decisions. Score>=0
+        // issues normally; score<0 suppresses except 1/8 bleed-through.
+        // Decay: halve score every 4096 cycles.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(0)    killThreshold <- mkParameter;    // unused in YY
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeGlobalGate(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_UTILCONFROUTE
+        // Variant Z: O + N fusion. conf>=2 -> L1 (proven useful); conf==1 -> LLC
+        // (eligible but unproven). No binary suppression; graceful degradation.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(0)    killThreshold <- mkParameter;    // unused in Z
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeUtilConfRoute(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_PPFROUTE
+        // Variant N: PPF-gated ROUTING. Perceptron weight >= threshold -> L1;
+        // weight < threshold -> LLC. Always issue (no binary drop). Targets
+        // treeadd's B-style LLC-routing win without killing patricia's L1 win.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(0)    killThreshold <- mkParameter;    // L1 iff perceptron >= 0
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativePPFRoute(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
     `elsif DATA_PREFETCHER_CDP_NAIVE
         Parameter#(16)   matchBits <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPNaive(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_IRATIO
+        // Variant IRATIO: per-PC issue-ratio kill-switch using DENSE issued
+        // and useful counters (not sparse useless-evict attribution). Kills a
+        // PC when issuedCount>=64 && useful*10<issued (<10% acc).
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(0)    killThreshold <- mkParameter;    // unused in IRATIO
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeIRatio(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_BITMATCH
+        // Variant BM: clean bit-matching-only prefetcher. Miss-only + 1024
+        // dedup filter. No PC table, no TT, no conf.
+        Parameter#(16)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBitMatch(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BITMATCHPOLY
+        // BM-POLY-MB27 (best POLY) — kept at mb=27 since that was best.
+        Parameter#(27)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBitMatchPoly(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BMPOLYSUPP
+        // BMPolySupp-MB27: multi-match → SUPPRESS (not LLC-route). If
+        // treeadd's multi-match pattern stops issuing entirely, we converge
+        // to NoPref on treeadd.
+        Parameter#(27)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBMPolySupp(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BMPOLYGRAD
+        // BMPolyGrad-MB27: graded routing by match count.
+        //   1       -> L1 (clean pointer)
+        //   2-3     -> LLC (noisy but useful to pre-warm)
+        //   >=4     -> SUPPRESS (high noise; likely false pos)
+        Parameter#(27)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBMPolyGrad(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BMDENSTHRESH
+        // BMDensThresh-MB27: BMPolySupp + per-PC reliability gate.
+        // Tracks a 4-bit signed score per PC (256 entries). Single-match
+        // from PCs with negative score (mostly-multi-match history) are
+        // suppressed, killing the unreliable-PC tail of single-match false
+        // positives.
+        Parameter#(27)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBMDensThresh(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BMALIGNSUPP
+        // BMAlignSupp-MB27: BMPolySupp + pointer-shape filters.
+        // Candidate must also be 16-byte aligned AND have upper 25 bits
+        // zero (valid SV39 vaddr shape). Tightens false-positive rate.
+        Parameter#(27)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBMAlignSupp(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BMALIGN8SUPP
+        // BMAlign8Supp-MB27: same as BMAlignSupp but 8-byte alignment only.
+        // Catches pointers embedded in pointer-arrays (which may have 8-byte
+        // spacing but not 16-byte) that AlignSupp's 16-byte gate rejects.
+        Parameter#(27)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBMAlign8Supp(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BMALIGNSUPP_MB24
+        // BMAlignSupp-MB24: relax same-page to 24-bit VPN match with the
+        // shape filter still in place. Cross-page pointer chase may become
+        // viable when the shape filter is tight enough.
+        Parameter#(24)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBMAlignSupp(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BMALIGNSUPPCONF
+        // BMAlignSuppConf-MB27: BMAlignSupp + per-PC attribution gating.
+        // On reportUsefulPrefetch: +1 score for the issuing PC.
+        // On reportEviction:       -1 score for the issuing PC.
+        // Suppress future single-match issue if PC score <= -2.
+        Parameter#(27)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBMAlignSuppConf(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BMALIGNSUPPCONFT1
+        // BMAlignSuppConfT1-MB27: AlignSuppConf with tighter threshold
+        // (suppress at score <= -1 instead of -2). Kills PCs faster.
+        Parameter#(27)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBMAlignSuppConfT1(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BMCHAINSCAN
+        // BMChainScan-MB27: AlignSupp + classical Cooksey depth-1 chain scan.
+        // On arrival of a first-level bit-match prefetch, re-scan its line
+        // for more pointer candidates and issue them as isNeighbourLine=True
+        // (depth-1 termination).
+        Parameter#(27)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBMChainScan(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BITMATCHSTRIDE
+        Parameter#(16)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBitMatchStride(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BITMATCHPOLYSTRIDE
+        Parameter#(16)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBitMatchPolyStride(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BITMATCHEARLY
+        Parameter#(16)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBitMatchEarly(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BITMATCHPOLYEARLY
+        Parameter#(16)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBitMatchPolyEarly(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BITMATCHEARLY2
+        Parameter#(16)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBitMatchEarly2(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BITMATCHEARLY3
+        Parameter#(16)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBitMatchEarly3(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BITMATCHPOLYEARLY2
+        Parameter#(16)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBitMatchPolyEarly2(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BITMATCHEARLY4
+        Parameter#(16)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBitMatchEarly4(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_PURESTRIDE
+        Parameter#(16)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPPureStride(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BMGSDEG
+        Parameter#(16)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBMGSDeg(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_BMALIGNED
+        // BM-Aligned + MB20: stack both false-positive filters.
+        // - 16-byte alignment check on candidate ([3:0]==0) — rejects most
+        //   integer-valued data.
+        // - matchBits=20 — requires 20 upper VPN bits to agree, vs 16.
+        // Both attack false positives from different angles; stack test.
+        Parameter#(20)   matchBits <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPBMAligned(toTlb, matchBits);
     `endif
     //let m <- mkPCPrefetcherAdapter(mkAlwaysRequestPrefetcher);
 `else 
