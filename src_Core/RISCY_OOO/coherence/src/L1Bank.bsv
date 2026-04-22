@@ -451,15 +451,16 @@ endfunction
             rqToPQ.enq(cRqToP);
             if (verbose) $display("%t L1 %m sendPrefetchRqToP: ", $time, fshow(cRqToP));
         end else begin
-            // Single-core fix: demand Loads request E (MemExePipeline.bsv:1345).
-            // If prefetch asks for S, every prefetched line gets perms-killed
-            // by the next demand Load. Mirror the demand's intent instead.
-            Bool multicore_local = valueof(CoreNum) > 1;
+            // Prefetch asks S + canUpToE (via ProcRq below; canUpToE is
+            // implicit in the LLC-side logic). LLCache.bsv's respLoadWithE=True
+            // (CapPtr paper §3.4.2) upgrades the response to E on both LLC hits
+            // and misses in single-core, so the demand Load (which asks E) can
+            // cRqHit directly without paying an S→E upgrade roundtrip.
             procRqT r = ProcRq {
                 id: ?, //Or maybe do 0 here
                 addr: prefetch.addr,
                 vpn: prefetch.vpn, // TODO: I think it may be worthwhile passing this through, need to make getNextPrefetchAddr return some struct? For non CDP-like prefetchers we can disable this?
-                toState: multicore_local ? S : E,
+                toState: S,
                 op: Ld,
                 byteEn: ?,
                 data: ?,
