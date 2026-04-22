@@ -3,7 +3,7 @@ variant: H4 decoupled-incoming-queue
 file: CDPKillSwitch.bsv
 date: 2026-04-22
 baseline_1: NoPref (variantNoPref_default_2026-04-22_wtverify)
-baseline_2: H4 capchaserFix (variantH4_capchaserFix_2026-04-22)
+baseline_2: H4 post-CapPtr-fix (variantH4_postCapPtrFix_2026-04-22)
 archive: /local/scratch/ac2822/NewTooobaLogs/variantH4_decoupledQ_2026-04-22
 ---
 
@@ -33,46 +33,53 @@ the calling `pipelineResp_cRq`.
 
 ## Cycles (8-bench)
 
-| Bench | NoPref | H4 capchaser | H4 decoupled | dec vs NoPref | dec vs capchaser |
+| Bench | NoPref | H4 post-CapPtr-fix | H4 decoupled | dec vs NoPref | dec vs post-CapPtr-fix |
 |---|---:|---:|---:|---:|---:|
 | bh | 1,219,571 | 1,220,351 | 1,219,571 | 0.00% | -0.06% |
 | bisort | 989,251 | 1,072,211 | 1,004,417 | +1.53% | -6.32% |
-| em3d | 83,355 | 88,504 | 85,546 | +2.63% | -3.34% |
+| em3d (old 64-node size) | 83,355 | 88,504 | 85,546 | +2.63% | -3.34% |
+| em3d (resized 500-node) | 1,739,832 | 1,930,879 | 1,826,347 | +4.97% | -5.41% |
 | health | 1,258,698 | 1,323,686 | 1,247,565 | **-0.88%** | -5.75% |
 | patricia | 1,416,398 | 1,330,872 | 1,246,718 | **-11.98%** | -6.32% |
 | perimeter | 2,692,517 | 2,739,559 | 2,692,517 | 0.00% | -1.72% |
 | treeadd | 564,733 | 705,747 | 660,979 | +17.04% | -6.34% |
 | tsp | 6,638,315 | 6,737,129 | 6,638,315 | 0.00% | -1.47% |
 
-- **Geomean H4 capchaser vs NoPref: +4.92%** (slower)
-- **Geomean H4 decoupled vs NoPref: +0.78%** (near parity)
-- **Geomean H4 decoupled vs H4 capchaser: -3.95%** (speedup)
+- **Geomean H4 post-CapPtr-fix vs NoPref: +5.50%** (slower) — with resized em3d
+- **Geomean H4 decoupled vs NoPref: +1.06%** (near parity) — with resized em3d
+- **Geomean H4 decoupled vs H4 post-CapPtr-fix: -4.21%** (speedup)
+
+(Before em3d resize: +4.92% / +0.78% / -3.95%. The 64-node em3d was too short
+at 85k cycles to contribute meaningful weight; resized to 500-node at 1.7M
+cycles gives it proportional weight.)
 
 Three benches (bh, perimeter, tsp) hit exactly NoPref cycles — Class 1 benches
 where CDP never fires. With decoupling, the mere presence of CDP wiring
-contributes zero cycle overhead on these. Previously (capchaser) these were
+contributes zero cycle overhead on these. Previously (post-CapPtr-fix) these were
 +0.06% / +1.75% / +1.49% slower just from the wiring overhead.
 
-## Parser metrics (decoupled vs capchaser, 5 affected benches)
+## Parser metrics (decoupled vs post-CapPtr-fix, 5 affected benches)
 
 | Bench | variant | prefetch | HIT | OWNED | timely | late | useless |
 |---|---|---:|---:|---:|---:|---:|---:|
-| bisort | capchaser | **0** | 0 | 0 | 0 | 0 | 0 |
+| bisort | post-CapPtr-fix | **0** | 0 | 0 | 0 | 0 | 0 |
 | bisort | decoupled | 525 | 166 | 18 | 256 | 76 | 9 |
-| em3d | capchaser | 28 | 2 | 25 | 0 | 0 | 1 |
-| em3d | decoupled | 225 | 186 | 7 | 6 | 1 | 25 |
-| health | capchaser | 9563 | 4191 | 908 | 2555 | 1573 | 336 |
+| em3d (64-node) | post-CapPtr-fix | 28 | 2 | 25 | 0 | 0 | 1 |
+| em3d (64-node) | decoupled | 225 | 186 | 7 | 6 | 1 | 25 |
+| em3d (500-node) | post-CapPtr-fix | 2150 | 2011 | 67 | 26 | 6 | 40 |
+| em3d (500-node) | decoupled | 2246 | 2124 | 30 | 33 | 11 | 48 |
+| health | post-CapPtr-fix | 9563 | 4191 | 908 | 2555 | 1573 | 336 |
 | health | decoupled | 13389 | 7407 | 1685 | 2204 | 891 | 1202 |
-| patricia | capchaser | 1855 | 217 | 97 | 1453 | 19 | 69 |
+| patricia | post-CapPtr-fix | 1855 | 217 | 97 | 1453 | 19 | 69 |
 | patricia | decoupled | 2053 | 504 | 34 | 1439 | 4 | 72 |
-| treeadd | capchaser | 14889 | 9883 | 974 | 1741 | 2195 | 96 |
+| treeadd | post-CapPtr-fix | 14889 | 9883 | 974 | 1741 | 2195 | 96 |
 | treeadd | decoupled | 20290 | 18385 | 87 | 1653 | 36 | 129 |
 
 Sum check (decoupled): HIT+OWNED+timely+late+useless = prefetch (✓ all 5 benches).
 
 ## Key finding — the regression was back-pressure, not prefetch pollution
 
-- **bisort capchaser issued 0 prefetches** yet was +8.4% slower than NoPref.
+- **bisort post-CapPtr-fix issued 0 prefetches** yet was +8.4% slower than NoPref.
   That cost was *entirely* back-pressure from CDP's internal state machine
   blocking `pipelineResp_cRq`. Decoupling drops the regression to +1.5% and
   simultaneously lets 525 prefetches through.
@@ -98,6 +105,23 @@ The "CDP is bad on non-patricia benches" narrative from 2026-04-19 through
 
 Disentangling the two changes the interpretation of *every* variant we ran
 that touched `reportIncomingCacheLine`.
+
+## em3d resized (2026-04-22 addendum)
+
+Original em3d.bin ran with the compiled-in defaults `n_nodes=64, d_nodes=3`,
+producing only 85k cycles — 20× smaller than the other benchmarks and
+statistically noisy. Rebuilt em3d.bin with `n_nodes=500, d_nodes=10` after
+adding a proper Makefile (`Tests/benchmarks/Toooba-olden/em3d/Makefile`),
+fixing the `../../Toooba-mibench2/util.h` include path in `src/em3d.h` and
+`src/em3d_util.c` (was 2 levels, needed 3 from `src/`), renaming em3d's
+`src/util.{c,h}` to `em3d_util.{c,h}` to avoid collision with the baremetal
+`Toooba-mibench2/util.c`, and building with `-DTORONTO`.
+
+Resized em3d results confirm the same back-pressure story: H4 issues ~2200
+prefetches where 93-94% are redundant HITs (already in L1); only 26-33
+timely-useful prefetches. Cycles drop 5.41% with decoupling even though
+the prefetcher issues *more* (2246 vs 2150). Classic back-pressure:
+algorithmic behaviour unchanged, pipeline stall removed.
 
 ## Followups
 
