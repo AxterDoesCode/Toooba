@@ -8,6 +8,8 @@ import CDPPathHistXor::*;
 import CDPAdaptive::*;
 import CDPProbTT::*;
 import CDPKillSwitch::*;
+import CDPKillSwitchH6::*;
+import CDPKillSwitchH7::*;
 import CDPKillSwitchCA::*;
 import CDPAttrib::*;
 import CDPHybrid::*;
@@ -159,6 +161,31 @@ provisos (
         Parameter#(1)    confidenceThreshold <- mkParameter;
         Parameter#(5)    killThreshold <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitch(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H6
+        // Variant H6: H4 + enlarge incomingQ from 32 to 256. Instrumentation
+        // showed the 32-entry staging FIFO fills for 9.9% of em3d cycles
+        // (20-51% in compute-light phase), stalling pipelineResp_cRq. A bigger
+        // FIFO buffers over the transient bursts.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH6(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H7
+        // Variant H7: H4 + non-blocking incomingQ via mkOverflowBypassFifo.
+        // enq is always ready — on full, the oldest staged event is dropped
+        // to make room. Trades training completeness for never blocking
+        // pipelineResp_cRq. Kept at 32-entry; the semantic change is the
+        // drop-on-full behaviour.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH7(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
     `elsif DATA_PREFETCHER_CDP_KILLSWITCH_CA
         // Variant H5: H4 + cache-aware dedup. On every demand-miss refill,
         // register the new lineAddr in the prefetchFilter so future prefetch
