@@ -75,6 +75,22 @@ typedef union tagged {
     void                              Decay;
 } PCTableRdAdaptTagT deriving (Bits, FShow);
 
+// Decouple reportIncomingCacheLine from the multi-FIFO fan-out. Previously
+// the method synchronously enqueued into 1-3 downstream FIFOs (l1ToCDP,
+// pcTableRdReqFIFO, ttRespQ, ttRdReqSupFIFO, tlbReqFIFO), so any of them
+// being full back-pressured pipelineResp_cRq in L1Bank.bsv → entire L1
+// pipeline stalled. On treeadd this cost ~9 cycles per prefetch (+0.6
+// cyc/demand) even though prefetch generation is already rate-limited via
+// descending_urgency. Staging into a single 32-entry FIFO with a separate
+// drain rule isolates that back-pressure inside the prefetcher.
+
+typedef enum {
+    EvIgnore,        // does not trigger CDP work
+    EvDemandLdMiss,  // feeds l1ToCDP for training candidates
+    EvDemandLdHit,   // feeds pcTableRdReqFIFO + ttRespQ + ttRdReqSupFIFO
+    EvNeighbourChain // feeds tlbReqFIFO for chain-follow
+} CDPIncomingBranchT deriving (Bits, FShow, Eq);
+
 module mkCDPStatefulRelativeKillSwitch#(
     TlbToPrefetcher toTlb,
     Parameter#(trainingTableSize) _,
@@ -106,7 +122,13 @@ provisos (
     Add#(h__, matchBits, 27)
 );
 
-    FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
+    FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkSizedFIFO(8);
+
+    // Staging FIFO for reportIncomingCacheLine events. The method does a
+    // single enq here; drainIncomingEvents fans out to the downstream FIFOs
+    // at its own pace, so any CDP-pipeline back-pressure never reaches the
+    // L1 pipeline's pipelineResp_cRq rule.
+    FIFO#(Tuple3#(CDPIncomingBranchT, reqT, Line)) incomingQ <- mkSizedFIFO(32);
 
     function Bool ttIsMatch(TrainingTableEntryT e, Addr tag) = e.valid && e.storedVaddr == tag;
     function Bool ttIsReplaceCandidate(TrainingTableEntryT e) = !e.valid;
@@ -528,37 +550,64 @@ provisos (
         pcTableRdReqFIFO.enq(tuple2(decayIdx, tagged Decay));
     endrule
 
-    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
-        if (inited && getReqOp(req) == Ld && !cRqIsPrefetch && wasMiss && !wasNeighbourPrefetch) begin
-            let tmp = L1ToCDPT{req: req, line: line};
-            l1ToCDP.enq(tmp);
-        end else if (inited && getReqOp(req) == Ld && !wasMiss && !cRqIsPrefetch && !wasNeighbourPrefetch) begin
-            let reqVpn = getReqVpn(req);
-            pcTableIdxT pctIdx = hash(getPcHash(req));
-            pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple3(getReqAddr(req), line, reqVpn)));
-            Addr hitVaddr = zeroExtend({pack(reqVpn), getPageOffset(getReqAddr(req))});
-            Bit#(39) hitVaddr39 = truncate(hitVaddr);
-            trainingTableIdxT hitIdx = hash(hitVaddr39);
-            ttRespQ.enqS[0].enq(TrainingTableRespQT{
-                req: unpack(0), ttIdx: hitIdx, isTrainingLookup: True,
-                offset: 0, candVaddr: hitVaddr});
-            ttRdReqSupFIFO.enqS[0].enq(tuple2(hitIdx, hitVaddr));
-        end else if (inited && getReqOp(req) == Ld && cRqIsPrefetch && wasNeighbourPrefetch && !wasMiss) begin
-            LineDataOffset wordOff = getLineDataOffset(getReqAddr(req));
-            Addr candidate = line[wordOff];
-            Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
-            Bit#(matchBits) addrUpper = truncateLSB(getReqVpn(req));
-            if (candUpper == addrUpper) begin
-                // Neighbour-chain prefetch — no attributable PC, route to L1 by default.
-                $display("%0d AlexLog: CDP Rel neighbour chain: word %d candidate vaddr %h queued for TLB",
-                    cur_cycle, wordOff, candidate);
-                tlbReqFIFO.enq(tuple6(candidate, False, getVpn(candidate) != getReqVpn(req),
-                                      16'h0, False, False));
-            end else begin
-                $display("%0d AlexLog: CDP Rel neighbour chain: word %d vaddr %h failed VPN check, dropping",
-                    cur_cycle, wordOff, candidate);
+    // Fan-out staging events to the relevant downstream FIFOs. Guarded
+    // implicitly on all-target-not-full so any saturation blocks this rule,
+    // not the calling pipelineResp_cRq in L1Bank.bsv.
+    rule drainIncomingEvents;
+        match {.branch, .req, .line} = incomingQ.first;
+        incomingQ.deq;
+        case (branch)
+            EvDemandLdMiss: begin
+                let tmp = L1ToCDPT{req: req, line: line};
+                l1ToCDP.enq(tmp);
             end
+            EvDemandLdHit: begin
+                let reqVpn = getReqVpn(req);
+                pcTableIdxT pctIdx = hash(getPcHash(req));
+                pcTableRdReqFIFO.enq(tuple2(pctIdx, tagged PrefetchIssue tuple3(getReqAddr(req), line, reqVpn)));
+                Addr hitVaddr = zeroExtend({pack(reqVpn), getPageOffset(getReqAddr(req))});
+                Bit#(39) hitVaddr39 = truncate(hitVaddr);
+                trainingTableIdxT hitIdx = hash(hitVaddr39);
+                ttRespQ.enqS[0].enq(TrainingTableRespQT{
+                    req: unpack(0), ttIdx: hitIdx, isTrainingLookup: True,
+                    offset: 0, candVaddr: hitVaddr});
+                ttRdReqSupFIFO.enqS[0].enq(tuple2(hitIdx, hitVaddr));
+            end
+            EvNeighbourChain: begin
+                LineDataOffset wordOff = getLineDataOffset(getReqAddr(req));
+                Addr candidate = line[wordOff];
+                Bit#(matchBits) candUpper = truncateLSB(getVpn(candidate));
+                Bit#(matchBits) addrUpper = truncateLSB(getReqVpn(req));
+                if (candUpper == addrUpper) begin
+                    $display("%0d AlexLog: CDP Rel neighbour chain: word %d candidate vaddr %h queued for TLB",
+                        cur_cycle, wordOff, candidate);
+                    tlbReqFIFO.enq(tuple6(candidate, False, getVpn(candidate) != getReqVpn(req),
+                                          16'h0, False, False));
+                end else begin
+                    $display("%0d AlexLog: CDP Rel neighbour chain: word %d vaddr %h failed VPN check, dropping",
+                        cur_cycle, wordOff, candidate);
+                end
+            end
+            EvIgnore: noAction;
+        endcase
+    endrule
+
+    method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
+        // Classify the incoming event and stage it. The actual fan-out to
+        // downstream FIFOs is done in drainIncomingEvents so back-pressure
+        // on those FIFOs cannot reach pipelineResp_cRq (which called us).
+        CDPIncomingBranchT branch = EvIgnore;
+        if (inited && getReqOp(req) == Ld && !cRqIsPrefetch && wasMiss && !wasNeighbourPrefetch) begin
+            branch = EvDemandLdMiss;
+        end else if (inited && getReqOp(req) == Ld && !wasMiss && !cRqIsPrefetch && !wasNeighbourPrefetch) begin
+            branch = EvDemandLdHit;
+        end else if (inited && getReqOp(req) == Ld && cRqIsPrefetch && wasNeighbourPrefetch && !wasMiss) begin
+            branch = EvNeighbourChain;
         end
+        // Even EvIgnore events get staged so the staging FIFO latency is
+        // uniform (no guard branching inside the method). The drain rule
+        // drops EvIgnore without doing any fan-out.
+        incomingQ.enq(tuple3(branch, req, line));
     endmethod
 
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
