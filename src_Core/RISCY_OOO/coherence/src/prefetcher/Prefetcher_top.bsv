@@ -8,6 +8,7 @@ import CDPPathHistXor::*;
 import CDPAdaptive::*;
 import CDPProbTT::*;
 import CDPKillSwitch::*;
+import CDPKillSwitchCA::*;
 import CDPAttrib::*;
 import CDPHybrid::*;
 import CDPHybrid2::*;
@@ -158,6 +159,18 @@ provisos (
         Parameter#(1)    confidenceThreshold <- mkParameter;
         Parameter#(5)    killThreshold <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitch(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_CA
+        // Variant H5: H4 + cache-aware dedup. On every demand-miss refill,
+        // register the new lineAddr in the prefetchFilter so future prefetch
+        // decisions for already-cached lines drop at filter HIT (killing the
+        // 60-80% redundant-prefetch volume on treeadd/health).
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchCA(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
     `elsif DATA_PREFETCHER_CDP_PROBTT
         // Variant F: probabilistic TT overwrite. Same as baseline CDP but a TT
         // existing-entry overwrite is accepted only ttOverwriteNum / ttOverwriteDenom

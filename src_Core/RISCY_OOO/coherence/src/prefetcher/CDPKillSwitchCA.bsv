@@ -1,29 +1,38 @@
-// CDPKillSwitch.bsv — Variant H: do-no-harm CDP via per-PC blacklist.
+// CDPKillSwitchCA.bsv — Variant H5: H4 KILLSWITCH + cache-aware dedup.
 //
-// Problem: Variant B (LLC-routed) helps some benchmarks but not treeadd — even
-// LLC prefetches consume DRAM/bandwidth, and treeadd's mis-targeted prefetches
-// still cost cycles via LLC contention even without L1 pollution. Variant E
-// (adaptive L1/LLC routing) can't fully fix this because LLC is not "free"
-// — the ONLY actually-harmless action for a proven-bad PC is to issue
-// nothing at all.
+// Problem addressed: on benches whose working set fits in LLC (treeadd, health,
+// bisort, em3d on current sizing), H4 issues thousands of prefetches for lines
+// that are ALREADY present in L1 (8,306 of 12,202 on treeadd = 68%; 8,268 of
+// 13,414 on health = 62%). Each such "prefetchHit" pays the full prefetcher
+// pipeline cost (training lookup, PCT lookup, TLB request, filter read/write,
+// MSHR allocation) and saves zero cycles. Per the h4_per_bench_deep_dive
+// writeup, this is the single largest dragging factor on Olden cycles.
 //
-// Design: each PC-table entry carries a small (4-bit) uselessCount. Once a
-// PC accumulates `killThreshold` useless attributions (eviction of
-// wasPrefetch=True line before any demand touched it), ALL further prefetches
-// from that PC are suppressed — not LLC-routed, just dropped. Good PCs that
-// keep delivering useful hits never accumulate enough useless to trip. Patricia
-// should therefore stay L1-prefetched; treeadd / em3d / voronoi / health PCs
-// that are mis-targeting should self-silence.
+// Design: extend the existing dedup filter to approximate the L1 cache's
+// contents. On every L1 cRq refill (demand or prefetch), register the
+// refilled lineAddr in the prefetchFilter with punishable=False. On line
+// eviction, finishEviction already invalidates the filter entry.
 //
-// The useful counter is tracked too but NOT used for the gate — it's there for
-// logging / diagnostics and in case we want to add a forgiveness policy later
-// (e.g. reset uselessCount when useful reaches some level).
+// Net effect: when a prefetch decision arrives at processFilterResp, the
+// filter entry for the candidate lineAddr exists if the line is in L1 (from
+// either a prior prefetch OR a demand refill), so the filter HIT path fires
+// and the prefetch is dropped. Prefetch volume falls; pipeline overhead falls.
 //
-// The useless counter is known to be biased LOW (filter entries lose
-// attribution when they're hash-evicted by newer prefetches before the
-// delayed eviction fires). So killThreshold should be set fairly low —
-// something like 3 — because each observed useless event implies many more
-// un-attributed ones in reality.
+// Scheduling: to avoid a second wrReq port contender on prefetchFilter, we
+// enqueue demand-fill events into a bypass FIFO and drain them in a new rule
+// registerDemandFill, which is added to the existing mutually_exclusive set
+// (doFilterInit / processFilterResp / finishEviction / finishUsefulLookup).
+//
+// punishable=False prevents the demand-fill filter entry from charging a
+// "useless" bump to its PC on eventual eviction (the line was never part of
+// any prefetcher decision). Similarly finishUsefulLookup's punishable guard
+// prevents a useful-hit on a demand-fill from crediting any PC.
+//
+// Inherits from H4:
+// - PC-table with per-PC useful/useless counters.
+// - 1024-entry filter with pcHash + punishable.
+// - Kill-switch gate: shouldIssue(uf, us) = !((us >= killThreshold) && (us > uf))
+// - 3x amplification of useless bumps to offset filter-collision loss.
 
 import MemoryTypes::*;
 import TlbTypes ::*;
@@ -75,7 +84,7 @@ typedef union tagged {
     void                              Decay;
 } PCTableRdAdaptTagT deriving (Bits, FShow);
 
-module mkCDPStatefulRelativeKillSwitch#(
+module mkCDPStatefulRelativeKillSwitchCA#(
     TlbToPrefetcher toTlb,
     Parameter#(trainingTableSize) _,
     Parameter#(pcTableSize) __,
@@ -132,6 +141,11 @@ provisos (
     // the owning PC's usefulCount via an AccUseful tag.
     FIFO#(LineAddr) usefulHitQ <- mkSizedFIFO(4);
     FIFO#(Tuple2#(Bit#(10), LineAddr)) usefulHitPendingQ <- mkSizedFIFO(4);
+    // H5 cache-aware dedup: demand-fill events enqueued from
+    // reportIncomingCacheLine, drained by rule registerDemandFill into the
+    // prefetchFilter (punishable=False). Overflow-bypass so busy L1 refill
+    // bursts don't back-pressure the L1 pipeline.
+    Fifo#(8, Tuple2#(LineAddr, Bit#(16))) demandFillQ <- mkOverflowBypassFifo;
 
     // tlbReqFIFO payload: (vaddr, isNeighbour, crossPage, pcHashOfOrigin, punishable, routeLLC)
     FIFO#(Tuple6#(Addr, Bool, Bool, Bit#(16), Bool, Bool)) tlbReqFIFO <- mkSizedFIFO(4);
@@ -196,7 +210,7 @@ provisos (
         pcInitCount <= pcInitCount + 1;
     endrule
 
-    (* mutually_exclusive = "doFilterInit, processFilterResp, finishEviction, finishUsefulLookup" *)
+    (* mutually_exclusive = "doFilterInit, processFilterResp, finishEviction, finishUsefulLookup, registerDemandFill" *)
     rule doFilterInit(!filterInited);
         prefetchFilter.wrReq(filterInitCount, Invalid);
         if (filterInitCount == ~0) filterInited <= True;
@@ -517,6 +531,20 @@ provisos (
         // the filter entry lets subsequent re-prefetches dedup correctly.
     endrule
 
+    // H5 cache-aware dedup: drain demandFillQ (populated by
+    // reportIncomingCacheLine on demand-miss refills) into prefetchFilter.
+    // punishable=False so this entry doesn't drive useful/useless attribution
+    // for any PC; it exists purely for filter-HIT dedup on subsequent prefetch
+    // decisions. Mutually exclusive with the other filter-write rules.
+    rule registerDemandFill(filterInited);
+        match {.lineAddr, .pcH} = demandFillQ.first;
+        demandFillQ.deq;
+        Bit#(10) filterIdx = hash(lineAddr);
+        prefetchFilter.wrReq(filterIdx, Valid(FilterAccEntryT{
+            lineAddr: lineAddr, pcHash: pcH, punishable: False
+        }));
+    endrule
+
     rule tickDecayCounter(inited);
         decayCounter <= (decayCounter == 0) ? fromInteger(valueOf(decayInterval)) : decayCounter - 1;
     endrule
@@ -529,6 +557,17 @@ provisos (
     endrule
 
     method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
+        // H5 cache-aware dedup. Any non-prefetch cRq refill (demand Ld or St
+        // miss) means the L1 just gained a line. Register it in the filter so
+        // a later prefetch decision for the same line will filter-HIT and be
+        // dropped before costing an MSHR / TLB / filter-write. punishable=False
+        // keeps the entry silent for useful/useless attribution (it was never
+        // a prefetch). Prefetch-side fills are already registered by
+        // processFilterResp, so we don't re-enqueue for cRqIsPrefetch=True.
+        if (inited && wasMiss && !cRqIsPrefetch && !wasNeighbourPrefetch) begin
+            LineAddr la = getLineAddr(getReqAddr(req));
+            demandFillQ.enq(tuple2(la, getPcHash(req)));
+        end
         if (inited && getReqOp(req) == Ld && !cRqIsPrefetch && wasMiss && !wasNeighbourPrefetch) begin
             let tmp = L1ToCDPT{req: req, line: line};
             l1ToCDP.enq(tmp);
