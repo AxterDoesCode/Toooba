@@ -207,6 +207,26 @@
 
 `endif
 
+// SMALLISH-sized L1 (8KB, 4-way) but TINY LLC (128KB) — used to push
+// working sets of health/treeadd/em3d/bisort out of LLC so their
+// prefetches must fetch from DRAM (DRAM-bypass headroom test).
+`ifdef CACHE_ALEX_SMALLISH_TINYLL
+
+    // L1 (same as ALEX_SMALLISH)
+    `define LOG_L1_LINES 7 // 8KB
+    `define LOG_L1_WAYS 2 // 4 ways
+    `define L1D_CRQ_NUM 8
+
+    // LLC: 128KB (down from 1MB)
+    `define LOG_LLC_LINES 11 // 2048 lines * 64B = 128KB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+    // There is already 20 cycles of baseline latency
+    `undef DRAM_LATENCY
+    `define DRAM_LATENCY 80
+
+`endif
+
 //
 // ==== CORE SIZE ====
 //

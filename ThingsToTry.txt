@@ -140,6 +140,9 @@ TODO: Keep in mind that whether some sort of global history is doing, learn some
     Could take the pcs that were previously accessed, hash them down to 4 bits, then hash those down to four bits
         Then you use this as a key into the confidence
     Maybe pipe branch predictor behaviour into the prefetcher
+
+TODO: Investigate demand misses in the best runs, see if they could've even been prevented in the first place
+TODO: Path-history based TT/PCT with H8 stuff (these have the best pipeline and we haven't tested path history properly with the MESI change)
 ---
 
 ## mkCDPStatefulRelative — Current Mechanism (ac2822CDPNextLinePointerChasing)

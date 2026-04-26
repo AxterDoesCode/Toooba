@@ -10,6 +10,11 @@ import CDPProbTT::*;
 import CDPKillSwitch::*;
 import CDPKillSwitchH6::*;
 import CDPKillSwitchH7::*;
+import CDPKillSwitchH8::*;
+import CDPKillSwitchH8B::*;
+import CDPKillSwitchH9::*;
+import CDPKillSwitchH9B::*;
+import CDPKillSwitchH10::*;
 import CDPKillSwitchCA::*;
 import CDPAttrib::*;
 import CDPHybrid::*;
@@ -41,6 +46,9 @@ import CDPPureStride::*;
 import CDPBMGSDeg::*;
 import CDPBMAligned::*;
 import CDPIRatio::*;
+import DBP::*;
+import SPP::*;
+import SPPCooksey::*;
 import CCTypes::*;
 import Types::*;
 import TlbTypes::*;
@@ -173,6 +181,82 @@ provisos (
         Parameter#(1)    confidenceThreshold <- mkParameter;
         Parameter#(5)    killThreshold <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH6(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H8
+        // Variant H8: identical to H7 (same kill-switch + overflow-bypass FIFO).
+        // Exists as a refactor playground -- current revision folds the 6
+        // parallel pending-TLB register vectors into a single struct.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH8(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H8B
+        // Variant H8B: 4-bit counters + halving-on-saturation. Isolates
+        // halving's effect at H7's saturation point.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH8B(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H9
+        // Variant H9: H7 + D-style shift-XOR path signature. pcTable keyed by
+        // hash(pcHash ^ pathSig); TT stores scanSig (not raw pcHash) in its
+        // pcHash field. Path signature updated in drainIncomingEvents only.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH9(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H9B
+        // Variant H9B: H7 + D2-style XOR-of-last-4 path signature. Order-
+        // independent ring buffer; hypothesis is that permutation collapse
+        // reduces training dilution seen in H9.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH9B(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H10
+        // Variant H10: H7 + per-prefetch lead-time instrumentation. Algorithm
+        // identical to H7; filter entry gains issueCycle. On useful hit, log
+        // line includes leadTime for post-hoc DRAM-vs-LLC classification.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH10(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H11
+        // Variant H11: H7 with confidenceThreshold=3 (was 1). More selective
+        // issuing — only emits prefetches when an offset has been "validated"
+        // multiple times. Hypothesis: silences treeadd's polluting PCs
+        // (9094/909a/9082, 5.6% accuracy) while preserving patricia's 84e0
+        // (96% accuracy, saturates fast).
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(3)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH7(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H12
+        // Variant H12: H7 with confidenceThreshold=5. Even more selective.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(5)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH7(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
     `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H7
         // Variant H7: H4 + non-blocking incomingQ via mkOverflowBypassFifo.
         // enq is always ready — on full, the oldest staged event is dropped
@@ -413,6 +497,26 @@ provisos (
     `elsif DATA_PREFETCHER_CDP_BMGSDEG
         Parameter#(16)   matchBits <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPBMGSDeg(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_SPPCOOKSEY
+        // Variant SPPCooksey: SPP + Cooksey bit-match pointer discovery
+        // on demand Ld L1 misses. SPP learns intra-page delta patterns,
+        // Cooksey catches cross-page pointer-chase by scanning returned
+        // cache-line data for pointer-shaped values. Orthogonal fusion
+        // targeting SPP's weakness on scattered pointer-chase (patricia).
+        CacheLinePrefetcher#(reqT) m <- mkSPPCooksey(toTlb);
+    `elsif DATA_PREFETCHER_SPP
+        // Variant SPP: Signature Path Prefetcher (Kim/Pugsley/Gratz/Reddy/Wilkerson/Chishti MICRO '16).
+        // 256-entry ST + 512-entry PT + 1024-entry PF, path-confidence
+        // lookahead prefetching. Ported from ldh35-fpga-cap_chaser with
+        // interface adapted to current tree. ~5.37 KB of state.
+        CacheLinePrefetcher#(reqT) m <- mkSPP(toTlb);
+    `elsif DATA_PREFETCHER_DBP
+        // Variant DBP: Dependence-Based Prefetcher (Roth/Moshovos/Sohi ASPLOS '98).
+        // 128-entry PPW + 256-entry CT; learns per-PC producer->consumer
+        // correlations via value equality; issues prefetches as
+        // (producer's loaded value + learned offset). Faithful paper
+        // reimplementation; no bit-match, no confidence gate.
+        CacheLinePrefetcher#(reqT) m <- mkDBP(toTlb);
     `elsif DATA_PREFETCHER_CDP_BMALIGNED
         // BM-Aligned + MB20: stack both false-positive filters.
         // - 16-byte alignment check on candidate ([3:0]==0) — rejects most
