@@ -48,13 +48,13 @@ import multiprocessing
 # DEBUGGING ONLY: This exclude list allows skipping some specific test
 
 exclude_list = [
-    # Expanded pointer-chasing set (8 benchmarks): bh, bisort, em3d, health,
-    # patricia, perimeter, treeadd, tsp. Voronoi excluded temporarily as its
-    # run takes a long time and noise dominates small changes on it.
+    # Standard 8-bench dissertation set (bh, bisort, em3d, health, patricia,
+    # perimeter, treeadd, tsp). Power excluded — see power_mid_2026-04-28.md.
     "aes.bin", "limits.bin", "adpcm_decode.bin", "adpcm_encode.bin",
     "bitcount.bin", "blowfish.bin", "crc.bin", "picojpeg.bin", "qsort.bin",
     "randmath.bin", "rc4.bin", "rsa.bin", "sha.bin", "basicmath.bin",
-    "stringsearch.bin", "power.bin",
+    "stringsearch.bin",
+    "power.bin",
     "dijkstra.bin", "mst.bin", "voronoi.bin",
 ]
 # Full exclude (skip everything except treeadd):

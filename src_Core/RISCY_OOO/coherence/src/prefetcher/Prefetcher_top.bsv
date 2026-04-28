@@ -15,6 +15,9 @@ import CDPKillSwitchH8B::*;
 import CDPKillSwitchH9::*;
 import CDPKillSwitchH9B::*;
 import CDPKillSwitchH10::*;
+import CDPKillSwitchH13::*;
+import CDPKillSwitchH15::*;
+import CDPKillSwitchH16::*;
 import CDPKillSwitchCA::*;
 import CDPAttrib::*;
 import CDPHybrid::*;
@@ -257,6 +260,50 @@ provisos (
         Parameter#(5)    confidenceThreshold <- mkParameter;
         Parameter#(5)    killThreshold <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH7(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H13
+        // Variant H13: H7 + CDP fires on store misses too. Tests whether
+        // bh/perimeter/tsp gain anything from St-miss-driven training.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH13(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H14
+        // Variant H14: H7 with decayInterval=128 (was 256). Faster decay
+        // may break the saturation deadlock on bad PCs (uf=us=15) by
+        // ticking counters down before they re-saturate.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(128) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH7(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H15
+        // Variant H15: H7 with confidence counters narrowed from 3-bit to
+        // 2-bit. First step in BRAM-table-entry size reduction sweep.
+        // Saves 15 bits/entry × 1024 entries ≈ 1.92 KB of pcTable BRAM.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH15(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H16
+        // Variant H16: H15 + max-confidence offset picker. The original
+        // H7/H15 loop's last-write-wins semantics arbitrarily favoured
+        // the most-negative passing offset; H16 adds a `> bestConf` check
+        // so the picker actually uses confidence values for ranking.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH16(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
     `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H7
         // Variant H7: H4 + non-blocking incomingQ via mkOverflowBypassFifo.
         // enq is always ready — on full, the oldest staged event is dropped
