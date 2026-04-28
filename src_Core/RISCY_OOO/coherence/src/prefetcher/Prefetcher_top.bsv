@@ -18,6 +18,8 @@ import CDPKillSwitchH10::*;
 import CDPKillSwitchH13::*;
 import CDPKillSwitchH15::*;
 import CDPKillSwitchH16::*;
+import CDPKillSwitchH17::*;
+import CDPKillSwitchH18::*;
 import CDPKillSwitchCA::*;
 import CDPAttrib::*;
 import CDPHybrid::*;
@@ -304,6 +306,30 @@ provisos (
         Parameter#(1)    confidenceThreshold <- mkParameter;
         Parameter#(5)    killThreshold <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH16(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H17
+        // Variant H17: H16 + 16-bit hash tags for the prefetchFilter and
+        // training table (replacing the full 58-bit lineAddr and 64-bit
+        // storedVaddr respectively). Total CDP BRAM 18.13 KB → 11.88 KB
+        // (–34%). Trade-off: ~1.6% per-query collision rate, manifesting
+        // as occasional filter false-positives or TT false-matches.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH17(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H18
+        // Variant H18: H16 + 16-bit hash tag on the prefetchFilter only
+        // (training table keeps full 64-bit storedVaddr). Saves 5.48 KB BRAM
+        // (–30%) without the TT-collision path that hurt H17 on tsp.
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH18(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
     `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H7
         // Variant H7: H4 + non-blocking incomingQ via mkOverflowBypassFifo.
         // enq is always ready — on full, the oldest staged event is dropped
