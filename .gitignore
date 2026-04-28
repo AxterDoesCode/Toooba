@@ -15,3 +15,6 @@ Tests/Logs
 AA_*
 symbol_table.txt
 vpi_wrapper_*
+
+# Dissertation lives in its own git repo at dissertation/
+dissertation/
