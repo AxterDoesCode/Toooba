@@ -20,6 +20,7 @@ import CDPKillSwitchH15::*;
 import CDPKillSwitchH16::*;
 import CDPKillSwitchH17::*;
 import CDPKillSwitchH18::*;
+import CDPKillSwitchH19::*;
 import CDPKillSwitchCA::*;
 import CDPAttrib::*;
 import CDPHybrid::*;
@@ -330,6 +331,18 @@ provisos (
         Parameter#(1)    confidenceThreshold <- mkParameter;
         Parameter#(5)    killThreshold <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH18(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H19
+        // Variant H19: H18 + neighbour-chain fires on miss too (drops
+        // the `!wasMiss` gate). Tests whether second-hop pointer chase
+        // is more useful when the neighbour line has just been fetched
+        // (vs only when it was already cached).
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH19(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
     `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H7
         // Variant H7: H4 + non-blocking incomingQ via mkOverflowBypassFifo.
         // enq is always ready — on full, the oldest staged event is dropped
