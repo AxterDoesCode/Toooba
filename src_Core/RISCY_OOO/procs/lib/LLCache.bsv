@@ -305,7 +305,13 @@ module mkLLCache(LLCache);
 `ifdef NO_LOAD_RESP_E
     function Bool respLoadWithE(Bool fromMem) = False;
 `else
-    function Bool respLoadWithE(Bool fromMem) = fromMem;
+    // Aggressively upgrade S loads to E regardless of LLC hit/miss.
+    // Matches §3.4.2 of the CapPtr/CapChaser paper (Susters 2022). Without
+    // this, LLC hits serve S-asking prefetches in S; a subsequent demand
+    // Load (which requests E in single-core, see MemExePipeline.bsv:1345)
+    // then incurs a permsOnly S→E upgrade roundtrip, eating ~20 cycles per
+    // useful prefetch. Branch ldh35-fpga-cap_chaser has the same change.
+    function Bool respLoadWithE(Bool fromMem) = True;
 `endif
     LLBankWrapper cache <- mkLLBank(mkLastLvCRqMshr, mkLLPipeline, respLoadWithE);
 `endif // SELF_INV_CACHE

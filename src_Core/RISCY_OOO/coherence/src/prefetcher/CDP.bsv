@@ -96,6 +96,10 @@ Add#(a__, matchBits, 27)
         noAction;
     endmethod
 
+    method Action reportUsefulPrefetch(LineAddr lineAddr);
+        noAction;
+    endmethod
+
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
         $display("%t AlexLog: CDP Naive prefetcher report %s addr %h", cur_cycle, hitMiss == HIT ? "HIT" : "MISS", addr);
     endmethod
@@ -184,7 +188,12 @@ provisos (
     Add#(h__, matchBits, 27)
 );
 
-    FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkFIFO;
+    // Sized to 32: reportIncomingCacheLine is called from L1Bank's cRqHit rule
+    // which has no always_ready guard on its implicit conditions. If this FIFO
+    // fills (default mkFIFO is only 2 entries), L1Bank stalls waiting for CDP
+    // to catch up — directly adding cycles per stall. Empirically this was a
+    // major hidden contributor to CDP's net-harm on several benchmarks.
+    FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkSizedFIFO(32);
 
     // 2-way set-associative training table
     // addrT = trainingTableIdxT, wayT = Bit#(1), dataT = TrainingTableEntryT, tagT = Addr
@@ -201,14 +210,18 @@ provisos (
     // Flat PC confidence table
     RWBramCore#(pcTableIdxT, Maybe#(PCTableEntryT)) pcTable <- mkRWBramCoreForwarded();
 
-    // 64-entry direct-mapped prefetch filter: avoids issuing duplicate prefetches for the same cache line
-    RWBramCore#(Bit#(6), Maybe#(LineAddr)) prefetchFilter <- mkRWBramCoreForwarded();
+    // 256-entry direct-mapped prefetch filter: avoids issuing duplicate prefetches
+    // for the same cache line. Grown from 64 so a wider window of recent prefetches
+    // is caught as duplicates (see parser: 60-82% of prefetches were hitting L1
+    // because the line was already cached, and the filter is our only line of
+    // defence against re-dispatching them).
+    RWBramCore#(Bit#(8), Maybe#(LineAddr)) prefetchFilter <- mkRWBramCoreForwarded();
 
     Fifo#(16, NextCandT) nextCandidateBuffer <- mkOverflowBypassFifo;
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdReqFIFO <- mkSizedFIFO(64);
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdRelTagT)) pcTableRdTagQ    <- mkFIFO;
     // Filter pipeline: (filterIdx, candidate) queued after TLB resp, consumed by processFilterResp
-    FIFO#(Tuple2#(Bit#(6), NextCandT)) filterPendingQ <- mkFIFO;
+    FIFO#(Tuple2#(Bit#(8), NextCandT)) filterPendingQ <- mkFIFO;
     // Eviction notifications from L1: clear filter entry for evicted prefetch lines
     FIFO#(LineAddr) evictionQ <- mkSizedFIFO(4);
 
@@ -216,7 +229,10 @@ provisos (
     // Free-list of TLB request slot IDs: dequeue to get a slot before issuing, enqueue back on response.
     // This gives natural backpressure — processTlbReq blocks when all LLCTlbReqNum slots are in use,
     // preventing the monotonically-incrementing counter approach from aliasing in-flight requests.
-    FIFO#(Tuple3#(Addr, Bool, Bool)) tlbReqFIFO <- mkSizedFIFO(4); // (vaddr, isNeighbourLine, crossPage)
+    // Sized 32 (was 4) — reportIncomingCacheLine's neighbour-chain hit path
+    // enqueues here, and if the TLB is busy this small FIFO fills quickly and
+    // back-pressures L1Bank's cRqHit rule.
+    FIFO#(Tuple3#(Addr, Bool, Bool)) tlbReqFIFO <- mkSizedFIFO(32); // (vaddr, isNeighbourLine, crossPage)
     Fifo#(LLCTlbReqNum, LLCTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
     Vector#(LLCTlbReqNum, Reg#(Addr)) pendCandVaddr  <- replicateM(mkRegU);
     Vector#(LLCTlbReqNum, Reg#(Bool)) pendIsNeighbourLine <- replicateM(mkRegU);
@@ -230,7 +246,7 @@ provisos (
     Reg#(Bit#(pcTableIdxBits)) pcInitCount <- mkReg(0);
     // Prefetch filter init (64 entries)
     Reg#(Bool) filterInited <- mkConfigReg(False);
-    Reg#(Bit#(6)) filterInitCount <- mkReg(0);
+    Reg#(Bit#(8)) filterInitCount <- mkReg(0);
     // TLB free-queue init
     Reg#(Bool) tlbReqFreeQInited <- mkConfigReg(False);
     Reg#(LLCTlbReqIdx) tlbReqFreeQInitCount <- mkReg(0);
@@ -526,7 +542,7 @@ provisos (
         if (!resp.haveException) begin
             NextCandT cand = NextCandT{paddr: resp.paddr, vaddr: candVaddr, isNeighbourLine: isNeighbourLine};
             LineAddr lineAddr = getLineAddr(resp.paddr);
-            Bit#(6) filterIdx = hash(lineAddr);
+            Bit#(8) filterIdx = hash(lineAddr);
             prefetchFilter.rdReq(filterIdx);
             filterPendingQ.enq(tuple2(filterIdx, cand));
             $display("%0d AlexLog: CDP Rel TLB resp: vaddr %h -> paddr %h lineAddr %h crossPage %b",
@@ -557,7 +573,7 @@ provisos (
     rule doEvictionClear(filterInited);
         LineAddr lineAddr = evictionQ.first;
         evictionQ.deq;
-        Bit#(6) filterIdx = hash(lineAddr);
+        Bit#(8) filterIdx = hash(lineAddr);
         prefetchFilter.wrReq(filterIdx, Invalid);
         $display("%t AlexLog: CDP Rel filter eviction clear: lineAddr %h idx %d", cur_cycle, lineAddr, filterIdx);
     endrule
@@ -640,6 +656,11 @@ provisos (
 
     method Action reportEviction(LineAddr lineAddr);
         evictionQ.enq(lineAddr);
+    endmethod
+
+    method Action reportUsefulPrefetch(LineAddr lineAddr);
+        // baseline CDP doesn't track per-PC usefulness — only the adaptive variant does.
+        noAction;
     endmethod
 
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr;
