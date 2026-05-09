@@ -55,6 +55,7 @@ import Prefetcher_intf::*;
 import Prefetcher_top::*;
 import TlbTypes::*;
 import CDP::*;
+import ProcTypes::*;
 `ifdef PERFORMANCE_MONITORING
 import PerformanceMonitor::*;
 import SpecialRegs::*;
@@ -193,6 +194,10 @@ module mkL1Bank#(
     // MSHR extension for prefetch requests
     Vector#(cRqNum, Reg#(Bool)) cRqIsPrefetch <- replicateM(mkReg(?));
     Vector#(cRqNum, Reg#(Bool)) cRqIsNeighbourPrefetch <- replicateM(mkReg(?));
+
+    // Running count of demand loads that hit on a line brought in by a prefetch.
+    // Emitted in the "CDP Rel useful prefetch hit" log line so parselogNew can compute accuracy.
+    Reg#(Bit#(32)) usefulPrefetchCnt <- mkReg(0);
 
     // A queue for responses from LL prefetches
     // We should inform the prefetcher that its prefetch to the LLC hit, but that might conflict with telling the prefetcher
@@ -446,6 +451,11 @@ endfunction
             rqToPQ.enq(cRqToP);
             if (verbose) $display("%t L1 %m sendPrefetchRqToP: ", $time, fshow(cRqToP));
         end else begin
+            // Prefetch asks S + canUpToE (via ProcRq below; canUpToE is
+            // implicit in the LLC-side logic). LLCache.bsv's respLoadWithE=True
+            // (CapPtr paper §3.4.2) upgrades the response to E on both LLC hits
+            // and misses in single-core, so the demand Load (which asks E) can
+            // cRqHit directly without paying an S→E upgrade roundtrip.
             procRqT r = ProcRq {
                 id: ?, //Or maybe do 0 here
                 addr: prefetch.addr,
@@ -682,7 +692,12 @@ endfunction
         LineDataOffset dataSel = getLineDataOffset(req.addr);
         if (ram.info.other.wasPrefetch && !cRqIsPrefetch[n] && req.op == Ld) begin
             //Hit on a prefetched cache line!
-            $display("%t AlexLog: Hit on a prefetched cache line! paddr: %h | lineAddr: %h", $time, req.addr, getLineAddr(req.addr));
+            usefulPrefetchCnt <= usefulPrefetchCnt + 1;
+            $display("%0d AlexLog: CDP Rel useful prefetch hit addr %h cUseful %d",
+                cur_cycle, req.addr, usefulPrefetchCnt + 1);
+            // Notify the prefetcher so adaptive/kill-switch variants can
+            // attribute the useful hit back to the owning PC (filter-indexed).
+            prefetcher.reportUsefulPrefetch(getLineAddr(req.addr));
         `ifdef PERF_COUNT
             usedPrefetchCnt.incr(1);
         `endif

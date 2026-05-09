@@ -33,6 +33,11 @@ interface CacheLinePrefetcher#(
     method Action reportAccess(Addr addr, Bit#(16) pcHash, HitOrMiss hitMiss, Line line, Vpn reqVpn, MemOp op, Bool isPrefetch);
     method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
     method Action reportEviction(LineAddr lineAddr);
+    // Called by L1Bank when a demand load hits a line whose wasPrefetch bit is
+    // still set (i.e. the line was brought in by a prefetch and this is the
+    // first demand access to it). Lets a CDP variant look up the pcHash that
+    // owned the prefetch (via its filter) and bump that PC's usefulCount.
+    method Action reportUsefulPrefetch(LineAddr lineAddr);
     method ActionValue#(PendingPrefetch) getNextPrefetchAddr();
 endinterface
 
@@ -53,6 +58,9 @@ module mkPCToCacheLinePrefetcherAdapter#(module#(PCPrefetcher) mkPCPrefetcher)(C
         $display("%t AlexLog: CDP reportIncomingCacheLine", $time);
     endmethod
     method Action reportEviction(LineAddr lineAddr);
+        noAction;
+    endmethod
+    method Action reportUsefulPrefetch(LineAddr lineAddr);
         noAction;
     endmethod
 endmodule

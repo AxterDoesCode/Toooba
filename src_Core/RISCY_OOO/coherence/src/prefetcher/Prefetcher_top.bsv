@@ -1,6 +1,7 @@
 import Prefetcher::*;
 import Prefetcher_intf::*;
 import CDP::*;
+import CDPKillSwitchH19::*;
 import CCTypes::*;
 import Types::*;
 import TlbTypes::*;
@@ -35,6 +36,17 @@ provisos (
     `elsif DATA_PREFETCHER_CDP_NAIVE
         Parameter#(16)   matchBits <- mkParameter;
         CacheLinePrefetcher#(reqT) m <- mkCDPNaive(toTlb, matchBits);
+    `elsif DATA_PREFETCHER_CDP_KILLSWITCH_H19
+        // SelectiveCDP: per-PC confidence table + dual-mode picker +
+        // neighbour-chain follow-up + prefetch filter + kill switch.
+        // Neighbour-chain fires on both hit and miss responses (H19 default).
+        Parameter#(64) trainingTableSize <- mkParameter;
+        Parameter#(1024) pcTableSize <- mkParameter;
+        Parameter#(256) decayInterval <- mkParameter;
+        Parameter#(16)   matchBits <- mkParameter;
+        Parameter#(1)    confidenceThreshold <- mkParameter;
+        Parameter#(5)    killThreshold <- mkParameter;
+        CacheLinePrefetcher#(reqT) m <- mkCDPStatefulRelativeKillSwitchH19(toTlb, trainingTableSize, pcTableSize, decayInterval, matchBits, confidenceThreshold, killThreshold);
     `endif
     //let m <- mkPCPrefetcherAdapter(mkAlwaysRequestPrefetcher);
 `else 
