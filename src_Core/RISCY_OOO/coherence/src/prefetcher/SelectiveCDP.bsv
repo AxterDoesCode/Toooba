@@ -1,88 +1,3 @@
-// CDPKillSwitchH19.bsv — Variant H19: H18 + neighbour-chain follow-up
-// fires on neighbour prefetch MISS as well as hit.
-//
-// H18's `EvNeighbourChain` classification requires `!wasMiss`: the
-// neighbour line had to be already in L1 for the chain to fire. That
-// means chain only happens when the neighbour prefetch was wasted
-// (line was already cached). H19 drops the `!wasMiss` gate so the
-// chain also fires when the neighbour prefetch caused a real fetch
-// from LLC/DRAM and the line just arrived. Hypothesis: freshly-fetched
-// lines are more likely to contain pointers the program is about to
-// dereference, so chain-on-miss should be at least as useful as
-// chain-on-hit.
-//
-// Original H18 description follows.
-//
-// CDPKillSwitchH18.bsv — Variant H18: H16 + 16-bit hash tag on the
-// prefetch filter only (training table keeps full 64-bit storedVaddr).
-//
-// Motivation: H17 replaced both filter and TT tags with 16-bit hashes,
-// saving 6.25 KB but losing 0.33 pp geomean — most of the cost coming
-// from TT false matches that fabricate spurious training events into
-// the PC table (most visibly tsp, where H17 issues 7454 prefetches with
-// 94% lateness, vs H16 which issues zero on the same workload).
-//
-// H18 keeps TT untouched and only hashes the filter. Failure mode is
-// limited to filter false positives: a small fraction of legitimate new
-// prefetches get suppressed because the filter's idx+tag matches a
-// recently-issued unrelated line. This is a one-time loss of opportunity;
-// the PC table never sees fabricated evidence.
-//
-// BRAM accounting:
-//   Training Table:  unchanged (1.36 KB)
-//   PC Table:        unchanged (7.04 KB)
-//   Prefetch Filter: 1024 × 76 b → 1024 × 34 b   (–5.48 KB)
-// Total: 18.13 KB → 12.65 KB (–30%).
-//
-// Original H16 description follows.
-//
-// CDPKillSwitchH16.bsv — Variant H16: H15 + max-confidence offset picker.
-//
-// H15 narrowed conf to 2-bit and lost +0.236% on health. Root cause: the
-// PrefetchIssue offset-selection loop in H7/H15 has the form
-//
-//     for (i = 14 downto 0) if (entry.conf[i] >= threshold) begin
-//         bestRelOffset = i - 7; ... end
-//
-// which (due to Bluespec last-write-wins semantics) selects the LOWEST i
-// among those passing threshold — independent of the actual conf value.
-// With 2-bit conf, more offsets cluster at saturation, so the multiple-
-// passing case fires more often → the arbitrary tail-of-loop pick
-// dominates more decisions.
-//
-// H16 adds a `> bestConf` comparison so the picker actually uses the
-// confidence values for ranking. Compiles to a 15-stage combinational
-// max-tree, no extra cycles. Strict superset of H15 in mechanism;
-// inherits all H15's BRAM savings (1.92 KB).
-//
-// Original H7 description follows.
-//
-// CDPKillSwitch.bsv — Variant H: do-no-harm CDP via per-PC blacklist.
-//
-// Problem: Variant B (LLC-routed) helps some benchmarks but not treeadd — even
-// LLC prefetches consume DRAM/bandwidth, and treeadd's mis-targeted prefetches
-// still cost cycles via LLC contention even without L1 pollution. Variant E
-// (adaptive L1/LLC routing) can't fully fix this because LLC is not "free"
-// — the ONLY actually-harmless action for a proven-bad PC is to issue
-// nothing at all.
-//
-// Design: each PC-table entry carries a small (4-bit) uselessCount. Once a
-// PC accumulates `killThreshold` useless attributions (eviction of
-// wasPrefetch=True line before any demand touched it), ALL further prefetches
-// from that PC are suppressed — not LLC-routed, just dropped. Good PCs that
-// keep delivering useful hits never accumulate enough useless to trip. Patricia
-// should therefore stay L1-prefetched; treeadd / em3d / voronoi / health PCs
-// that are mis-targeting should self-silence.
-//
-// The useful counter is tracked too but NOT used for the gate — it's there for
-// logging / diagnostics and in case we want to add a forgiveness policy later
-// (e.g. reset uselessCount when useful reaches some level).
-//
-// The useless counter is known to be biased LOW (filter entries lose
-// attribution when they're hash-evicted by newer prefetches before the
-// delayed eviction fires). So killThreshold should be set fairly low —
-// something like 3 — because each observed useless event implies many more
-// un-attributed ones in reality.
 
 import MemoryTypes::*;
 import TlbTypes ::*;
@@ -102,76 +17,58 @@ import Prefetcher_intf::*;
 import Cur_Cycle::*;
 import CDP::*;
 
-// Local 2-bit confidence vector (H15-specific) so we don't perturb other variants.
 typedef Vector#(15, Bit#(2)) PCRelOffsetConf2BitT;
 
-// Extended PC-table entry with per-PC accuracy counters; conf narrowed to 2 bits.
 typedef struct {
     Bit#(16)             pcHash;
     PCRelOffsetConf2BitT conf;
-    Bit#(4)              usefulCount;   // saturating at 15
-    Bit#(4)              uselessCount;  // saturating at 15
+    Bit#(4)              usefulCount;
+    Bit#(4)              uselessCount;
 } PCTableAcc2BitEntryT deriving (Bits, FShow, Eq);
 
-// Decision output carries the routing choice so getNextPrefetchAddr can
-// set PendingPrefetch.nextLevel appropriately.
 typedef struct {
     Addr paddr;
     Addr vaddr;
     Bool isNeighbourLine;
-    Bool routeLLC;                  // True → nextLevel=True (LLC), False → L1
+    Bool routeLLC;
 } NextCandAdaptT deriving (Bits, FShow, Eq);
 
-// Filter entry: 16-bit hash tag (replaces 58-bit LineAddr) + originating-PC
-// pcHash for kill-switch attribution. The full lineAddr is not stored.
 typedef struct {
-    Bit#(16) addrTag;               // tagOfLineAddr(lineAddr)
+    Bit#(16) addrTag;
     Bit#(16) pcHash;
-    Bool     punishable;            // False for neighbour-chain entries (no clean attribution)
+    Bool     punishable;
 } FilterAccHashedEntryT deriving (Bits, FShow, Eq);
 
-// Tag from a LineAddr (cache-line-granular address, 58 bits). Skips the low
-// 10 bits used by hash() for the filter index, so idx+tag together cover a
-// 26-bit unique-window of the line address space.
 function Bit#(16) tagOfLineAddr(LineAddr a);
     Bit#(16) s0 = a[25:10];
     Bit#(16) s1 = a[41:26];
-    Bit#(16) s2 = zeroExtend(a[57:42]);  // top 16 bits, zero-extended
+    Bit#(16) s2 = zeroExtend(a[57:42]);
     return s0 ^ s1 ^ s2;
 endfunction
 
 typedef union tagged {
     Tuple2#(Bit#(16), RelLineOffset) Training;
     Tuple3#(Addr, Line, Vpn)         PrefetchIssue;
-    Bit#(16)                          AccUseful;    // (pcHash) — bump usefulCount
-    Bit#(16)                          AccUseless;   // (pcHash) — bump uselessCount
+    Bit#(16)                          AccUseful;
+    Bit#(16)                          AccUseless;
     void                              Decay;
 } PCTableRdAdaptTagT deriving (Bits, FShow);
 
-// Decouple reportIncomingCacheLine from the multi-FIFO fan-out. Previously
-// the method synchronously enqueued into 1-3 downstream FIFOs (l1ToCDP,
-// pcTableRdReqFIFO, ttRespQ, ttRdReqSupFIFO, tlbReqFIFO), so any of them
-// being full back-pressured pipelineResp_cRq in L1Bank.bsv → entire L1
-// pipeline stalled. On treeadd this cost ~9 cycles per prefetch (+0.6
-// cyc/demand) even though prefetch generation is already rate-limited via
-// descending_urgency. Staging into a single 32-entry FIFO with a separate
-// drain rule isolates that back-pressure inside the prefetcher.
-
 typedef enum {
-    EvIgnore,        // does not trigger CDP work
-    EvDemandLdMiss,  // feeds l1ToCDP for training candidates
-    EvDemandLdHit,   // feeds pcTableRdReqFIFO + ttRespQ + ttRdReqSupFIFO
-    EvNeighbourChain // feeds tlbReqFIFO for chain-follow
+    EvIgnore,
+    EvDemandLdMiss,
+    EvDemandLdHit,
+    EvNeighbourChain
 } CDPIncomingBranchT deriving (Bits, FShow, Eq);
 
-module mkCDPStatefulRelativeKillSwitchH19#(
+module mkSelectiveCDP#(
     TlbToPrefetcher toTlb,
     Parameter#(trainingTableSize) _,
     Parameter#(pcTableSize) __,
     Parameter#(decayInterval) ___,
     Parameter#(matchBits) ____,
     Parameter#(confidenceThreshold) _____,
-    Parameter#(killThreshold) ______  // % threshold (out of 16) for L1-routing
+    Parameter#(killThreshold) ______
 )(CacheLinePrefetcher#(reqT))
 provisos (
     Bits#(reqT, _reqSz),
@@ -197,18 +94,6 @@ provisos (
 
     FIFO#(L1ToCDPT#(reqT)) l1ToCDP <- mkSizedFIFO(8);
 
-    // Staging FIFO for reportIncomingCacheLine events. The method does a
-    // single enq here; drainIncomingEvents fans out to the downstream FIFOs
-    // at its own pace, so any CDP-pipeline back-pressure never reaches the
-    // L1 pipeline's pipelineResp_cRq rule.
-    // H7: non-blocking staging FIFO via mkOverflowBypassFifo. enq is always
-    // ready (notFull trivially True); when full, the oldest entry is dropped
-    // to make room for the new one. Trades CDP training quality (some events
-    // are lost) for guaranteeing reportIncomingCacheLine never blocks
-    // pipelineResp_cRq. The 32-entry size is kept; the semantics change is
-    // what matters. Confirmed via instrumentation that the blocking variant
-    // (H4 decoupled) fills the 32-entry FIFO for 9.9% of em3d cycles
-    // (20-51% in the compute-light phase) causing L1 pipeline stalls.
     Fifo#(32, Tuple3#(CDPIncomingBranchT, reqT, Line)) incomingQ <- mkOverflowBypassFifo;
 
     function Bool ttIsMatch(TrainingTableEntryT e, Addr tag) = e.valid && e.storedVaddr == tag;
@@ -225,18 +110,12 @@ provisos (
     Fifo#(16, NextCandAdaptT) nextCandidateBuffer <- mkOverflowBypassFifo;
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdAdaptTagT)) pcTableRdReqFIFO <- mkSizedFIFO(64);
     FIFO#(Tuple2#(pcTableIdxT, PCTableRdAdaptTagT)) pcTableRdTagQ    <- mkFIFO;
-    // Filter pipeline: (filterIdx, candidate, pcHashOfOrigin) after TLB resp.
     FIFO#(Tuple3#(Bit#(10), NextCandAdaptT, Bit#(16))) filterPendingQ <- mkFIFO;
     FIFO#(LineAddr) evictionQ <- mkSizedFIFO(4);
-    // Split eviction pipeline so we can read the filter before invalidating.
     FIFO#(Tuple2#(Bit#(10), LineAddr)) evictionPendingQ <- mkSizedFIFO(4);
-    // Useful-hit lookup pipeline: reportUsefulPrefetch() enqs lineAddr,
-    // startUsefulLookup reads the filter, finishUsefulLookup on match charges
-    // the owning PC's usefulCount via an AccUseful tag.
     FIFO#(LineAddr) usefulHitQ <- mkSizedFIFO(4);
     FIFO#(Tuple2#(Bit#(10), LineAddr)) usefulHitPendingQ <- mkSizedFIFO(4);
 
-    // tlbReqFIFO payload: (vaddr, isNeighbour, crossPage, pcHashOfOrigin, punishable, routeLLC)
     FIFO#(Tuple6#(Addr, Bool, Bool, Bit#(16), Bool, Bool)) tlbReqFIFO <- mkSizedFIFO(4);
     Fifo#(LLCTlbReqNum, LLCTlbReqIdx) tlbReqFreeQ <- mkBypassFifo;
     Vector#(LLCTlbReqNum, Reg#(Addr))     pendCandVaddr        <- replicateM(mkRegU);
@@ -244,8 +123,6 @@ provisos (
     Vector#(LLCTlbReqNum, Reg#(Bool))     pendCrossPage        <- replicateM(mkRegU);
     Vector#(LLCTlbReqNum, Reg#(Bit#(16))) pendPcHash           <- replicateM(mkRegU);
     Vector#(LLCTlbReqNum, Reg#(Bool))     pendPunishable       <- replicateM(mkRegU);
-    // Accuracy decision for this prefetch, captured at decision time so it
-    // flows to the filter and ultimately to getNextPrefetchAddr's routing choice.
     Vector#(LLCTlbReqNum, Reg#(Bool))     pendRouteLLC         <- replicateM(mkRegU);
 
     Reg#(Bool) ttInited <- mkConfigReg(False);
@@ -264,19 +141,6 @@ provisos (
         return ttInited && pcInited && filterInited && tlbReqFreeQInited;
     endfunction
 
-    // Kill-switch gate: once uselessCount hits killThreshold, ALL further
-    // prefetches from that PC are suppressed — the harshest possible response
-    // to a proven-bad predictor. Because the useless counter is biased low
-    // (filter entries get hash-evicted before delayed useless events attribute),
-    // a small killThreshold (~3) already reflects many more real useless
-    // events. Good PCs whose prefetches keep delivering useful hits rarely
-    // accumulate useless events anyway.
-    // Ratio-based gate. Blacklist only when a PC has both (a) enough useless
-    // evidence to be statistically meaningful (us >= killThreshold), AND
-    // (b) more useless events than useful — "not mostly good". A PC with a
-    // strong useful record tolerates some noise. A PC with no wins doesn't.
-    // The `us > uf` half comparison naturally protects patricia (whose useful
-    // counters saturate) and punishes treeadd/em3d PCs that never deliver.
     function Bool shouldIssue(Bit#(4) uf, Bit#(4) us);
         Bit#(4) threshold = fromInteger(valueOf(killThreshold));
         Bool chronic = (us >= threshold) && (us > uf);
@@ -429,8 +293,6 @@ provisos (
                         end
                     end
                     if (foundHighConf) begin
-                        // ** Kill-switch gate. Once uselessCount hits killThreshold this PC
-                        //    issues NO further prefetches — not LLC-routed, just suppressed. **
                         Bool okToIssue = shouldIssue(entry.usefulCount, entry.uselessCount);
                         Bool isNeigh = !(bestAbsTarget >= 0 && bestAbsTarget <= 7);
                         Bit#(4) bestVecIdx = pack(bestRelOffset + 7);
@@ -477,9 +339,6 @@ provisos (
             end
             tagged AccUseless .pcHash: begin
                 if (rdResp matches tagged Valid .e &&& e.pcHash == pcHash) begin
-                    // Amplify: bump useless by 3 per attributed event. The filter
-                    // captures only ~1 in 3-5 real useless events (delayed eviction
-                    // loses to hash-collision invalidation); scaling up compensates.
                     Bit#(5) amplified = zeroExtend(e.uselessCount) + 3;
                     Bit#(4) newUs = (amplified >= 15) ? 15 : truncate(amplified);
                     pcTable.wrReq(pctIdx, Valid(PCTableAcc2BitEntryT{
@@ -492,7 +351,6 @@ provisos (
             tagged Decay: begin
                 if (rdResp matches tagged Valid .entry) begin
                     function Bit#(2) satDec(Bit#(2) x) = (x == 0) ? 0 : x - 1;
-                    // Also softly decay accuracy counters (half-rate — every 2nd decay).
                     Bit#(4) decayUf = (entry.usefulCount > 0) ? entry.usefulCount - 1 : 0;
                     Bit#(4) decayUs = (entry.uselessCount > 0) ? entry.uselessCount - 1 : 0;
                     pcTable.wrReq(pctIdx, Valid(PCTableAcc2BitEntryT{
@@ -562,8 +420,6 @@ provisos (
         end
     endrule
 
-    // Eviction handling: split to read filter before invalidating. On a match,
-    // look up which pcHash owned this prefetch and charge it with "uselessCount++".
     rule startEviction(filterInited);
         LineAddr lineAddr = evictionQ.first;
         evictionQ.deq;
@@ -588,11 +444,6 @@ provisos (
         prefetchFilter.wrReq(filterIdx, Invalid);
     endrule
 
-    // Useful-hit feedback: reportUsefulPrefetch() is invoked by L1Bank when a
-    // demand load hits a wasPrefetch=True line. We look up the filter entry for
-    // that lineAddr to find the originating pcHash, then enqueue an AccUseful
-    // bump for that PC. If the filter entry is stale / lineAddr mismatch
-    // (hash collision with a newer prefetch) we silently skip the bump.
     rule startUsefulLookup(filterInited);
         LineAddr lineAddr = usefulHitQ.first;
         usefulHitQ.deq;
@@ -612,9 +463,6 @@ provisos (
             $display("%t AlexLog: CDP Kill useful hit: lineAddr %h pcHash %h",
                 cur_cycle, lineAddr, fe.pcHash);
         end
-        // Note: we don't invalidate the filter entry on useful hit — L1Bank
-        // will eventually evict the line anyway, clearing wasPrefetch; leaving
-        // the filter entry lets subsequent re-prefetches dedup correctly.
     endrule
 
     rule tickDecayCounter(inited);
@@ -628,9 +476,6 @@ provisos (
         pcTableRdReqFIFO.enq(tuple2(decayIdx, tagged Decay));
     endrule
 
-    // Fan-out staging events to the relevant downstream FIFOs. Guarded
-    // implicitly on all-target-not-full so any saturation blocks this rule,
-    // not the calling pipelineResp_cRq in L1Bank.bsv.
     rule drainIncomingEvents;
         match {.branch, .req, .line} = incomingQ.first;
         incomingQ.deq;
@@ -671,23 +516,14 @@ provisos (
     endrule
 
     method Action reportIncomingCacheLine(reqT req, Line line, Bool cRqIsPrefetch, Bool wasMiss, Bool wasNeighbourPrefetch);
-        // Classify the incoming event and stage it. The actual fan-out to
-        // downstream FIFOs is done in drainIncomingEvents so back-pressure
-        // on those FIFOs cannot reach pipelineResp_cRq (which called us).
         CDPIncomingBranchT branch = EvIgnore;
         if (inited && getReqOp(req) == Ld && !cRqIsPrefetch && wasMiss && !wasNeighbourPrefetch) begin
             branch = EvDemandLdMiss;
         end else if (inited && getReqOp(req) == Ld && !wasMiss && !cRqIsPrefetch && !wasNeighbourPrefetch) begin
             branch = EvDemandLdHit;
         end else if (inited && getReqOp(req) == Ld && cRqIsPrefetch && wasNeighbourPrefetch) begin
-            // H19: drop the !wasMiss gate. Fire chain follow-up on every
-            // returning neighbour-line prefetch, whether it hit in L1 or
-            // missed and was filled from LLC/DRAM.
             branch = EvNeighbourChain;
         end
-        // Even EvIgnore events get staged so the staging FIFO latency is
-        // uniform (no guard branching inside the method). The drain rule
-        // drops EvIgnore without doing any fan-out.
         incomingQ.enq(tuple3(branch, req, line));
     endmethod
 
