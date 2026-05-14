@@ -5,6 +5,3 @@
 	path = Tests/benchmarks
 	url = https://github.com/AxterDoesCode/toooba-sim-benchmarks
     branch = main
-[submodule "TooobaLogParser"]
-	path = TooobaLogParser
-	url = git@github.com:AxterDoesCode/TooobaLogParser.git
