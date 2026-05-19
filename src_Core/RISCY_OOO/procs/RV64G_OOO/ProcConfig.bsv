@@ -1,6 +1,6 @@
 
 // Copyright (c) 2017 Massachusetts Institute of Technology
-//
+// 
 // Permission is hereby granted, free of charge, to any person
 // obtaining a copy of this software and associated documentation
 // files (the "Software"), to deal in the Software without
@@ -8,10 +8,10 @@
 // modify, merge, publish, distribute, sublicense, and/or sell copies
 // of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
-//
+// 
 // The above copyright notice and this permission notice shall be
 // included in all copies or substantial portions of the Software.
-//
+// 
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 // EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -90,13 +90,122 @@
 // ==== CACHE SIZE ====
 //
 
-// L1
-`define LOG_L1_LINES 9 // 32KB
-`define LOG_L1_WAYS 2 // 4 ways
+`ifdef CACHE_SMALL
 
-// LLC
-`define LOG_LLC_LINES 14 // 1MB
-`define LOG_LLC_WAYS 4 // 16 ways
+    // L1
+    `define LOG_L1_LINES 8 // 16KB
+    `define LOG_L1_WAYS 2 // 4 ways
+
+    // LLC
+    `define LOG_LLC_LINES 12 // 256KB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+`endif
+
+`ifdef CACHE_LARGE
+
+    // L1
+    `define LOG_L1_LINES 9 // 32KB
+    `define LOG_L1_WAYS 2 // 4 ways
+
+    // LLC
+    `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+`endif
+
+`ifdef CACHE_MC_1MB
+
+    // L1
+    `define LOG_L1_LINES 9 // 32KB
+    `define LOG_L1_WAYS 2 // 4 ways
+
+    // LLC
+    `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+`endif
+
+`ifdef CACHE_MC_2MB
+
+    // L1
+    `define LOG_L1_LINES 9 // 32KB
+    `define LOG_L1_WAYS 2 // 4 ways
+
+    // LLC
+    `define LOG_LLC_LINES 15 // 2MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+`endif
+
+`ifdef CACHE_ALEX
+
+    // L1
+    `define LOG_L1_LINES 8 // 16KB
+    `define LOG_L1_WAYS 2 // 4 ways
+    `define L1D_CRQ_NUM 8
+
+    // LLC
+    `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+    // There is already 20 cycles of baseline latency
+    `undef DRAM_LATENCY
+    `define DRAM_LATENCY 80
+
+`endif
+
+// Do cache lines only contain 4 possible values in CHERI? If so to replicate CapChaser then I need to halve the size of the cache like this
+`ifdef CACHE_ALEX_SMALLISH
+
+    // L1
+    `define LOG_L1_LINES 7 // 8KB
+    `define LOG_L1_WAYS 2 // 4 ways
+    `define L1D_CRQ_NUM 8
+
+    // LLC
+    `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+    // There is already 20 cycles of baseline latency
+    `undef DRAM_LATENCY
+    `define DRAM_LATENCY 80
+
+`endif
+
+`ifdef CACHE_ALEX_SMALL
+
+    // L1
+    `define LOG_L1_LINES 4
+    `define LOG_L1_WAYS 1 // 2 ways
+    `define L1D_CRQ_NUM 8
+
+    // LLC
+    `define LOG_LLC_LINES 13 // 512KB
+    `define LOG_LLC_WAYS 3 // 8 ways
+
+    // There is already 20 cycles of baseline latency
+    `undef DRAM_LATENCY
+    `define DRAM_LATENCY 80
+
+`endif
+
+`ifdef CACHE_ALEX_TINY
+
+    // L1
+    `define LOG_L1_LINES 3
+    `define LOG_L1_WAYS 1 // 2 ways
+    `define L1D_CRQ_NUM 8
+
+    // LLC
+    `define LOG_LLC_LINES 13 // 512KB
+    `define LOG_LLC_WAYS 3 // 8 ways
+
+    // There is already 20 cycles of baseline latency
+    `undef DRAM_LATENCY
+    `define DRAM_LATENCY 80
+
+`endif
 
 //
 // ==== CORE SIZE ====
@@ -283,3 +392,5 @@
 //
 // ==== derived parameters ====
 //
+
+
